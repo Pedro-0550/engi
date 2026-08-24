@@ -30,6 +30,7 @@ static CONSTANTS_REGISTERED: AtomicBool = AtomicBool::new(false);
 #[derive(Clone, Hash, Eq, PartialEq)]
 pub struct SymbolInfo {
     name: String,
+    description: String,
     unit: Unit,
     shape: Shape, // domain: Set,
 }
@@ -57,6 +58,7 @@ impl Symbol {
 
         let handle = SYMBOLS.insert(SymbolInfo {
             name: name.to_owned(),
+            description: String::new(),
             unit: Unit::Unitless,
             shape: Shape::SCALAR, // domain: Set::C,
         });
@@ -88,6 +90,15 @@ impl Symbol {
 
     pub fn set_shape(self, shape: Shape) -> Self {
         SYMBOLS.modify(self.0, |mut i| i.shape = shape);
+        self
+    }
+
+    pub fn description(&self) -> String {
+        SYMBOLS.get_cloned(self.0).expect("invalid symbol handle").description
+    }
+
+    pub fn set_description(self, description: String) -> Self {
+        SYMBOLS.modify(self.0, |mut i| i.description = description);
         self
     }
 

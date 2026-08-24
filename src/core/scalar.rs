@@ -14,6 +14,8 @@ use crate::{impl_assign_op, impl_binary_op};
 
 pub const EQ_ABS_TOL: f64 = 1e-15;
 
+pub const I: Scalar = Scalar(Complex::I);
+
 /* --------------------------------- STRUCTS -------------------------------- */
 
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -31,8 +33,20 @@ impl Scalar {
         float_eq!(self.im, 0.0, abs <= EQ_ABS_TOL)
     }
 
-    pub fn is_imaginary(self) -> bool {
+    pub fn is_imag(self) -> bool {
         self.im.abs() > 0.0 && float_eq!(self.re, 0.0, abs <= EQ_ABS_TOL)
+    }
+
+    pub fn as_integer(self) -> Option<i64> {
+        if self.is_integer() { Some(self.re as i64) } else { None }
+    }
+
+    pub fn as_real(self) -> Option<f64> {
+        if self.is_real() { Some(self.re) } else { None }
+    }
+
+    pub fn as_imag(self) -> Option<f64> {
+        if self.is_imag() { Some(self.re) } else { None }
     }
 }
 

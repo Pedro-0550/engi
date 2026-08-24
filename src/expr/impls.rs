@@ -8,8 +8,9 @@ use std::{
 use crate::{
     core::scalar::Scalar,
     dimension::Quantity,
-    expr::{Double, Expr, Node, Shaped, Variadic, ops::Single},
+    expr::{Binary, Expr, Node, Shaped, Variadic, ops::*},
     symbol::Symbol,
+    system::var::Variable,
 };
 
 /* ---------------------------------- IMPLS --------------------------------- */
@@ -65,11 +66,16 @@ impl From<i64> for Expr {
     }
 }
 
-// impl From<Symbol> for Node {
-//     fn from(v: Symbol) -> Self {
-//         Self::Symbol(v)
-//     }
-// }
+impl From<Variable> for Node {
+    fn from(v: Variable) -> Self {
+        match v {
+            Variable::Unknown { symbol, guess } => Self::Symbol(v.symbol()),
+            Variable::Known { symbol, value } => {
+                Self::Const(value * symbol.unit())
+            }
+        }
+    }
+}
 
 macro_rules! impl_op {
     ($t0:ty, $ty:ty, $op:ident, $method:ident, $expr:expr, normal) => {
@@ -117,7 +123,7 @@ macro_rules! impl_expr_ops {
                     "Matrix multiplication A * B requires A to have as many columns as B has rows.
                     A special case is when both A and B are vectors of equal shape, in which case Mul means dot product."
                 );
-                Variadic::Mul(vec![lhs, Double::Pow { base: rhs, exp: (-1.0).into() }.into()])
+                Variadic::Mul(vec![lhs, Binary::Pow(Pow { base: rhs, exp: (-1.0).into() }).into()])
             }, $config);
             impl_op!($t0, $ty, Sub, sub, |lhs, rhs: Expr| Variadic::Add(vec![lhs, -rhs]), $config);
             impl_op!($t0, $ty, BitXor, bitxor, |lhs: Expr, rhs: Expr| {
@@ -136,10 +142,10 @@ macro_rules! impl_expr_ops {
                     "Cannot raise a matrix to the power of another matrix yet"
                 );
 
-                Double::Pow {
+                Binary::Pow(Pow{
                     base: lhs,
                     exp: rhs
-                }
+                })
             }, $config);
 
         )+

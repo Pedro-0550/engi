@@ -8,11 +8,12 @@ num = "0.4"
 itertools = "0.15"
 thiserror = "2.0"
 paste = "1.0"
-derive_more = { version = "2", features = ["from", "deref", "deref_mut", "unwrap", "try_unwrap", "is_variant", "into",] }
+derive_more = { version = "2", features = ["from", "deref", "deref_mut", "is_variant", "into",] }
 float_eq = "1.0"
 ordered-float = "5.3"
 dashmap = "6"
 ahash = "0.8"
+variadics_please = "2.0"
 
 [dev-dependencies]
 criterion = "0.8"

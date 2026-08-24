@@ -9,7 +9,7 @@ use crate::{
     dimension::Quantity,
     expr::{
         Expr, Node,
-        ops::{Double, Single, Variadic},
+        ops::{Atan2, Binary, Log, Pow, Unary, Variadic},
     },
     symbol::Symbol,
 };
@@ -19,7 +19,6 @@ use crate::{
 /// Adds support for conversion into a standard form, without touching symbols or simplifying algebraic constructions
 /// To be exact, normalize will only:
 ///  * Flatten nested variadics;
-///  * Fold negation, such that `(-a) * (-b) -> a * b` and `(-a) * b -> -(a * b)`
 ///  * Fold constants into a single term;
 ///  * And sort terms in a standard, deterministic order
 pub trait Normalize {
@@ -98,7 +97,7 @@ impl Normalize for Variadic {
     }
 }
 
-impl Normalize for Single {
+impl Normalize for Unary {
     fn normalize(&self, recurse: bool) -> Expr {
         self.with_arg(self.arg().normalize(recurse)).into()
     }
@@ -107,28 +106,28 @@ impl Normalize for Single {
         match self {
             // Why does this start at one? We had a 0 variant but i removed it, and writing this comment definetly took
             // less time than shifting all the numbers.
-            Single::Sin(_) => 1,
-            Single::Cos(_) => 2,
-            Single::Tan(_) => 3,
-            Single::Asin(_) => 4,
-            Single::Acos(_) => 5,
-            Single::Atan(_) => 6,
-            Single::Sinh(_) => 7,
-            Single::Cosh(_) => 8,
-            Single::Tanh(_) => 9,
-            Single::Asinh(_) => 10,
-            Single::Acosh(_) => 11,
-            Single::Atanh(_) => 12,
-            Single::Transpose(_) => 13,
-            Single::Conj(_) => 14,
-            Single::Arg(_) => 15,
-            Single::Det(_) => 16,
-            Single::Norm(_) => 17,
+            Unary::Sin(_) => 1,
+            Unary::Cos(_) => 2,
+            Unary::Tan(_) => 3,
+            Unary::Asin(_) => 4,
+            Unary::Acos(_) => 5,
+            Unary::Atan(_) => 6,
+            Unary::Sinh(_) => 7,
+            Unary::Cosh(_) => 8,
+            Unary::Tanh(_) => 9,
+            Unary::Asinh(_) => 10,
+            Unary::Acosh(_) => 11,
+            Unary::Atanh(_) => 12,
+            Unary::Transpose(_) => 13,
+            Unary::Conj(_) => 14,
+            Unary::Arg(_) => 15,
+            Unary::Det(_) => 16,
+            Unary::Norm(_) => 17,
         }
     }
 }
 
-impl Normalize for Double {
+impl Normalize for Binary {
     fn normalize(&self, recurse: bool) -> Expr {
         self.with_args([
             self.args()[0].normalize(recurse),
@@ -139,9 +138,9 @@ impl Normalize for Double {
 
     fn rank(&self) -> usize {
         match self {
-            Double::Pow { .. } => 0,
-            Double::Log { .. } => 1,
-            Double::Atan2 { .. } => 2,
+            Binary::Pow(..) => 0,
+            Binary::Log(..) => 1,
+            Binary::Atan2(..) => 2,
         }
     }
 }
@@ -152,8 +151,8 @@ impl Normalize for Expr {
             Node::Symbol(_) => self.clone(),
             Node::Const(_) => self.clone(),
             Node::Variadic(variadic) => variadic.normalize(recurse),
-            Node::Single(single) => single.normalize(recurse),
-            Node::Double(double) => double.normalize(recurse),
+            Node::Unary(single) => single.normalize(recurse),
+            Node::Binary(double) => double.normalize(recurse),
             Node::Matrix(_matrix) => todo!(),
         }
     }
@@ -162,8 +161,8 @@ impl Normalize for Expr {
         match *self.node() {
             Node::Const(_) => 0,
             Node::Symbol(_) => 1,
-            Node::Single(_) => 2,
-            Node::Double(_) => 3,
+            Node::Unary(_) => 2,
+            Node::Binary(_) => 3,
             Node::Variadic(_) => 4,
             Node::Matrix(_) => 5,
         }
@@ -182,11 +181,11 @@ impl Ord for Expr {
                         .total_cmp(&rhs.norm())
                         .then_with(|| lhs.arg().total_cmp(&rhs.arg()))
                 }
-                (Node::Single(lhs), Node::Single(rhs)) => lhs
+                (Node::Unary(lhs), Node::Unary(rhs)) => lhs
                     .rank()
                     .cmp(&rhs.rank())
                     .then_with(|| lhs.arg().cmp(&rhs.arg())),
-                (Node::Double(lhs), Node::Double(rhs)) => lhs
+                (Node::Binary(lhs), Node::Binary(rhs)) => lhs
                     .rank()
                     .cmp(&rhs.rank())
                     .then_with(|| lhs.args()[0].cmp(&rhs.args()[0]))

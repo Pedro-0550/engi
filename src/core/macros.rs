@@ -1,5 +1,3 @@
-
-
 #[macro_export]
 macro_rules! impl_binary_op {
     ($result:ty, $t0:ty, $ty:ty, $op:ident, $method:ident, $expr:expr, normal) => {
@@ -36,6 +34,24 @@ macro_rules! impl_assign_op {
         impl $op<$ty> for $t0 {
             fn $method(&mut self, rhs: $ty) {
                 $expr(self.into(), rhs.into());
+            }
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_as {
+    ($ty:ident, $($variant:ident => $inner:ty),* $(,)?) => {
+        paste::paste! {
+            impl $ty {
+                $(
+                    pub fn [<as_ $variant:snake>](&self) -> Option<&$inner> {
+                        match self {
+                            Self::$variant(value) => Some(value),
+                            _ => None,
+                        }
+                    }
+                )*
             }
         }
     };

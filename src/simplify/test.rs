@@ -11,7 +11,7 @@ use crate::{
 fn factoring() {
     symbols!(x, y, z);
 
-    let expr = (x * y) + (x * ln(x) * z) + (x * ln(x));
+    let expr = (x * y * 3) + (6 * (y ^ 2));
     let simp = expr.simplify(&mut SimplifyContext::new());
 
     let target = x * ((ln(x) * (1 + z)) + y);

@@ -7,7 +7,7 @@ use std::{
     rc::Rc,
 };
 
-use derive_more::{IsVariant, TryUnwrap, Unwrap};
+use derive_more::IsVariant;
 use itertools::Itertools;
 use num::complex::ComplexFloat;
 
@@ -15,18 +15,19 @@ use crate::{
     core::util::to_superscript,
     dimension::{Quantity, Unit},
     expr::{Expr, Node, Shape, Shaped},
+    impl_as,
     simplify::separate_consts,
     symbol::constants::e,
 };
 
-#[derive(PartialEq, Clone, Debug, IsVariant, TryUnwrap, Unwrap, Hash, Eq)]
+#[derive(PartialEq, Clone, Debug, IsVariant, Hash, Eq)]
 pub enum Variadic {
     Add(Vec<Expr>),
     Mul(Vec<Expr>),
 }
 
-#[derive(PartialEq, Clone, Debug, IsVariant, TryUnwrap, Unwrap, Hash, Eq)]
-pub enum Single {
+#[derive(PartialEq, Clone, Debug, IsVariant, Hash, Eq)]
+pub enum Unary {
     Sin(Expr),
     Cos(Expr),
     Tan(Expr),
@@ -50,11 +51,29 @@ pub enum Single {
     Norm(Expr),
 }
 
+#[derive(PartialEq, Clone, Debug, Hash, Eq)]
+pub struct Pow {
+    pub base: Expr,
+    pub exp: Expr,
+}
+
+#[derive(PartialEq, Clone, Debug, Hash, Eq)]
+pub struct Log {
+    pub base: Expr,
+    pub arg: Expr,
+}
+
+#[derive(PartialEq, Clone, Debug, Hash, Eq)]
+pub struct Atan2 {
+    pub a: Expr,
+    pub b: Expr,
+}
+
 #[derive(PartialEq, Clone, Debug, IsVariant, Hash, Eq)]
-pub enum Double {
-    Pow { base: Expr, exp: Expr },
-    Log { base: Expr, arg: Expr },
-    Atan2 { a: Expr, b: Expr },
+pub enum Binary {
+    Pow(Pow),
+    Log(Log),
+    Atan2(Atan2),
 }
 
 /// Row-major matrix type
@@ -65,6 +84,13 @@ pub struct Matrix {
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
+
+impl_as!(
+    Binary,
+    Pow => Pow,
+    Log => Log,
+    Atan2 => Atan2,
+);
 
 impl Matrix {
     /// Returns (rows, cols) for this matrix
@@ -152,119 +178,119 @@ impl Shaped for Variadic {
     }
 }
 
-impl Single {
+impl Unary {
     pub fn with_arg(&self, arg: Expr) -> Self {
         match self {
-            Single::Sin(_) => Single::Sin(arg),
-            Single::Cos(_) => Single::Cos(arg),
-            Single::Tan(_) => Single::Tan(arg),
-            Single::Asin(_) => Single::Asin(arg),
-            Single::Acos(_) => Single::Acos(arg),
-            Single::Atan(_) => Single::Atan(arg),
-            Single::Sinh(_) => Single::Sinh(arg),
-            Single::Cosh(_) => Single::Cosh(arg),
-            Single::Tanh(_) => Single::Tanh(arg),
-            Single::Asinh(_) => Single::Asinh(arg),
-            Single::Acosh(_) => Single::Acosh(arg),
-            Single::Atanh(_) => Single::Atanh(arg),
-            Single::Transpose(_) => Single::Transpose(arg),
-            Single::Conj(_) => Single::Conj(arg),
-            Single::Arg(_) => Single::Arg(arg),
-            Single::Det(_) => Single::Det(arg),
-            Single::Norm(_) => Single::Norm(arg),
+            Unary::Sin(_) => Unary::Sin(arg),
+            Unary::Cos(_) => Unary::Cos(arg),
+            Unary::Tan(_) => Unary::Tan(arg),
+            Unary::Asin(_) => Unary::Asin(arg),
+            Unary::Acos(_) => Unary::Acos(arg),
+            Unary::Atan(_) => Unary::Atan(arg),
+            Unary::Sinh(_) => Unary::Sinh(arg),
+            Unary::Cosh(_) => Unary::Cosh(arg),
+            Unary::Tanh(_) => Unary::Tanh(arg),
+            Unary::Asinh(_) => Unary::Asinh(arg),
+            Unary::Acosh(_) => Unary::Acosh(arg),
+            Unary::Atanh(_) => Unary::Atanh(arg),
+            Unary::Transpose(_) => Unary::Transpose(arg),
+            Unary::Conj(_) => Unary::Conj(arg),
+            Unary::Arg(_) => Unary::Arg(arg),
+            Unary::Det(_) => Unary::Det(arg),
+            Unary::Norm(_) => Unary::Norm(arg),
         }
     }
 
     pub fn into_arg(self) -> Expr {
         match self {
-            Single::Sin(arg) => arg,
-            Single::Cos(arg) => arg,
-            Single::Tan(arg) => arg,
-            Single::Asin(arg) => arg,
-            Single::Acos(arg) => arg,
-            Single::Atan(arg) => arg,
-            Single::Sinh(arg) => arg,
-            Single::Cosh(arg) => arg,
-            Single::Tanh(arg) => arg,
-            Single::Asinh(arg) => arg,
-            Single::Acosh(arg) => arg,
-            Single::Atanh(arg) => arg,
-            Single::Transpose(arg) => arg,
-            Single::Conj(arg) => arg,
-            Single::Arg(arg) => arg,
-            Single::Det(arg) => arg,
-            Single::Norm(arg) => arg,
+            Unary::Sin(arg) => arg,
+            Unary::Cos(arg) => arg,
+            Unary::Tan(arg) => arg,
+            Unary::Asin(arg) => arg,
+            Unary::Acos(arg) => arg,
+            Unary::Atan(arg) => arg,
+            Unary::Sinh(arg) => arg,
+            Unary::Cosh(arg) => arg,
+            Unary::Tanh(arg) => arg,
+            Unary::Asinh(arg) => arg,
+            Unary::Acosh(arg) => arg,
+            Unary::Atanh(arg) => arg,
+            Unary::Transpose(arg) => arg,
+            Unary::Conj(arg) => arg,
+            Unary::Arg(arg) => arg,
+            Unary::Det(arg) => arg,
+            Unary::Norm(arg) => arg,
         }
     }
 
     pub fn arg(&self) -> &Expr {
         match self {
-            Single::Sin(arg) => arg,
-            Single::Cos(arg) => arg,
-            Single::Tan(arg) => arg,
-            Single::Asin(arg) => arg,
-            Single::Acos(arg) => arg,
-            Single::Atan(arg) => arg,
-            Single::Sinh(arg) => arg,
-            Single::Cosh(arg) => arg,
-            Single::Tanh(arg) => arg,
-            Single::Asinh(arg) => arg,
-            Single::Acosh(arg) => arg,
-            Single::Atanh(arg) => arg,
-            Single::Transpose(arg) => arg,
-            Single::Conj(arg) => arg,
-            Single::Arg(arg) => arg,
-            Single::Det(arg) => arg,
-            Single::Norm(arg) => arg,
+            Unary::Sin(arg) => arg,
+            Unary::Cos(arg) => arg,
+            Unary::Tan(arg) => arg,
+            Unary::Asin(arg) => arg,
+            Unary::Acos(arg) => arg,
+            Unary::Atan(arg) => arg,
+            Unary::Sinh(arg) => arg,
+            Unary::Cosh(arg) => arg,
+            Unary::Tanh(arg) => arg,
+            Unary::Asinh(arg) => arg,
+            Unary::Acosh(arg) => arg,
+            Unary::Atanh(arg) => arg,
+            Unary::Transpose(arg) => arg,
+            Unary::Conj(arg) => arg,
+            Unary::Arg(arg) => arg,
+            Unary::Det(arg) => arg,
+            Unary::Norm(arg) => arg,
         }
     }
 
     pub fn arg_mut(&mut self) -> &mut Expr {
         match self {
-            Single::Sin(arg) => arg,
-            Single::Cos(arg) => arg,
-            Single::Tan(arg) => arg,
-            Single::Asin(arg) => arg,
-            Single::Acos(arg) => arg,
-            Single::Atan(arg) => arg,
-            Single::Sinh(arg) => arg,
-            Single::Cosh(arg) => arg,
-            Single::Tanh(arg) => arg,
-            Single::Asinh(arg) => arg,
-            Single::Acosh(arg) => arg,
-            Single::Atanh(arg) => arg,
-            Single::Transpose(arg) => arg,
-            Single::Conj(arg) => arg,
-            Single::Arg(arg) => arg,
-            Single::Det(arg) => arg,
-            Single::Norm(arg) => arg,
+            Unary::Sin(arg) => arg,
+            Unary::Cos(arg) => arg,
+            Unary::Tan(arg) => arg,
+            Unary::Asin(arg) => arg,
+            Unary::Acos(arg) => arg,
+            Unary::Atan(arg) => arg,
+            Unary::Sinh(arg) => arg,
+            Unary::Cosh(arg) => arg,
+            Unary::Tanh(arg) => arg,
+            Unary::Asinh(arg) => arg,
+            Unary::Acosh(arg) => arg,
+            Unary::Atanh(arg) => arg,
+            Unary::Transpose(arg) => arg,
+            Unary::Conj(arg) => arg,
+            Unary::Arg(arg) => arg,
+            Unary::Det(arg) => arg,
+            Unary::Norm(arg) => arg,
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
-            Single::Sin(_) => "sin",
-            Single::Cos(_) => "cos",
-            Single::Tan(_) => "tan",
-            Single::Asin(_) => "asin",
-            Single::Acos(_) => "acos",
-            Single::Atan(_) => "atan",
-            Single::Sinh(_) => "sinh",
-            Single::Cosh(_) => "cosh",
-            Single::Tanh(_) => "tanh",
-            Single::Asinh(_) => "asinh",
-            Single::Acosh(_) => "acosh",
-            Single::Atanh(_) => "atanh",
-            Single::Transpose(_) => "transpose",
-            Single::Conj(_) => "conj",
-            Single::Arg(_) => "arg",
-            Single::Det(_) => "det",
-            Single::Norm(_) => "norm",
+            Unary::Sin(_) => "sin",
+            Unary::Cos(_) => "cos",
+            Unary::Tan(_) => "tan",
+            Unary::Asin(_) => "asin",
+            Unary::Acos(_) => "acos",
+            Unary::Atan(_) => "atan",
+            Unary::Sinh(_) => "sinh",
+            Unary::Cosh(_) => "cosh",
+            Unary::Tanh(_) => "tanh",
+            Unary::Asinh(_) => "asinh",
+            Unary::Acosh(_) => "acosh",
+            Unary::Atanh(_) => "atanh",
+            Unary::Transpose(_) => "transpose",
+            Unary::Conj(_) => "conj",
+            Unary::Arg(_) => "arg",
+            Unary::Det(_) => "det",
+            Unary::Norm(_) => "norm",
         }
     }
 }
 
-impl Shaped for Single {
+impl Shaped for Unary {
     fn shape(&self) -> Shape {
         match self {
             Self::Transpose(expr) => expr.shape().transpose(),
@@ -274,50 +300,50 @@ impl Shaped for Single {
     }
 }
 
-impl Double {
+impl Binary {
     pub fn with_args(&self, args: [Expr; 2]) -> Self {
         let [a, b] = args;
         match self {
-            Double::Atan2 { .. } => Double::Atan2 { a, b },
-            Double::Log { .. } => Double::Log { base: a, arg: b },
-            Double::Pow { .. } => Double::Pow { base: a, exp: b },
+            Binary::Atan2(Atan2 { .. }) => Binary::Atan2(Atan2 { a, b }),
+            Binary::Log(Log { .. }) => Binary::Log(Log { base: a, arg: b }),
+            Binary::Pow(Pow { .. }) => Binary::Pow(Pow { base: a, exp: b }),
         }
     }
 
     pub fn into_args(self) -> [Expr; 2] {
         match self {
-            Double::Atan2 { a, b } => [a, b],
-            Double::Log { base, arg } => [base, arg],
-            Double::Pow { base, exp } => [base, exp],
+            Binary::Atan2(Atan2 { a, b }) => [a, b],
+            Binary::Log(Log { base, arg }) => [base, arg],
+            Binary::Pow(Pow { base, exp }) => [base, exp],
         }
     }
 
     pub fn args(&self) -> [&Expr; 2] {
         match self {
-            Double::Atan2 { a, b } => [a, b],
-            Double::Log { base, arg } => [base, arg],
-            Double::Pow { base, exp } => [base, exp],
+            Binary::Atan2(Atan2 { a, b }) => [a, b],
+            Binary::Log(Log { base, arg }) => [base, arg],
+            Binary::Pow(Pow { base, exp }) => [base, exp],
         }
     }
 }
 
-impl Shaped for Double {
+impl Shaped for Binary {
     fn shape(&self) -> Shape {
         match self {
-            Double::Pow { base, exp } => exp.shape(),
-            Double::Log { base, arg } => arg.shape(),
-            Double::Atan2 { a, b } => Shape::SCALAR,
+            Binary::Pow(Pow { base, exp }) => exp.shape(),
+            Binary::Log(Log { base, arg }) => arg.shape(),
+            Binary::Atan2(Atan2 { a, b }) => Shape::SCALAR,
         }
     }
 }
 
-impl Display for Single {
+impl Display for Unary {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Single::Transpose(expr) => {
+            Unary::Transpose(expr) => {
                 let parenthesize = matches!(
                     expr.node(),
-                    Node::Double(Double::Pow { .. }) | Node::Variadic(_)
+                    Node::Binary(Binary::Pow { .. }) | Node::Variadic(_)
                 );
 
                 write_enclosed(expr, f, parenthesize)
@@ -330,17 +356,17 @@ impl Display for Single {
     }
 }
 
-impl Display for Double {
+impl Display for Binary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Double::Pow { base, exp } => {
+            Binary::Pow(Pow { base, exp }) => {
                 let parenthesize_base = !matches!(
                     base.node(),
                     Node::Symbol(_)
                         | Node::Const(_)
-                        | Node::Single(_)
-                        | Node::Double(
-                            Double::Log { .. } | Double::Atan2 { .. }
+                        | Node::Unary(_)
+                        | Node::Binary(
+                            Binary::Log { .. } | Binary::Atan2 { .. }
                         )
                 );
                 let parenthesize_exp =
@@ -362,7 +388,7 @@ impl Display for Double {
 
                 Ok(())
             }
-            Double::Log { base, arg } => {
+            Binary::Log(Log { base, arg }) => {
                 if *base == e.into() {
                     f.write_str("ln")?;
                     write_enclosed(arg, f, true)
@@ -374,7 +400,7 @@ impl Display for Double {
                     f.write_str(")")
                 }
             }
-            Double::Atan2 { a, b } => {
+            Binary::Atan2(Atan2 { a, b }) => {
                 f.write_str("atan2(")?;
                 a.fmt(f)?;
                 f.write_str(", ")?;
@@ -424,7 +450,7 @@ impl Display for Variadic {
                         expr.node(),
                         Node::Symbol(_)
                             | Node::Const(_)
-                            | Node::Double(Double::Pow { .. })
+                            | Node::Binary(Binary::Pow { .. })
                     )
                 }
 
@@ -453,23 +479,24 @@ impl Display for Variadic {
 
                 let (denom, num): (Vec<&Expr>, Vec<&Expr>) =
                     terms.iter().partition(|expr| {
-                        matches!(
-                            expr.node(),
-                            Node::Double(Double::Pow { exp, .. })
-                            if matches!(
-                                exp.node(),
-                                Node::Const(qty)
-                                if qty.value().im == 0.0
-                                    && qty.value().re < 0.0
-                            )
-                        )
+                        expr.node()
+                            .as_binary()
+                            .and_then(|bin| bin.as_pow())
+                            .and_then(|pow| {
+                                pow.exp
+                                    .node()
+                                    .as_const()
+                                    .and_then(|qty| qty.value().as_real())
+                            })
+                            .is_some_and(|exp| exp < 0.0)
                     });
 
                 let (denom, num) = (sort_terms(&denom), sort_terms(&num));
 
                 for (i, term) in num.iter().enumerate() {
                     let parenthesize =
-                        matches!(term.node(), Node::Variadic(Variadic::Add(_)));
+                        term.node().as_variadic().is_some_and(|v| v.is_add());
+                    // matches!(term.node(), Node::Variadic(Variadic::Add(_)));
 
                     if i > 0
                         && num
@@ -514,7 +541,7 @@ impl Display for Variadic {
 
                     if !num.is_empty() {
                         let new_term = match term.node() {
-                            Node::Double(Double::Pow { base, exp }) => {
+                            Node::Binary(Binary::Pow(Pow { base, exp })) => {
                                 let exp = match exp.node() {
                                     Node::Const(qty) => qty,
                                     _ => unreachable!(
@@ -525,11 +552,11 @@ impl Display for Variadic {
                                 if exp.value().re == -1.0 {
                                     base.clone()
                                 } else {
-                                    Double::Pow {
+                                    Binary::Pow(Pow {
                                         base: base.clone(),
                                         exp: (exp.value().abs() * exp.unit())
                                             .into(),
-                                    }
+                                    })
                                     .into()
                                 }
                             }
@@ -593,7 +620,7 @@ macro_rules! impl_single_fn {
                 $name
             );
 
-            Single::$variant(expr).into()
+            Unary::$variant(expr).into()
         }
     };
 }
@@ -630,7 +657,7 @@ pub fn log(base: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
         "Matrix-valued logarithm is only defined for square matrices"
     );
 
-    Double::Log { base: base.into(), arg: x.into() }.into()
+    Binary::Log(Log { base: base.into(), arg: x.into() }).into()
 }
 
 pub fn ln(x: impl Into<Expr>) -> Expr {

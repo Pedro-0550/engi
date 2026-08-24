@@ -51,7 +51,8 @@ macro_rules! constants {
             crate::symbol::SymbolInfo {
                 name: stringify!($name).to_owned(),
                 unit: ($value).unit(),
-                shape: crate::expr::Shape::SCALAR
+                shape: crate::expr::Shape::SCALAR,
+                description: String::new(),
                 // domain: crate::set::Set::C_NZ
             },
         );

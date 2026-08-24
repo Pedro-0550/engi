@@ -1,18 +1,22 @@
 use std::{
-    array, collections::HashMap, hash::Hash, ops::Mul, sync::LazyLock,
-    time::Duration,
+    array, cell::Cell, collections::HashMap, hash::Hash, iter::once, ops::Mul,
+    rc::Rc, sync::LazyLock, time::Duration,
 };
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use itertools::Itertools;
 use num::{One, Zero, complex::ComplexFloat};
+use ordered_float::OrderedFloat;
 
 use crate::{
-    core::scalar::{Scalar, gcd_f64},
+    core::{
+        arena::Arena,
+        scalar::{Scalar, gcd_f64},
+    },
     dimension::Quantity,
     expr::{
         Expr, Node,
-        ops::{Double, Single, Variadic, cos, sin, tan},
+        ops::{Binary, Pow, Unary, Variadic, cos, sin, tan},
     },
     simplify::normal::Normalize,
     symbol::Symbol, // set::Set,
@@ -82,8 +86,8 @@ impl Expr {
 
         let simplified = match self.node() {
             Node::Variadic(variadic) => variadic.simplify(ctx),
-            Node::Single(single) => single.simplify(ctx),
-            Node::Double(double) => double.simplify(ctx),
+            Node::Unary(single) => single.simplify(ctx),
+            Node::Binary(double) => double.simplify(ctx),
             Node::Matrix(matrix) => todo!(),
             _ => unreachable!(),
         }
@@ -131,7 +135,7 @@ macro_rules! trig_simplify {
     ($inv:ident, $fn:ident, $expr:ident, $self:ident, $ctx:ident) => {
         match $expr.node() {
             Node::Const(qty) => Scalar::from(qty.value().$fn()).into(),
-            Node::Single(op) if let Single::$inv(ref x) = *op => {
+            Node::Unary(op) if let Unary::$inv(ref x) = *op => {
                 x.simplify_inner($ctx)
             }
             _ => $self.with_arg($self.arg().simplify_inner($ctx)).into(),
@@ -139,38 +143,38 @@ macro_rules! trig_simplify {
     };
 }
 
-impl Simplify for Single {
+impl Simplify for Unary {
     fn simplify(&self, ctx: &mut SimplifyContext) -> Expr {
         match self {
-            Single::Sin(x) => trig_simplify!(Asin, sin, x, self, ctx),
-            Single::Cos(x) => trig_simplify!(Acos, cos, x, self, ctx),
-            Single::Tan(x) => trig_simplify!(Atan, tan, x, self, ctx),
-            Single::Sinh(x) => trig_simplify!(Asinh, sinh, x, self, ctx),
-            Single::Cosh(x) => trig_simplify!(Acosh, cosh, x, self, ctx),
-            Single::Tanh(x) => trig_simplify!(Atanh, tanh, x, self, ctx),
+            Unary::Sin(x) => trig_simplify!(Asin, sin, x, self, ctx),
+            Unary::Cos(x) => trig_simplify!(Acos, cos, x, self, ctx),
+            Unary::Tan(x) => trig_simplify!(Atan, tan, x, self, ctx),
+            Unary::Sinh(x) => trig_simplify!(Asinh, sinh, x, self, ctx),
+            Unary::Cosh(x) => trig_simplify!(Acosh, cosh, x, self, ctx),
+            Unary::Tanh(x) => trig_simplify!(Atanh, tanh, x, self, ctx),
 
-            Single::Transpose(expr) => todo!(),
-            Single::Conj(expr) => todo!(),
-            Single::Arg(expr) => todo!(),
-            Single::Det(expr) => todo!(),
-            Single::Norm(expr) => todo!(),
+            Unary::Transpose(expr) => todo!(),
+            Unary::Conj(expr) => todo!(),
+            Unary::Arg(expr) => todo!(),
+            Unary::Det(expr) => todo!(),
+            Unary::Norm(expr) => todo!(),
             _ => self.with_arg(self.arg().simplify_inner(ctx)).into(),
         }
     }
 }
 
-impl Simplify for Double {
+impl Simplify for Binary {
     fn simplify(&self, ctx: &mut SimplifyContext) -> Expr {
         let simplified = self
             .with_args(array::from_fn(|i| self.args()[i].simplify_inner(ctx)))
             .into();
 
         match &simplified {
-            Double::Pow { base, exp } => {
-                if let Node::Double(Double::Pow {
+            Binary::Pow(Pow { base, exp }) => {
+                if let Node::Binary(Binary::Pow(Pow {
                     base: inner_base,
                     exp: inner_exp,
-                }) = &base.node()
+                })) = &base.node()
                     && let Node::Const(exp) = exp.node()
                     && let Node::Const(inner_exp) = inner_exp.node()
                     && exp.value().is_integer()
@@ -220,7 +224,8 @@ impl Simplify for Variadic {
             /* -------------------------------------------------------------------------- */
             // joins integer powers -> x^2 * x^3 -> x^5
             } else if self.is_mul()
-                && let Node::Double(Double::Pow { base, exp }) = term.node()
+                && let Node::Binary(Binary::Pow(Pow { base, exp })) =
+                    term.node()
                 && let Node::Const(exp) = exp.node()
                 && exp.value().is_integer()
             {
@@ -272,179 +277,310 @@ impl Simplify for Variadic {
         /* -------------------------------------------------------------------------- */
         // Partial factoring -> x * a + x * b -> x(a + b)
         // x * a + x * b + y * c + y * d -> x(a+b) + y(b+c)
+        // TODO
 
-        if self.is_add() && aggregated.len() >= 2 {
-            // TODO: when domain is implemented allow fractional exponents to be factored as well
-            //
-            // I really wrote this. With my free will.
-            //
-            // The factor table stores the individual factors for each term in this addition and their exponents,
-            // as well as the term's coefficient.
-            //
-            // For the expression (x * y * 3) + (4 * x^2 / y) + (y^3) + (4y^2) it would look something like:
-            // [
-            //  ({ x: 1, y:  1 }, 3)
-            //  ({ x: 2, y: -1 }, 4)
-            //  ({ y: 3        }, 1)
-            //  ({ y: 2        }, 4)
-            // ]
-            // We want to factor this into: y * ((x * 3) + y * (4 + y)) + (4 * x^2 / y)
-            // During factoring, powers over multiplication are expanded.
-            // Then, we group unique factors by exponent sign, ignoring terms where its 0, producing 2 groups for each factor like so:
-            // x:
-            // + [
-            //  ({ x: 1, y:  1 }, 3)
-            //  ({ x: 2, y: -1 }, 4)
-            // ]
-            // - []
-            //
-            // y:
-            // + [
-            //  ({ x: 1, y:  1 }, 3)
-            //  ({ y: 3        }, 1)
-            //  ({ y: 2        }, 4)
-            // ]
-            // - [
-            //  ({ x: 2, y: -1 }, 4)
-            // ]
-            //
-            // The group with the most terms is factored first, and its terms are removed from other groups.
-            // We start from the term with the highest exp, then move out.
-            // First we calculate what exp each level will take by subtracting the sum of every previous exp, starting from the lowest exp:
-            // y -> y^1
-            // y^2 -> y^(2-1) -> y^1
-            // y^3 -> y^(3 - (1 + 1)) -> y^1
-            //
-            // For n factors with the same exp, the GCD of the coefficient must be taken to pull it out
-            //
-            // After the first step, we have
-            // x:
-            // + []
-            // - []
-            //
-            // y:
-            // + []
-            // - [
-            //  ({ x: 2, y: -1 }, 4)
-            // ]
-            //
-            // This would then be repeated until we only have 1 term left, which we already do.
-            // The last term is left unfactored.
+        // if self.is_add() && aggregated.len() >= 2 {
+        //     // TODO: when domain is implemented allow fractional exponents to be factored as well
+        //     //
+        //     // I really wrote this. With my free will.
+        //     //
+        //     // The factor table stores the individual factors for each term in this addition and their exponents,
+        //     // as well as the term's coefficient.
+        //     //
+        //     // For the expression (x * y * 3) + (4 * x^2 / y) + (y^3) + (4y^2) + (8y^2 * x) it would look something like:
+        //     // [
+        //     //  ({ x: 1, y:  1 }, 3)
+        //     //  ({ x: 2, y: -1 }, 4)
+        //     //  ({       y: 3  }, 1)
+        //     //  ({       y: 2  }, 4)
+        //     //  ({ x: 1, y: 2  }, 8)
+        //     // ]
+        //     // We want to factor this into: y * ((x * 3) + y * (4 + 8x + y)) + (4 * x^2 / y)
+        //     // During factoring, powers over multiplication are expanded.
+        //     // Then, we group unique factors by exponent sign, ignoring terms where its 0, producing 2 groups for each factor like so:
+        //     // x:
+        //     // + [
+        //     //  ({ x: 1, y:  1 }, 3)
+        //     //  ({ x: 2, y: -1 }, 4)
+        //     //  ({ x: 1, y: 2  }, 8)
+        //     // ]
+        //     // - []
+        //     //
+        //     // y:
+        //     // + [
+        //     //  ({ x: 1, y:  1 }, 3)
+        //     //  ({ y: 3        }, 1)
+        //     //  ({ y: 2        }, 4)
+        //     //  ({ x: 1, y: 2  }, 8)
+        //     // ]
+        //     // - [
+        //     //  ({ x: 2, y: -1 }, 4)
+        //     // ]
+        //     //
+        //     // The group with the most terms is factored first, and its terms are removed from other groups. Positive and negative groups are factored separately
+        //     // We start from the term with the highest exp, then move out.
+        //     // First we calculate what exp each level will take by subtracting the sum of every previous exp, starting from the lowest exp:
+        //     // y -> y^1
+        //     // y^2 -> y^(2-1) -> y^1
+        //     // y^3 -> y^(3 - (1 + 1)) -> y^1
+        //     //
+        //     // Then we factor from the inside out, appending each previous level to the current sum, and mapping exponents:
+        //     // y^3 maps -> y
+        //     // For n factors with the same exp, the GCD of the coefficient must be taken to pull it out:
+        //     //
+        //     //  ({ y: 2        }, 4)
+        //     //  ({ x: 1, y: 2  }, 8)
+        //     //  <prev> -> ({ y: 1  }, 1)
+        //     // GCD = 1
+        //     //
+        //     // y^2 maps -> y
+        //     // 4(y^2) + 8(y^2 * x) + <prev> -> y * (4 + 8x + <prev>) -> y * (4 + 8x + y)
+        //     //
+        //     // y maps -> y
+        //     // y * x * 3 + <prev> -> (y * x * 3) + (y * (4 + 8x + y)) -> y(3x + y(4 + 8x + y))
+        //     //
+        //     // After the first step, we have
+        //     // x:
+        //     // + []
+        //     // - []
+        //     //
+        //     // y:
+        //     // + []
+        //     // - [
+        //     //  ({ x: 2, y: -1 }, 4)
+        //     // ]
+        //     //
+        //     // This would then be repeated until all terms are disjoint, which they already are.
+        //     // The last term is left unfactored.
 
-            let mut factor_table =
-                Vec::<(AHashMap<Expr, f64>, f64)>::with_capacity(
-                    aggregated.len(),
-                );
+        //     #[derive(PartialEq, Clone, Debug)]
+        //     struct Term {
+        //         factors: AHashMap<Expr, i64>,
+        //         coef: f64,
+        //     }
 
-            aggregated.sort_unstable();
-            let (lone_const, terms) = extract_const(&aggregated);
+        //     impl Term {
+        //         fn new(factors: AHashMap<Expr, i64>, coef: f64) -> Self {
+        //             Self { factors, coef }
+        //         }
+        //     }
 
-            for term in terms {
-                match term.node() {
-                    Node::Variadic(Variadic::Mul(t)) => {
-                        let mut map = AHashMap::with_capacity(t.len());
-                        let (const_factor, factors) = extract_const(&t);
+        //     impl PartialOrd for Term {
+        //         fn partial_cmp(
+        //             &self,
+        //             other: &Self,
+        //         ) -> Option<std::cmp::Ordering> {
+        //             Some(self.coef.partial_cmp(&other.coef).unwrap().then_with(
+        //                 || {
+        //                     self.factors
+        //                         .iter()
+        //                         .partial_cmp(other.factors.iter())
+        //                         .unwrap()
+        //                 },
+        //             ))
+        //         }
+        //     }
 
-                        let const_factor = const_factor.unwrap_or(1.0.into());
+        //     let mut remaining = Vec::<Option<Term>>::new();
+        //     let mut groups =
+        //         AHashMap::<Expr, AHashMap<i64, Vec<usize>>>::with_capacity(
+        //             aggregated.len(),
+        //         );
 
-                        for fac in factors {
-                            match fac.node() {
-                                Node::Double(Double::Pow { base, exp })
-                                    if let Node::Const(exp) = exp.node()
-                                        && exp.value().is_integer() =>
-                                {
-                                    *map.entry(base.clone()).or_insert(0.0) +=
-                                        exp.value().re;
-                                }
-                                _ => {
-                                    *map.entry(fac).or_insert(0.0) += 1.0;
-                                }
-                            }
-                        }
+        //     aggregated.sort_unstable();
+        //     let (lone_const, terms) = extract_const(&aggregated);
 
-                        if const_factor.value().is_real() {
-                            factor_table.push((map, const_factor.value().re))
-                        } else {
-                            map.insert(const_factor.into(), 1.0);
-                            factor_table.push((map, 1.0))
-                        }
-                    }
-                    Node::Double(Double::Pow { base, exp })
-                        if let Node::Const(exp) = exp.node()
-                            && exp.value().is_integer() =>
-                    {
-                        factor_table.push((
-                            AHashMap::from([(base.clone(), exp.value().re)]),
-                            1.0,
-                        ))
-                    }
-                    Node::Const(_) => unreachable!(),
-                    _ => {
-                        factor_table.push((AHashMap::from([(term, 1.0)]), 1.0))
-                    }
-                }
-            }
+        //     /* -------------------------------------------------------------------------- */
+        //     for term in terms {
+        //         let mut term_data =
+        //             Term::new(AHashMap::with_capacity(aggregated.len()), 1.0);
 
-            if !factor_table.is_empty() {
-                let (first_terms, first_const) = &factor_table[0];
+        //         fn match_term(term: Expr, acc: i64, term_data: &mut Term) {
+        //             match term.node() {
+        //                 Node::Variadic(Variadic::Mul(t)) => {
+        //                     let (coef, factors) = extract_const(&t);
 
-                let mut factored_terms = first_terms.clone();
-                let mut factored_const = *first_const;
+        //                     let coef = coef.unwrap_or(1.0.into());
 
-                for (terms, c) in &factor_table[1..] {
-                    factored_terms.retain(|base, exp| match terms.get(base) {
-                        Some(other_exp) => {
-                            *exp = exp.min(*other_exp);
-                            true
-                        }
-                        None => false,
-                    });
+        //                     for fac in factors {
+        //                         match_term(fac, acc, term_data);
+        //                     }
 
-                    factored_const = gcd_f64(factored_const, *c);
-                }
+        //                     if let Some(coef) = coef.value().as_real() {
+        //                         term_data.coef = coef;
+        //                     } else {
+        //                         term_data.factors.insert(coef.into(), acc);
+        //                     }
+        //                 }
+        //                 Node::Binary(Binary::Pow(Pow { base, exp }))
+        //                     if let Some(exp) = exp
+        //                         .node()
+        //                         .as_const()
+        //                         .and_then(|qty| qty.value().as_integer()) =>
+        //                 {
+        //                     match_term(base.clone(), acc * exp, term_data);
+        //                 }
+        //                 Node::Const(_) => unreachable!(),
+        //                 _ => {
+        //                     term_data.factors.insert(term, acc);
+        //                 }
+        //             }
+        //         }
 
-                if !factored_terms.is_empty() || factored_const != 1.0 {
-                    let common_factor = (factored_terms
-                        .iter()
-                        .fold(Expr::from(1.0), |acc, (base, exp)| {
-                            acc * (base ^ *exp)
-                        })
-                        * factored_const)
-                        .simplify_inner(ctx);
+        //         match_term(term, 1, &mut term_data);
 
-                    let mapped_terms = Variadic::Add(
-                        factor_table
-                            .iter()
-                            .map(|(terms, c)| {
-                                terms.iter().fold(
-                                    Expr::from(1.0),
-                                    |acc, (base, exp)| {
-                                        let remaining = *exp
-                                            - factored_terms
-                                                .get(base)
-                                                .copied()
-                                                .unwrap_or(0.0);
+        //         let term_idx = remaining.len();
 
-                                        if remaining == 0.0 {
-                                            acc
-                                        } else if remaining == 1.0 {
-                                            acc * base
-                                        } else {
-                                            acc * (base ^ remaining)
-                                        }
-                                    },
-                                ) * (*c / factored_const)
-                            })
-                            .collect(),
-                    );
+        //         for (fac, exp) in term_data.factors.clone() {
+        //             groups
+        //                 .entry(fac)
+        //                 .or_insert_with(AHashMap::new)
+        //                 .entry(exp)
+        //                 .or_insert_with(Vec::new)
+        //                 .push(term_idx);
+        //         }
 
-                    aggregated = vec![
-                        (common_factor * Expr::from(mapped_terms)),
-                        lone_const.unwrap_or(0.0.into()).into(),
-                    ]
-                }
-            }
-        }
+        //         remaining.push(Some(term_data));
+        //     }
+
+        //     /* -------------------------------------------------------------------------- */
+        //     // TODO: refactor this shit
+
+        //     if !groups.is_empty() {
+        //         println!("groups: {:#?}", groups);
+
+        //         println!("Remaining terms: {:#?}", remaining);
+
+        //         let mut groups = groups
+        //             .into_iter()
+        //             .map(|group| (group.0, group.1.into_iter().collect_vec()))
+        //             .collect_vec();
+
+        //         groups.sort_unstable_by(|a, b| {
+        //             a.1.iter()
+        //                 .map(|x| x.1.len())
+        //                 .sum::<usize>()
+        //                 .cmp(&b.1.iter().map(|x| x.1.len()).sum::<usize>())
+        //                 .then_with(|| {
+        //                     a.1.iter()
+        //                         .map(|x| {
+        //                             x.1.iter().map(|i| remaining[*i].as_ref())
+        //                         })
+        //                         .flatten()
+        //                         .partial_cmp(
+        //                             b.1.iter()
+        //                                 .map(|x| {
+        //                                     x.1.iter()
+        //                                         .map(|i| remaining[*i].as_ref())
+        //                                 })
+        //                                 .flatten(),
+        //                         )
+        //                         .unwrap()
+        //                 })
+        //         });
+
+        //         let mut factored = Vec::new();
+
+        //         while !groups.is_empty() {
+        //             let (fac, mut levels) = groups.pop().unwrap();
+
+        //             levels.sort_unstable_by_key(|(exp, ..)| *exp);
+
+        //             let partition_point =
+        //                 levels.partition_point(|(exp, ..)| *exp > 0);
+        //             let (pos, neg) = levels.split_at_mut(partition_point);
+
+        //             for part in [pos, neg] {
+        //                 for i in 0..part.len() {
+        //                     let (prev, current) = part.split_at_mut(i);
+        //                     let level = &mut current[0];
+
+        //                     let prev = prev.last().map(|x| x.0).unwrap_or(0);
+
+        //                     level.0 = level.0 - prev;
+        //                 }
+
+        //                 let mut prev = Expr::from(0.0);
+
+        //                 for (delta_exp, terms) in part.iter_mut().rev() {
+        //                     println!("{}", delta_exp);
+        //                     println!(
+        //                         "Terms: {:#?}",
+        //                         terms
+        //                             .iter()
+        //                             .map(|i| remaining[*i]
+        //                                 .as_ref()
+        //                                 .map(|t| t.factors.clone()))
+        //                             .collect_vec()
+        //                     );
+
+        //                     let pulled_out = terms
+        //                         .iter()
+        //                         .filter_map(|i| remaining[*i].take())
+        //                         .reduce(|mut a, b| {
+        //                             a.factors.retain(|base, exp| {
+        //                                 if *base == fac {
+        //                                     *exp = *delta_exp;
+        //                                     return true;
+        //                                 }
+
+        //                                 match b.factors.get(base) {
+        //                                     Some(other_exp) => {
+        //                                         *exp = (*exp).min(*other_exp);
+        //                                         true
+        //                                     }
+        //                                     None => false,
+        //                                 }
+        //                             });
+
+        //                             Term::new(
+        //                                 a.factors,
+        //                                 gcd_f64(a.coef, b.coef),
+        //                             )
+        //                         })
+        //                         .or(terms
+        //                             .iter()
+        //                             .filter_map(|i| remaining[*i].take())
+        //                             .map(|mut x| {
+        //                                 *x.factors.get_mut(&fac).unwrap() =
+        //                                     *delta_exp;
+        //                                 x
+        //                             })
+        //                             .at_most_one()
+        //                             .ok()
+        //                             .flatten())
+        //                         .unwrap_or(Term::new(AHashMap::new(), 1.0));
+
+        //                     if !pulled_out.factors.is_empty()
+        //                         || pulled_out.coef != 1.0
+        //                     {
+        //                         let common_factor =
+        //                             (pulled_out.factors.iter().fold(
+        //                                 Expr::from(1.0),
+        //                                 |acc, (base, exp)| acc * (base ^ *exp),
+        //                             ) * pulled_out.coef)
+        //                                 .simplify_inner(ctx);
+
+        //                         let mut sum = Vec::new();
+
+        //                         sum.push(prev);
+
+        //                         println!("Pulled out: {:#?}", pulled_out);
+        //                         println!("Common factor: {}", common_factor);
+        //                         prev = common_factor
+        //                             * Expr::from(Variadic::Add(sum))
+        //                     }
+        //                 }
+        //                 factored.push(prev);
+        //             }
+        //         }
+
+        //         aggregated = factored;
+        //         if let Some(qty) = lone_const {
+        //             aggregated.push(qty.into());
+        //         }
+        //     }
+        // }
 
         /* -------------------------------------------------------------------------- */
 
@@ -471,9 +607,8 @@ pub fn separate_consts(
 pub fn extract_const(
     terms: &Vec<Expr>,
 ) -> (Option<Quantity>, impl Iterator<Item = Expr>) {
-    let constant = terms
-        .get(0)
-        .and_then(|x| x.clone().into_node().try_unwrap_const().ok());
+    let constant =
+        terms.get(0).and_then(|x| x.clone().into_node().as_const().copied());
 
     let exprs = terms.iter().cloned().filter(|expr| !expr.node().is_const());
 

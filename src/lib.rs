@@ -6,11 +6,15 @@
 #![feature(iter_map_windows)]
 #![feature(const_try)]
 #![feature(duration_constructors)]
+#![feature(default_field_values)]
+#![feature(associated_type_defaults)]
+#![feature(macro_derive)]
 
 use num::Complex;
 
 pub mod core {
     pub mod arena;
+    pub mod graph;
     pub mod macros;
     pub mod scalar;
     pub mod util;
@@ -18,7 +22,7 @@ pub mod core {
 
 pub mod diff;
 pub mod dimension;
-pub mod eq;
 pub mod expr;
 pub mod simplify;
 pub mod symbol;
+pub mod system;
