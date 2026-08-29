@@ -4,8 +4,10 @@ use std::{
     collections::HashMap,
     marker::PhantomData,
     rc::Rc,
+    sync::{Arc, RwLock},
 };
 
+use derive_more::From;
 use itertools::Either;
 use num::complex::Complex;
 use variadics_please::all_tuples;
@@ -15,7 +17,7 @@ use crate::{
         graph::{BipartiteGraph, RightNode},
         scalar::{I, Scalar},
     },
-    dimension::{Quantity, si::Hz},
+    dimension::{Quantity, Unit, si::Hz},
     equation, equations,
     expr::{Expr, ops::sin},
     symbol::Symbol,
@@ -46,15 +48,17 @@ pub mod var;
 // impl<S: System> Systems for S {}
 
 pub trait Interface {
-    fn variables(&self) -> Vec<InterfaceVariable>;
+    fn connectors(&self) -> Vec<Connector>;
 }
 
 pub trait Model: Constraints + Equations {
-    type FieldAccess;
+    type Access;
     type Solution;
 
     fn interfaces(&self) -> Vec<Box<dyn Interface>>;
     fn variables(&self) -> Vec<Variable>;
+    fn submodels(&self) -> Vec<Box<dyn ErasedModel>>;
+    fn access(&self) -> Self::Access;
 }
 
 pub trait ErasedModel: Any {
@@ -73,21 +77,23 @@ pub trait Equations {
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-pub struct InterfaceVariable {
+pub struct Connector {
     condition: Condition,
+    unit: Unit,
+    desc: String,
 }
 
 pub struct InterfaceId(usize);
 pub struct ModelId(usize);
 
 pub struct ModelHandle<M: Model> {
-    fields: M::FieldAccess,
+    fields: M::Access,
     id: ModelId,
 }
 
 pub struct InterfaceHandle<I: Interface> {
     id: InterfaceId,
-    _phantom: PhantomData<I>,
+    _p: PhantomData<I>,
 }
 
 pub struct Connection {
@@ -97,6 +103,15 @@ pub struct Connection {
 
 pub struct System {
     models: HashMap<ModelId, Box<dyn ErasedModel>>,
+    connections: Vec<Connection>,
+}
+
+pub struct VariableAccess {
+    binding: Option<Value>,
+}
+
+pub struct InterfaceAccess {
+    id: InterfaceId,
     connections: Vec<Connection>,
 }
 
@@ -166,7 +181,7 @@ pub struct System {
 //     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 // }
 
-// /* --------------------------------- STRUCTS -------------------------------- */
+/* ---------------------------------- ENUMS --------------------------------- */
 // pub struct SystemContext {}
 
 // pub struct SystemStructure {
@@ -193,6 +208,13 @@ pub enum Condition {
     Equal,
     Conserved,
     Transported,
+}
+
+#[derive(From)]
+pub enum Value {
+    Set(),
+    Matrix(),
+    Scalar(Scalar),
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
@@ -233,25 +255,27 @@ pub enum Condition {
 /* -------------------------------------------------------------------------- */
 
 mod model_based_large_signal_bjt {
-    use crate::system::var::Variable;
+    use crate::{
+        dimension::{other::t, si::*},
+        equations,
+        system::{Connector, Equations, eq::Equation, var::Variable},
+    };
 
     #[derive(Interface)]
-    pub struct Pin {
-        #[connect(Condition::Conserved)]
-        #[var(unit = A, desc = "Pin current")]
-        i: Variable,
+    pub struct ElectricalPin {
+        #[connect(cond = Condition::Conserved, unit = A, desc = "Pin current")]
+        i: Connector,
 
-        #[connect(Condition::Equal)]
-        #[var(unit = V, desc = "Pin voltage")]
-        v: Variable,
+        #[connect(cond = Condition::Conserved, unit = V, desc = "Pin voltage")]
+        v: Connector,
     }
 
     /* -------------------------------------------------------------------------- */
 
     #[derive(Model)]
-    pub struct Port {
-        p: Pin,
-        n: Pin,
+    pub struct ElectricalPort {
+        p: ElectricalPin,
+        n: ElectricalPin,
 
         #[var(unit = V, desc = "P-N potential")]
         v: Variable,
@@ -260,7 +284,7 @@ mod model_based_large_signal_bjt {
         i: Variable,
     }
 
-    impl Equations for Port {
+    impl Equations for ElectricalPort {
         fn equations(&self) -> Vec<Equation> {
             let port_fields!() = self;
             equations![p.i = n.i, i = p.i, v = p.v - n.v]
@@ -271,15 +295,14 @@ mod model_based_large_signal_bjt {
 
     #[derive(Interface)]
     pub struct ThermalPort {
-        #[connect(Condition::Equal)]
-        #[var(unit = W, desc = "Transferred power")]
-        p: Variable,
+        #[connect(cond = Condition::Equal, unit = W, desc = "Transferred power")]
+        p: Connector,
     }
 
     /* -------------------------------------------------------------------------- */
 
     #[derive(Model)]
-    pub struct SemiconductorThermal {
+    pub struct SemiThermal {
         #[var(unit = K, desc = "Ambient temperature")]
         t_a: Variable,
 
@@ -298,7 +321,7 @@ mod model_based_large_signal_bjt {
         pub port: ThermalPort,
     }
 
-    impl Equations for SemiconductorThermal {
+    impl Equations for SemiThermal {
         fn equations(&self) -> Vec<Equation> {
             let static_thermal_fields!() = self;
             equations![t_j - t_c = rθ_jc * p, t_c - t_a = rθ_ca * p]
@@ -332,9 +355,9 @@ mod model_based_large_signal_bjt {
         p_d: Variable,
 
         /* -------------------------------------------------------------------------- */
-        pub base: Pin,
-        pub collector: Pin,
-        pub emitter: Pin,
+        pub base: ElectricalPin,
+        pub collector: ElectricalPin,
+        pub emitter: ElectricalPin,
         pub thermal: ThermalPort,
     }
 
@@ -368,7 +391,7 @@ mod model_based_large_signal_bjt {
     pub struct Impedance {
         #[var(unit = Ω, desc = "Complex impedance")]
         z: Variable,
-        port: Port,
+        port: ElectricalPort,
         thermal: ThermalPort,
     }
 
@@ -383,7 +406,7 @@ mod model_based_large_signal_bjt {
 
     #[derive(Model)]
     pub struct Ground {
-        pin: Pin,
+        pin: ElectricalPin,
     }
 
     impl Equations for Ground {
@@ -397,7 +420,7 @@ mod model_based_large_signal_bjt {
 
     #[derive(Model)]
     pub struct IdealSupply {
-        out: Port,
+        out: ElectricalPort,
         #[var(unit = V, desc = "Supply output voltage")]
         v: Variable,
     }
@@ -413,14 +436,14 @@ mod model_based_large_signal_bjt {
 
     fn main() {
         let system = System::new();
+
         let v_b = system.add(IdealSupply::default(), "v_b");
         let v_c = system.add(IdealSupply::default(), "v_c");
         let bjt = system.add(StaticBjt::default(), "q1");
         let r_c = system.add(Impedance::default(), "r_c");
         let r_b = system.add(Impedance::default(), "r_b");
         let gnd = system.add(Ground::default(), "gnd");
-
-        let thermal = system.add(StaticThermal::default(), "q1_thermal");
+        let thermal = system.add(SemiThermal::default(), "q1_thermal");
 
         bjt.thermal.connect(thermal.port);
 
@@ -438,6 +461,11 @@ mod model_based_large_signal_bjt {
         r_c.z.bind(1e3 * Ω);
         bjt.v_ce.bind(6 * V);
 
+        thermal.t_amb.bind((25 + 273.15) * K);
+        thermal.rθ_jc.bind(10 * K / W);
+        thermal.rθ_ca.bind(20 * K / W);
+
         let solution = system.solve();
+        println!("{}", solution.get(bjt))
     }
 }
