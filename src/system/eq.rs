@@ -17,7 +17,7 @@ pub enum Inequality {
 }
 
 #[derive(Clone, PartialEq)]
-pub struct Inequation {
+pub struct Constraint {
     lhs: Expr,
     rhs: Expr,
     ineq: Inequality,
@@ -25,7 +25,7 @@ pub struct Inequation {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl Inequation {
+impl Constraint {
     pub fn new(lhs: Expr, rhs: Expr, ineq: Inequality) -> Self {
         Self { lhs, rhs, ineq }
     }
@@ -59,7 +59,7 @@ macro_rules! equation {
     };
 
     (@parse [$($lhs:tt)*] > $($rhs:tt)*) => {
-        $crate::system::eq::Inequation::new(
+        $crate::system::eq::Constraint::new(
             ($($lhs)*).into(),
             ($($rhs)*).into(),
             $crate::system::eq::Inequality::Greater
@@ -67,7 +67,7 @@ macro_rules! equation {
     };
 
     (@parse [$($lhs:tt)*] >= $($rhs:tt)*) => {
-        $crate::system::eq::Inequation::new(
+        $crate::system::eq::Constraint::new(
             ($($lhs)*).into(),
             ($($rhs)*).into(),
             $crate::system::eq::Inequality::GreaterOrEq
@@ -75,7 +75,7 @@ macro_rules! equation {
     };
 
     (@parse [$($lhs:tt)*] > $($rhs:tt)*) => {
-        $crate::system::eq::Inequation::new(
+        $crate::system::eq::Constraint::new(
             ($($lhs)*).into(),
             ($($rhs)*).into(),
             $crate::system::eq::Inequality::Greater
@@ -83,7 +83,7 @@ macro_rules! equation {
     };
 
     (@parse [$($lhs:tt)*] <= $($rhs:tt)*) => {
-        $crate::system::eq::Inequation::new(
+        $crate::system::eq::Constraint::new(
             ($($lhs)*).into(),
             ($($rhs)*).into(),
             $crate::system::eq::Inequality::LessOrEq
@@ -104,7 +104,7 @@ macro_rules! equations {
     (
         $(
             $($equation:tt)+
-        ),+ $(,)?
+        );+ $(;)?
     ) => {
         vec![
             $(

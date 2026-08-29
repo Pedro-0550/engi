@@ -1,11 +1,23 @@
-use crate::{core::scalar::Scalar, dimension::Unit, symbol::Symbol};
+use crate::{
+    core::scalar::Scalar,
+    dimension::Unit,
+    symbol::Symbol,
+    system::{System, SystemId},
+};
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
 #[derive(Clone, Copy, PartialEq)]
-pub enum Variable {
-    Unknown { symbol: Symbol, guess: Scalar },
-    Known { symbol: Symbol, value: Scalar },
+pub struct Variable {
+    value: Value,
+    symbol: Symbol,
+    system: SystemId,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Value {
+    Known(Scalar),
+    Unknown(Scalar),
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
@@ -15,13 +27,15 @@ pub struct VariableBuilder {
     guess: Option<Scalar>,
     value: Option<Scalar>,
     unit: Unit,
+    system: SystemId,
     description: String,
 }
 
 impl Variable {
-    pub fn builder(name: impl Into<String>) -> VariableBuilder {
+    pub fn builder<S: System>(name: impl Into<String>) -> VariableBuilder {
         VariableBuilder {
             name: name.into(),
+            system: S::id(),
             guess: None,
             value: None,
             unit: Unit::Unitless,
@@ -30,23 +44,20 @@ impl Variable {
     }
 
     pub fn symbol(&self) -> Symbol {
-        match self {
-            Variable::Unknown { symbol, .. } => *symbol,
-            Variable::Known { symbol, .. } => *symbol,
-        }
+        self.symbol
     }
 
     pub fn as_unknown(&self) -> Option<Scalar> {
-        match self {
-            Variable::Unknown { guess, .. } => Some(*guess),
-            Variable::Known { .. } => None,
+        match self.value {
+            Value::Unknown(guess) => Some(guess),
+            Value::Known(..) => None,
         }
     }
 
     pub fn as_known(&self) -> Option<Scalar> {
-        match self {
-            Variable::Unknown { .. } => None,
-            Variable::Known { value, .. } => Some(*value),
+        match self.value {
+            Value::Unknown(..) => None,
+            Value::Known(value) => Some(value),
         }
     }
 }
@@ -85,17 +96,19 @@ impl VariableBuilder {
     pub fn build(self) -> Variable {
         assert!(
             self.guess.is_some() ^ self.value.is_some(),
-            "Variable must have exactly one of `guess` or `value`"
+            "Variable must have either `guess` or `value`, not both. Values for knowns, guesses for unknowns"
         );
 
         let symbol = Symbol::new(&self.name)
             .set_unit(self.unit)
             .set_description(self.description);
 
-        match (self.guess, self.value) {
-            (Some(guess), None) => Variable::Unknown { symbol, guess },
-            (None, Some(value)) => Variable::Known { symbol, value },
+        let value = match (self.guess, self.value) {
+            (Some(guess), None) => Value::Unknown(guess),
+            (None, Some(value)) => Value::Known(value),
             _ => unreachable!(),
-        }
+        };
+
+        Variable { value, symbol, system: self.system }
     }
 }
