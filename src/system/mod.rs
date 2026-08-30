@@ -1,10 +1,14 @@
 use core::panic;
 use std::{
     any::{Any, TypeId},
+    cell::RefCell,
     collections::HashMap,
     marker::PhantomData,
     rc::Rc,
-    sync::{Arc, RwLock},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use derive_more::From;
@@ -18,47 +22,40 @@ use crate::{
         scalar::{I, Scalar},
     },
     dimension::{Quantity, Unit, si::Hz},
-    equation, equations,
     expr::{Expr, ops::sin},
     symbol::Symbol,
     symbols,
     system::{
         eq::{Constraint, Equation},
-        var::{Variable, VariableBuilder},
+        var::Variable,
     },
 };
 
 /* --------------------------------- MODULES -------------------------------- */
 
 pub mod eq;
-pub mod var;
 
 /* --------------------------------- TRAITS --------------------------------- */
-
-// pub trait Systems {}
-
-// macro_rules! impl_systems {
-//     ($($T:ident),*) => {
-//         impl<$($T: System),*> Systems for ($($T,)*) {}
-//     };
-// }
-
-// all_tuples!(impl_systems, 0, 24, T);
-
-// impl<S: System> Systems for S {}
 
 pub trait Interface {
     fn connectors(&self) -> Vec<Connector>;
 }
 
+pub trait ModelBuilder {
+    fn new(id: ModelId) -> Self;
+}
+
 pub trait Model: Constraints + Equations {
-    type Access;
+    type Builder: ModelBuilder;
     type Solution;
 
     fn interfaces(&self) -> Vec<Box<dyn Interface>>;
     fn variables(&self) -> Vec<Variable>;
     fn submodels(&self) -> Vec<Box<dyn ErasedModel>>;
-    fn access(&self) -> Self::Access;
+    fn builder(&self, system: &System) -> Self::Builder;
+    fn erased(self) -> Box<dyn ErasedModel> {
+        todo!()
+    }
 }
 
 pub trait ErasedModel: Any {
@@ -83,126 +80,52 @@ pub struct Connector {
     desc: String,
 }
 
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct InterfaceId(usize);
+
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct ModelId(usize);
 
-pub struct ModelHandle<M: Model> {
-    fields: M::Access,
-    id: ModelId,
-}
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
+pub struct VariableId(usize);
 
-pub struct InterfaceHandle<I: Interface> {
-    id: InterfaceId,
-    _p: PhantomData<I>,
-}
-
-pub struct Connection {
+struct Connection {
     a: InterfaceId,
     b: InterfaceId,
 }
 
-pub struct System {
-    models: HashMap<ModelId, Box<dyn ErasedModel>>,
+struct Binding {
+    var: Variable,
+    val: Value,
+}
+
+struct SystemInner {
+    models: Vec<Box<dyn ErasedModel>>,
+    interfaces: Vec<Box<dyn Interface>>,
+    variables: Vec<Variable>,
     connections: Vec<Connection>,
+    bindings: HashMap<VariableId, Value>,
 }
 
-pub struct VariableAccess {
-    binding: Option<Value>,
+type SystemInnerRef = Rc<RefCell<SystemInner>>;
+
+pub struct System(SystemInnerRef);
+
+pub struct Variable {
+    symbol: Symbol,
 }
 
-pub struct InterfaceAccess {
+pub struct VariableBuilder<'m, M: Model> {
+    id: VariableId,
+    model: &'m M::Builder,
+}
+
+pub struct InterfaceBuilder<'m, M: Model> {
     id: InterfaceId,
-    connections: Vec<Connection>,
+    model: &'m M::Builder,
 }
-
-// pub trait Hierarchy {
-//     type Parent: System;
-//     type Root: System = <Self::Parent as System>::Parent;
-// }
-
-// pub trait System: Equations + Variables + Constraints + Hierarchy
-// where
-//     Self: 'static + Sized, {
-//     type Solution;
-//     type Root: System = <<Self as Hierarchy>::Parent as System>::Parent;
-
-//     fn id() -> SystemId {
-//         SystemId(TypeId::of::<Self>())
-//     }
-
-//     fn collect_variables(&self, into: &mut Vec<Variable>);
-//     fn collect_equations(&self, into: &mut Vec<Equation>);
-//     fn collect_constraints(&self, into: &mut Vec<Constraint>);
-
-//     fn structure(
-//         &self,
-//         deps: <Self as Equations>::Dependencies,
-//     ) -> SystemStructure {
-//         // Equation <-> Variable
-//         let mut incidence = BipartiteGraph::new();
-
-//         let equations = self.equations(deps);
-//         let variables = self.variables();
-
-//         for _ in &variables {
-//             incidence.add_right();
-//         }
-
-//         for eq in &equations {
-//             let eq_node = incidence.add_left();
-
-//             for symbol in eq.symbols() {
-//                 let var_node = RightNode::new(
-//                     variables
-//                         .iter()
-//                         .position(|x| x.symbol() == symbol)
-//                         .unwrap(),
-//                 );
-
-//                 incidence.add_edge(eq_node, var_node);
-//             }
-//         }
-
-//         SystemStructure { incidence, equations, variables }
-//     }
-// }
-
-// pub trait ErasedSystem: Any {
-//     fn id(&self) -> SystemId;
-
-//     fn collect_variables(&self, into: &mut Vec<Variable>);
-//     fn collect_equations(&self, into: &mut Vec<Equation>);
-//     fn collect_constraints(&self, into: &mut Vec<Constraint>);
-
-//     fn structure(&self) -> SystemStructure;
-
-//     fn as_any(&self) -> &dyn Any;
-//     fn as_any_mut(&mut self) -> &mut dyn Any;
-//     fn into_any(self: Box<Self>) -> Box<dyn Any>;
-// }
 
 /* ---------------------------------- ENUMS --------------------------------- */
-// pub struct SystemContext {}
-
-// pub struct SystemStructure {
-//     incidence: BipartiteGraph,
-//     equations: Vec<Equation>,
-//     variables: Vec<Variable>,
-// }
-
-// #[derive(Clone, Copy, PartialEq, Hash)]
-// pub struct SystemId(TypeId);
-
-// pub enum Solvability {
-//     Symbolic,
-//     Numeric,
-// }
-
-// pub struct Solution {
-//     solved: HashMap<Variable, Scalar>,
-//     observed: HashMap<Variable, Scalar>,
-//     residuals: HashMap<Equation, f64>,
-// }
 
 pub enum Condition {
     Equal,
@@ -219,46 +142,38 @@ pub enum Value {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-// TODO filter by known when relev ant
+impl<M: Model> Constraints for M {
+    default fn constraints(&self) -> Vec<Constraint> {
+        Vec::new()
+    }
+}
 
-// impl SystemStructure {
-//     fn simplify(&mut self) {
-//         let matching = self.incidence.maximum_matching();
-//         if !matching.is_perfect() {
-//             panic!()
-//         }
+impl System {
+    const NEXT_MODEL_ID: AtomicUsize = AtomicUsize::new(1);
 
-//         let mut dependency_graph = Vec::new();
+    fn add<M: Model>(&mut self, model: M) -> &mut M::Builder {
+        let id = ModelId(Self::NEXT_MODEL_ID.fetch_add(1, Ordering::SeqCst));
+        let builder = model.builder(&*self);
 
-//         for (eq_node, var_node) in matching.edges() {
-//             let eq = &self.equations[eq_node.index()];
-//             let var = &self.variables[var_node.index()];
-//             for sym in eq.symbols() {
-//                 if sym == var.symbol() {
-//                     continue;
-//                 }
+        self.models.borrow_mut().insert(id, model.erased());
 
-//                 let sym_idx = self
-//                     .variables
-//                     .iter()
-//                     .position(|x| x.symbol() == sym)
-//                     .unwrap();
-
-//                 dependency_graph.push((sym_idx, var_node.index()));
-//             }
-//         }
-
-//         panic!("{:#?}", dependency_graph);
-//     }
-// }
+        &mut builder
+    }
+}
 
 /* -------------------------------------------------------------------------- */
 
 mod model_based_large_signal_bjt {
+    use engi_macros::equations;
+
+    use crate as engi;
     use crate::{
         dimension::{other::t, si::*},
-        equations,
-        system::{Connector, Equations, eq::Equation, var::Variable},
+        system::{
+            Connector, Constraints, Equations,
+            eq::{Constraint, Equation},
+            var::Variable,
+        },
     };
 
     #[derive(Interface)]
@@ -274,7 +189,10 @@ mod model_based_large_signal_bjt {
 
     #[derive(Model)]
     pub struct ElectricalPort {
+        #[interface]
         p: ElectricalPin,
+
+        #[interface]
         n: ElectricalPin,
 
         #[var(unit = V, desc = "P-N potential")]
@@ -286,7 +204,7 @@ mod model_based_large_signal_bjt {
 
     impl Equations for ElectricalPort {
         fn equations(&self) -> Vec<Equation> {
-            let port_fields!() = self;
+            let electrical_port_fields!() = self;
             equations![p.i = n.i, i = p.i, v = p.v - n.v]
         }
     }
@@ -318,6 +236,7 @@ mod model_based_large_signal_bjt {
         #[var(unit = K / W, desc = "Case-ambient thermal resistance")]
         rθ_ca: Variable,
 
+        #[model]
         pub port: ThermalPort,
     }
 
@@ -355,9 +274,16 @@ mod model_based_large_signal_bjt {
         p_d: Variable,
 
         /* -------------------------------------------------------------------------- */
+        #[interface]
         pub base: ElectricalPin,
+
+        #[interface]
         pub collector: ElectricalPin,
+
+        #[interface]
         pub emitter: ElectricalPin,
+
+        #[interface]
         pub thermal: ThermalPort,
     }
 
@@ -391,14 +317,22 @@ mod model_based_large_signal_bjt {
     pub struct Impedance {
         #[var(unit = Ω, desc = "Complex impedance")]
         z: Variable,
+        #[interface]
         port: ElectricalPort,
+        #[interface]
         thermal: ThermalPort,
     }
 
     impl Equations for Impedance {
         fn equations(&self) -> Vec<Equation> {
             let impedance_fields!() = self;
-            equations![port.v = port.i * z, thermal.p = real(port.v * port.i)]
+            equations![port.v = port.i * z, thermal.p = re(port.v * port.i)]
+        }
+    }
+
+    impl Constraints for Impedance {
+        fn constraints(&self) -> Vec<Constraint> {
+            equations![re(self.z) > 0]
         }
     }
 

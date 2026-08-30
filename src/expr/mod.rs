@@ -87,6 +87,12 @@ impl_as!(
     Matrix => Matrix,
 );
 
+impl From<(usize, usize)> for Shape {
+    fn from(value: (usize, usize)) -> Self {
+        Self::rect(value.0, value.1)
+    }
+}
+
 impl Shape {
     // SAFETY:
     // As of August 2026, 1 is not equal to 0.

@@ -8,5 +8,7 @@ syn = "3.0"
 quote = "1.0"
 proc-macro2 = "1.0"
 darling = "0.24"
+itertools = "0.15"
+
 [lib]
 proc-macro = true

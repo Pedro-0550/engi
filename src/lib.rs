@@ -9,7 +9,7 @@
 #![feature(default_field_values)]
 #![feature(associated_type_defaults)]
 #![feature(macro_derive)]
-
+#![feature(min_specialization)]
 use num::Complex;
 
 pub mod core {

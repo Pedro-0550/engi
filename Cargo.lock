@@ -311,6 +311,7 @@ name = "engi-macros"
 version = "0.1.0"
 dependencies = [
  "darling",
+ "itertools 0.15.0",
  "proc-macro2",
  "quote",
  "syn 3.0.3",
