@@ -2,7 +2,7 @@ use core::panic;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     marker::PhantomData,
     rc::Rc,
     sync::{
@@ -25,10 +25,7 @@ use crate::{
     expr::{Expr, ops::sin},
     symbol::Symbol,
     symbols,
-    system::{
-        eq::{Constraint, Equation},
-        var::Variable,
-    },
+    system::eq::{Constraint, Equation},
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -41,24 +38,21 @@ pub trait Interface {
     fn connectors(&self) -> Vec<Connector>;
 }
 
-pub trait ModelBuilder {
-    fn new(id: ModelId) -> Self;
-}
+pub trait ModelBuilder {}
 
 pub trait Model: Constraints + Equations {
     type Builder: ModelBuilder;
     type Solution;
 
-    fn interfaces(&self) -> Vec<Box<dyn Interface>>;
-    fn variables(&self) -> Vec<Variable>;
-    fn submodels(&self) -> Vec<Box<dyn ErasedModel>>;
-    fn builder(&self, system: &System) -> Self::Builder;
-    fn erased(self) -> Box<dyn ErasedModel> {
+    fn register(self, system: System) -> Self::Builder;
+    fn erased(self) -> Box<dyn ErasedModel>
+    where
+        Self: Sized, {
         todo!()
     }
 }
 
-pub trait ErasedModel: Any {
+pub trait ErasedModel: Any + Constraints + Equations {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
@@ -72,12 +66,16 @@ pub trait Equations {
     fn equations(&self) -> Vec<Equation>;
 }
 
+pub trait InterfaceArrayExt {
+    fn connect(self, other: &InterfaceBuilder);
+}
+
 /* --------------------------------- STRUCTS -------------------------------- */
 
+#[derive(Debug, Clone, Copy)]
 pub struct Connector {
     condition: Condition,
-    unit: Unit,
-    desc: String,
+    variable: Variable,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
@@ -89,6 +87,7 @@ pub struct ModelId(usize);
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 pub struct VariableId(usize);
 
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct Connection {
     a: InterfaceId,
     b: InterfaceId,
@@ -99,48 +98,100 @@ struct Binding {
     val: Value,
 }
 
+#[derive(Default)]
 struct SystemInner {
     models: Vec<Box<dyn ErasedModel>>,
     interfaces: Vec<Box<dyn Interface>>,
     variables: Vec<Variable>,
-    connections: Vec<Connection>,
+    connections: HashSet<Connection>,
     bindings: HashMap<VariableId, Value>,
 }
 
-type SystemInnerRef = Rc<RefCell<SystemInner>>;
+#[derive(Clone)]
+pub struct System(Rc<RefCell<SystemInner>>);
 
-pub struct System(SystemInnerRef);
-
+#[derive(Debug, Clone, Copy, Hash)]
 pub struct Variable {
     symbol: Symbol,
 }
 
-pub struct VariableBuilder<'m, M: Model> {
+#[derive(Clone)]
+pub struct VariableBuilder {
     id: VariableId,
-    model: &'m M::Builder,
+    system: System,
 }
 
-pub struct InterfaceBuilder<'m, M: Model> {
+#[derive(Clone)]
+pub struct InterfaceBuilder {
     id: InterfaceId,
-    model: &'m M::Builder,
+    system: System,
 }
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
+#[derive(Debug, Clone, Copy)]
 pub enum Condition {
     Equal,
     Conserved,
     Transported,
 }
 
-#[derive(From)]
+#[derive(From, Clone, Copy)]
 pub enum Value {
     Set(),
     Matrix(),
     Scalar(Scalar),
+    // TODO: temp
+    Temp(Quantity),
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
+
+impl Connector {
+    pub fn variable(&self) -> Variable {
+        self.variable
+    }
+
+    pub fn condition(&self) -> Condition {
+        self.condition
+    }
+}
+
+impl Connection {
+    fn new(a: InterfaceId, b: InterfaceId) -> Self {
+        Self { a, b }
+    }
+}
+
+impl VariableBuilder {
+    fn bind(&self, val: impl Into<Value>) {
+        let val = val.into();
+        self.system.0.borrow_mut().bindings.insert(self.id, val);
+    }
+}
+
+impl InterfaceBuilder {
+    fn connect(&self, other: &InterfaceBuilder) {
+        let mut inner = self.system.0.borrow_mut();
+        let connection = Connection::new(self.id, other.id);
+
+        if inner.connections.contains(&Connection::new(other.id, self.id))
+            || inner.connections.contains(&connection)
+        {
+            return;
+        }
+
+        inner.connections.insert(connection);
+    }
+}
+
+impl<const N: usize> InterfaceArrayExt for [&InterfaceBuilder; N] {
+    fn connect(self, other: &InterfaceBuilder) {
+        for interface in self {
+            interface.connect(other);
+        }
+    }
+}
 
 impl<M: Model> Constraints for M {
     default fn constraints(&self) -> Vec<Constraint> {
@@ -148,31 +199,74 @@ impl<M: Model> Constraints for M {
     }
 }
 
+impl Variable {
+    pub fn new(symbol: Symbol) -> Self {
+        Self { symbol }
+    }
+
+    pub fn symbol(&self) -> Symbol {
+        self.symbol
+    }
+}
+
 impl System {
-    const NEXT_MODEL_ID: AtomicUsize = AtomicUsize::new(1);
+    pub fn new() -> Self {
+        Self(Rc::new(RefCell::new(SystemInner::default())))
+    }
 
-    fn add<M: Model>(&mut self, model: M) -> &mut M::Builder {
-        let id = ModelId(Self::NEXT_MODEL_ID.fetch_add(1, Ordering::SeqCst));
-        let builder = model.builder(&*self);
+    pub fn add<M: Model>(&self, model: M, name: &str) -> M::Builder {
+        model.register(self.clone())
+    }
+}
 
-        self.models.borrow_mut().insert(id, model.erased());
+impl SystemInner {
+    fn add_variable(&mut self, var: Variable) -> VariableId {
+        let id = VariableId(self.variables.len());
+        self.variables.push(var);
+        id
+    }
 
-        &mut builder
+    fn add_interface(
+        &mut self,
+        interface: impl Interface + 'static,
+    ) -> InterfaceId {
+        let id = InterfaceId(self.interfaces.len());
+        self.interfaces.push(Box::new(interface));
+        id
+    }
+
+    fn add_model(&mut self, model: impl Model) -> ModelId {
+        let id = ModelId(self.models.len());
+        self.models.push(model.erased());
+        id
+    }
+}
+
+impl VariableBuilder {
+    pub fn new(system: System, id: VariableId) -> Self {
+        Self { id, system }
+    }
+}
+
+impl InterfaceBuilder {
+    pub fn new(system: System, id: InterfaceId) -> Self {
+        Self { id, system }
     }
 }
 
 /* -------------------------------------------------------------------------- */
 
 mod model_based_large_signal_bjt {
-    use engi_macros::equations;
+    use engi_macros::{Model, relations};
 
     use crate as engi;
     use crate::{
-        dimension::{other::t, si::*},
+        dimension::si::*,
+        expr::ops::exp,
         system::{
-            Connector, Constraints, Equations,
+            Connector, Constraints, Equations, InterfaceArrayExt, System,
+            Variable,
             eq::{Constraint, Equation},
-            var::Variable,
         },
     };
 
@@ -204,8 +298,13 @@ mod model_based_large_signal_bjt {
 
     impl Equations for ElectricalPort {
         fn equations(&self) -> Vec<Equation> {
-            let electrical_port_fields!() = self;
-            equations![p.i = n.i, i = p.i, v = p.v - n.v]
+            let ElectricalPort { p, n, v, i } = self;
+
+            relations! {
+                p.i = n.i;
+                i = p.i;
+                v = p.v - n.v;
+            }
         }
     }
 
@@ -236,14 +335,18 @@ mod model_based_large_signal_bjt {
         #[var(unit = K / W, desc = "Case-ambient thermal resistance")]
         rθ_ca: Variable,
 
-        #[model]
+        #[interface]
         pub port: ThermalPort,
     }
 
     impl Equations for SemiThermal {
         fn equations(&self) -> Vec<Equation> {
-            let static_thermal_fields!() = self;
-            equations![t_j - t_c = rθ_jc * p, t_c - t_a = rθ_ca * p]
+            let SemiThermal { t_a, t_j, t_c, rθ_jc, rθ_ca, port } = self;
+
+            relations! [
+                t_j - t_c = rθ_jc * port.p;
+                t_c - t_a = rθ_ca * port.p;
+            ]
         }
     }
 
@@ -275,39 +378,47 @@ mod model_based_large_signal_bjt {
 
         /* -------------------------------------------------------------------------- */
         #[interface]
-        pub base: ElectricalPin,
+        pub b: ElectricalPin,
 
         #[interface]
-        pub collector: ElectricalPin,
+        pub c: ElectricalPin,
 
         #[interface]
-        pub emitter: ElectricalPin,
+        pub e: ElectricalPin,
 
-        #[interface]
-        pub thermal: ThermalPort,
+        #[model]
+        pub thermal: SemiThermal,
     }
 
     impl Equations for StaticBjt {
         fn equations(&self) -> Vec<Equation> {
-            let static_bjt_fields!() = self;
+            let StaticBjt {
+                i_s,
+                v_be,
+                v_bc,
+                v_ce,
+                v_t,
+                β_f,
+                β_r,
+                p_d,
+                b,
+                c,
+                e,
+                thermal,
+            } = self;
 
-            equations![
-                v_t = kB * T / q,
-                v_be = base.v - emitter.v,
-                v_bc = base.v - collector.v,
-                v_ce = collector.v - emitter.v,
-                collector.i = i_s
-                    * (exp(v_be / v_t)
-                        - exp(v_bc / v_t)
-                        - (exp(v_bc / v_t) - 1) / β_r),
-                base.i = i_s
-                    * ((exp(v_be / v_t) - 1) / β_f
-                        + (exp(v_bc / v_t) - 1) / β_r),
-                emitter.i = i_s
-                    * (exp(v_be / v_t) - exp(v_bc / v_t)
-                        + (exp(v_be / v_t) - 1) / β_f),
-                p_d = v_be * i_b + v_ce * i_c
-            ]
+            relations! {
+                v_t = kB * thermal.t_j / q;
+                v_be = b.v - e.v;
+                v_bc = b.v - c.v;
+                v_ce = c.v - e.v;
+
+                p_d = v_be * b.i + v_ce * c.i;
+
+                c.i = i_s * (exp(v_be / v_t) - exp(v_bc / v_t) - (exp(v_bc / v_t) - 1) / β_r);
+                b.i = i_s * ((exp(v_be / v_t) - 1) / β_f + (exp(v_bc / v_t) - 1) / β_r);
+                e.i = b.i + c.i;
+            }
         }
     }
 
@@ -317,7 +428,7 @@ mod model_based_large_signal_bjt {
     pub struct Impedance {
         #[var(unit = Ω, desc = "Complex impedance")]
         z: Variable,
-        #[interface]
+        #[model]
         port: ElectricalPort,
         #[interface]
         thermal: ThermalPort,
@@ -325,14 +436,20 @@ mod model_based_large_signal_bjt {
 
     impl Equations for Impedance {
         fn equations(&self) -> Vec<Equation> {
-            let impedance_fields!() = self;
-            equations![port.v = port.i * z, thermal.p = re(port.v * port.i)]
+            let Impedance { z, port, thermal } = self;
+            relations! {
+                port.v = port.i * z;
+                thermal.p = re(port.v * port.i)
+            }
         }
     }
 
     impl Constraints for Impedance {
         fn constraints(&self) -> Vec<Constraint> {
-            equations![re(self.z) > 0]
+            let Impedance { z, .. } = self;
+            relations! {
+                re(z) > 0;
+            }
         }
     }
 
@@ -340,13 +457,16 @@ mod model_based_large_signal_bjt {
 
     #[derive(Model)]
     pub struct Ground {
+        #[interface]
         pin: ElectricalPin,
     }
 
     impl Equations for Ground {
         fn equations(&self) -> Vec<Equation> {
-            let ground_fields!() = self;
-            equations![gnd.v = 0]
+            let Ground { pin } = self;
+            relations! {
+                pin.v = 0;
+            }
         }
     }
 
@@ -354,15 +474,18 @@ mod model_based_large_signal_bjt {
 
     #[derive(Model)]
     pub struct IdealSupply {
-        out: ElectricalPort,
         #[var(unit = V, desc = "Supply output voltage")]
         v: Variable,
+        #[model]
+        out: ElectricalPort,
     }
 
     impl Equations for IdealSupply {
         fn equations(&self) -> Vec<Equation> {
-            let ideal_supply_fields!() = self;
-            equations![port.v = v]
+            let IdealSupply { out, v } = self;
+            relations! {
+                out.v = v;
+            }
         }
     }
 
@@ -377,17 +500,14 @@ mod model_based_large_signal_bjt {
         let r_c = system.add(Impedance::default(), "r_c");
         let r_b = system.add(Impedance::default(), "r_b");
         let gnd = system.add(Ground::default(), "gnd");
-        let thermal = system.add(SemiThermal::default(), "q1_thermal");
 
-        bjt.thermal.connect(thermal.port);
+        r_c.port.p.connect(&v_c.out.p);
+        r_b.port.n.connect(&bjt.c);
 
-        r_c.port.p.connect(v_c.port.p);
-        r_b.port.n.connect(bjt.collector);
+        r_b.port.p.connect(&v_b.out.p);
+        r_b.port.n.connect(&bjt.b);
 
-        r_b.port.p.connect(v_b.port.p);
-        r_b.port.n.connect(bjt.base);
-
-        [v_c.port.n, v_b.port.n, bjt.emitter].connect(gnd.pin);
+        [&v_c.out.n, &v_b.out.n, &bjt.e].connect(&gnd.pin);
 
         v_b.v.bind(2 * V);
         v_c.v.bind(12 * V);
@@ -395,9 +515,9 @@ mod model_based_large_signal_bjt {
         r_c.z.bind(1e3 * Ω);
         bjt.v_ce.bind(6 * V);
 
-        thermal.t_amb.bind((25 + 273.15) * K);
-        thermal.rθ_jc.bind(10 * K / W);
-        thermal.rθ_ca.bind(20 * K / W);
+        bjt.thermal.t_a.bind((25.0 + 273.15) * K);
+        bjt.thermal.rθ_jc.bind(10 * K / W);
+        bjt.thermal.rθ_ca.bind(20 * K / W);
 
         let solution = system.solve();
         println!("{}", solution.get(bjt))

@@ -1,22 +1,46 @@
 use std::{collections::HashMap, iter::once};
 
-use darling::{FromDeriveInput, FromField, FromMeta, ast, util};
+use convert_case::{Case, Casing};
 use itertools::Itertools;
 use proc_macro::{TokenStream, TokenTree};
-use quote::{format_ident, quote};
+use proc_macro2::{Spacing, Span};
+use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Data, DataStruct, DeriveInput, Expr, ExprTuple, Field, Ident, LitStr,
-    Token, Type,
+    BinOp, Data, DataStruct, DeriveInput, Expr, ExprAssign, ExprBinary,
+    ExprTuple, Field, Ident, LitStr, Token, Type,
     parse::{Parse, ParseBuffer, ParseStream, Parser},
     parse_macro_input,
     punctuated::Punctuated,
 };
 
-#[derive(Debug, FromMeta)]
 struct VariableAttr {
     unit: Option<Expr>,
     desc: Option<LitStr>,
     shape: Option<Expr>,
+}
+
+impl VariableAttr {
+    fn parse(attr: &syn::Attribute) -> syn::Result<Self> {
+        let mut unit = None;
+        let mut desc = None;
+        let mut shape = None;
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("unit") {
+                unit = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("desc") {
+                desc = Some(meta.value()?.parse()?);
+            } else if meta.path.is_ident("shape") {
+                shape = Some(meta.value()?.parse()?);
+            } else {
+                return Err(meta.error("unknown #[var] argument"));
+            }
+
+            Ok(())
+        })?;
+
+        Ok(Self { unit, desc, shape })
+    }
 }
 
 // #[derive(FromMeta)]
@@ -27,13 +51,13 @@ struct VariableAttr {
 #[proc_macro_derive(Model, attributes(var, model, interface))]
 pub fn model(input: TokenStream) -> TokenStream {
     // Parse the input tokens into a syntax tree
-    let DeriveInput { attrs, vis, ident, generics, data } =
+    let DeriveInput { vis, ident, generics, data, .. } =
         parse_macro_input!(input as DeriveInput);
 
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let Data::Struct(DataStruct { fields, .. }) = data else {
-        panic!("#[derive(System)] only supports enums");
+        panic!("#[derive(Model)] only supports enums");
     };
 
     let (mut vars, mut submodels, mut interfaces) =
@@ -46,15 +70,15 @@ pub fn model(input: TokenStream) -> TokenStream {
             let Ok(attr) = field
                 .attrs
                 .iter()
-                .filter(|x| {
-                    x.path().is_ident(&Ident::from_string(ident).unwrap())
-                })
+                .filter(|x| x.path().is_ident(ident))
                 .at_most_one()
             else {
-                let message = syn::LitStr::from_string(&format!(
-                    "A field cannot have more than one #[{ident}] attr"
-                ))
-                .unwrap();
+                let message = syn::LitStr::new(
+                    &format!(
+                        "A field cannot have more than one #[{ident}] attr"
+                    ),
+                    Span::call_site(),
+                );
                 return quote! {compile_error!(#message);}.into();
             };
 
@@ -69,9 +93,13 @@ pub fn model(input: TokenStream) -> TokenStream {
 
         match attrs.into_iter().next() {
             Some(("var", var_attr)) => {
-                let mut var = VariableAttr::from_meta(&var_attr.meta).unwrap();
+                let var = match VariableAttr::parse(var_attr) {
+                    Ok(var) => var,
+                    Err(e) => return e.into_compile_error().into(),
+                };
 
-                let desc = var.desc.unwrap_or(LitStr::from_string("").unwrap());
+                let desc =
+                    var.desc.unwrap_or(LitStr::new("", Span::call_site()));
                 let unit = var.unit.unwrap_or(
                     Expr::parse
                         .parse(quote! {engi::dimension::Unit::Unitless}.into())
@@ -96,49 +124,144 @@ pub fn model(input: TokenStream) -> TokenStream {
         }
     }
 
-    let variable_terms = vars.iter().map(|(field, unit, desc, shape)| {
-        let name = LitStr::from_string(&field.ident.unwrap().to_string()).unwrap();
-        quote! {
-            engi::system::Variable::new(engi::symbol::Symbol::new(#name).set_unit(#unit).set_desc(#desc).set_shape(#shape))
-        }
-    });
-
     let solution_ident = format_ident!("{}Solution", ident);
     let builder_ident = format_ident!("{}Builder", ident);
+    let variable_idents = vars.iter().map(|f| f.0.ident.clone().unwrap());
+    let variable_idents2 = variable_idents.clone();
+
+    let submodel_idents = submodels.iter().map(|f| f.ident.clone().unwrap());
+    let submodel_idents2 = submodel_idents.clone();
+
+    let interface_idents = interfaces.iter().map(|f| f.ident.clone().unwrap());
+    let interface_idents2 = interface_idents.clone();
+
+    let variable_builder_idents = vars.iter().map(|(field, ..)| {
+        format_ident!("{}_builder", field.ident.clone().unwrap())
+    });
+    let variable_builder_idents2 = variable_builder_idents.clone();
+
+    let submodel_builder_idents = submodels
+        .iter()
+        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()));
+    let submodel_builder_idents2 = submodel_builder_idents.clone();
+
+    let interface_builder_idents = interfaces
+        .iter()
+        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()));
+    let interface_builder_idents2 = interface_builder_idents.clone();
+
+    let builder_fields = vars
+        .iter()
+        .map(|(Field { vis, ident, .. }, ..)| {
+            quote! {
+                #vis #ident: engi::system::VariableBuilder
+            }
+        })
+        .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
+            quote! {
+                #vis #ident: <#ty as engi::system::Model>::Builder
+            }
+        }))
+        .chain(interfaces.iter().map(|Field { vis, ident, .. }| {
+            quote! {
+                #vis #ident: engi::system::InterfaceBuilder
+            }
+        }));
+
+    let default_constructor = vars
+        .iter()
+        .map(|(field, desc, unit, shape)| {
+            let field_ident = field.ident.clone().unwrap();
+            let sym_name = LitStr::new(
+                field_ident.to_string().as_str(),
+                Span::call_site(),
+            );
+            quote! {
+                #field_ident: engi::system::Variable::new(
+                    engi::symbol::Symbol::new(#sym_name)
+                        .set_unit(#unit)
+                        .set_shape(#shape)
+                        .set_desc(#desc.to_owned())
+                )
+            }
+        })
+        .chain(interfaces.iter().map(|f| {
+            let field_ident = f.ident.clone().unwrap();
+            quote! {
+                #field_ident: Default::default()
+            }
+        }))
+        .chain(submodels.iter().map(|f| {
+            let field_ident = f.ident.clone().unwrap();
+            quote! {
+                #field_ident: Default::default()
+            }
+        }));
+
+    let solution_fields = vars
+        .iter()
+        .map(|(Field { vis, ident, .. }, ..)| {
+            quote! {
+                #vis #ident: engi::system::Value
+            }
+        })
+        .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
+            quote! {
+                #vis #ident: <#ty as engi::system::Model>::Solution
+            }
+        }));
 
     quote! {
         #vis struct #builder_ident {
-            system: engi::system::SystemInnerRef,
-            #(#builder_fields),*
+            __system: engi::system::System,
+            __id: engi::system::ModelId,
+            #(#builder_fields,)*
         }
+
+        impl engi::system::ModelBuilder for #builder_ident {}
 
         #vis struct #solution_ident {
-            #(#solution_fields),*
+            #(#solution_fields,)*
         }
 
-        impl #impl_generics Model for #ident #ty_generics #where_clause {
+        impl #impl_generics Default for #ident #ty_generics #where_clause {
+            fn default() -> #ident {
+                #ident {
+                    #(#default_constructor,)*
+                }
+            }
+        }
+
+        impl #impl_generics engi::system::Model for #ident #ty_generics #where_clause {
             type Solution = #solution_ident;
             type Builder = #builder_ident;
 
-            fn submodels(&self) -> Vec<Box<dyn ErasedModel>> {
-                vec![
-                    #(self.#submodel_idents.erased()),*
-                ]
-            }
+            fn register(self, system: System) -> Self::Builder {
 
-            fn variables(&self) -> Vec<Variable> {
-                vec![
-                    #(self.#variable_idents),*
-                ]
-            }
+                #(let #variable_builder_idents = {
+                    let id = system.0.borrow_mut().add_variable(self.#variable_idents);
+                    engi::system::VariableBuilder::new(system.clone(), id)
+                };)*
 
-            fn interface(&self) -> Vec<Box<dyn Interface>> {
-                vec![
-                    #(self.#interface_idents.erased()),*
-                ]
+                #(let #interface_builder_idents = {
+                    let id = system.0.borrow_mut().add_interface(self.#interface_idents);
+                    engi::system::InterfaceBuilder::new(system.clone(), id)
+                };)*
+
+                #(let #submodel_builder_idents = self.#submodel_idents.register(system.clone());)*
+
+                let own_id = system.0.borrow_mut().add_model(self);
+
+                #builder_ident {
+                    __system: system,
+                    __id: own_id,
+                    #(#submodel_idents2: #submodel_builder_idents2,)*
+                    #(#interface_idents2: #interface_builder_idents2,)*
+                    #(#variable_idents2: #variable_builder_idents2,)*
+                }
             }
         }
-    }
+    }.into()
 }
 
 /* -------------------------------------------------------------------------- */
@@ -158,36 +281,85 @@ struct Equation {
 }
 
 impl Parse for Equation {
-    fn parse(input: ParseStream) -> Result<Self, syn::Error> {
-        let lhs: Expr = input.parse()?;
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let mut lhs = TokenStream::new();
+        let mut constraint = None;
+        let mut rhs = TokenStream::new();
 
-        let constraint = if input.peek(Token![>=]) {
-            input.parse::<Token![>=]>()?;
-            Constraint::Ge
-        } else if input.peek(Token![<=]) {
-            input.parse::<Token![<=]>()?;
-            Constraint::Le
-        } else if input.peek(Token![>]) {
-            input.parse::<Token![>]>()?;
-            Constraint::Gt
-        } else if input.peek(Token![<]) {
-            input.parse::<Token![<]>()?;
-            Constraint::Lt
-        } else if input.peek(Token![=]) {
-            input.parse::<Token![=]>()?;
-            Constraint::Eq
-        } else {
-            return Err(input.error("expected =, >, >=, <, or <="));
-        };
+        input
+            .step(|cursor| {
+                let mut rest = *cursor;
 
-        let rhs: Expr = input.parse()?;
+                while let Some((tt, mut next)) = rest.token_tree() {
+                    if let proc_macro2::TokenTree::Punct(p) = &tt
+                        && p.as_char() == ';'
+                    {
+                        break;
+                    }
 
-        Ok(Self { lhs, constraint, rhs })
+                    if constraint.is_some() {
+                        rhs.extend(proc_macro::TokenStream::from(
+                            tt.to_token_stream(),
+                        ));
+                    } else if let proc_macro2::TokenTree::Punct(punct) = &tt
+                        && matches!(punct.as_char(), '>' | '<' | '=')
+                    {
+                        let token = if punct.spacing() == Spacing::Joint {
+                            if let Some((
+                                proc_macro2::TokenTree::Punct(next_punct),
+                                next_cursor,
+                            )) = next.token_tree()
+                            {
+                                next = next_cursor;
+
+                                let mut token = punct.as_char().to_string();
+                                token.push(next_punct.as_char());
+                                token
+                            } else {
+                                punct.as_char().to_string()
+                            }
+                        } else {
+                            punct.as_char().to_string()
+                        };
+
+                        if [">=", ">", "<", "<=", "="].contains(&token.as_str())
+                        {
+                            constraint = Some(token);
+                        }
+                    } else {
+                        lhs.extend(proc_macro::TokenStream::from(
+                            tt.to_token_stream(),
+                        ));
+                    }
+
+                    rest = next;
+                }
+
+                Ok(((), rest))
+            })
+            .unwrap();
+
+        if constraint.is_none() {
+            return Err(input.error("Expected a relation"));
+        }
+
+        Ok(Equation {
+            lhs: syn::parse::<Expr>(lhs)?,
+            constraint: match constraint.unwrap().as_str() {
+                ">" => Constraint::Gt,
+                ">=" => Constraint::Ge,
+                "<=" => Constraint::Le,
+                "<" => Constraint::Lt,
+                "=" => Constraint::Eq,
+                _ => unreachable!(),
+            },
+            rhs: syn::parse::<Expr>(rhs)?,
+        })
     }
 }
 
 #[proc_macro]
-pub fn equations(input: TokenStream) -> TokenStream {
+pub fn relations(input: TokenStream) -> TokenStream {
     let punc = Punctuated::<Equation, Token![;]>::parse_terminated
         .parse(input)
         .unwrap();
@@ -195,7 +367,7 @@ pub fn equations(input: TokenStream) -> TokenStream {
     let terms =
         punc.iter().map(|Equation { lhs, constraint, rhs }| match constraint {
             Constraint::Eq => quote! {
-                engi::system::eq::Equation::new(lhs, rhs)
+                engi::system::eq::Equation::new(#lhs, #rhs)
             },
             Constraint::Gt => quote! {
                 engi::system::eq::Constraint::new(#lhs, #rhs, engi::system::eq::Inequality::Greater)

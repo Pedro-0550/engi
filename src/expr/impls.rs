@@ -10,7 +10,7 @@ use crate::{
     dimension::Quantity,
     expr::{Binary, Expr, Node, Shaped, Variadic, ops::*},
     symbol::Symbol,
-    system::var::Variable,
+    system::{Connector, Variable},
 };
 
 /* ---------------------------------- IMPLS --------------------------------- */
@@ -68,98 +68,134 @@ impl From<i64> for Expr {
 
 impl From<Variable> for Node {
     fn from(v: Variable) -> Self {
-        match v {
-            Variable::Unknown { symbol, guess } => Self::Symbol(v.symbol()),
-            Variable::Known { symbol, value } => {
-                Self::Const(value * symbol.unit())
-            }
-        }
+        Self::Symbol(v.symbol())
     }
 }
 
-macro_rules! impl_op {
-    ($t0:ty, $ty:ty, $op:ident, $method:ident, $expr:expr, normal) => {
-        impl $op<$ty> for $t0 {
-            type Output = Expr;
-
-            fn $method(self, rhs: $ty) -> Expr {
-                $expr(self.into(), rhs.into()).into()
-            }
-        }
-    };
-    ($t0:ty, $ty:ty, $op:ident, $method:ident, $expr:expr, symmetrical) => {
-        impl $op<$ty> for $t0 {
-            type Output = Expr;
-
-            fn $method(self, rhs: $ty) -> Expr {
-                $expr(self.into(), rhs.into()).into()
-            }
-        }
-
-        impl $op<$t0> for $ty {
-            type Output = Expr;
-
-            fn $method(self, rhs: $t0) -> Expr {
-                $expr(self.into(), rhs.into()).into()
-            }
-        }
-    };
+impl From<&Variable> for Node {
+    fn from(v: &Variable) -> Self {
+        Self::Symbol(v.symbol())
+    }
 }
 
-macro_rules! impl_expr_ops {
-    (
-        $t0:ty, [$($ty:ty),+ $(,)?], $config:tt
-    ) => {
-        $(
-            impl_op!($t0, $ty, Add, add, |lhs: Expr, rhs: Expr| {
-                assert_eq!(lhs.shape(), rhs.shape(), "Tried to add two expressions of different shapes: {lhs}, {rhs}");
-
-                Variadic::Add(vec![lhs, rhs])
-            }, $config);
-            impl_op!($t0, $ty, Mul, mul, |lhs, rhs| Variadic::Mul(vec![lhs, rhs]), $config);
-            impl_op!($t0, $ty, Div, div, |lhs: Expr, rhs: Expr| {
-                assert!(
-                    lhs.shape().cols == lhs.shape().rows || (lhs.shape() == rhs.shape() && lhs.shape().is_vec()),
-                    "Matrix multiplication A * B requires A to have as many columns as B has rows.
-                    A special case is when both A and B are vectors of equal shape, in which case Mul means dot product."
-                );
-                Variadic::Mul(vec![lhs, Binary::Pow(Pow { base: rhs, exp: (-1.0).into() }).into()])
-            }, $config);
-            impl_op!($t0, $ty, Sub, sub, |lhs, rhs: Expr| Variadic::Add(vec![lhs, -rhs]), $config);
-            impl_op!($t0, $ty, BitXor, bitxor, |lhs: Expr, rhs: Expr| {
-                assert!(
-                    lhs.shape().is_square() || lhs.shape().is_scalar(),
-                    "Only square matrices can be raised to a power"
-                );
-
-                assert!(
-                    rhs.shape().is_square() || rhs.shape().is_scalar(),
-                    "Only square matrices can be an exponent"
-                );
-
-                assert!(
-                    !(lhs.shape().is_square() && rhs.shape().is_square()),
-                    "Cannot raise a matrix to the power of another matrix yet"
-                );
-
-                Binary::Pow(Pow{
-                    base: lhs,
-                    exp: rhs
-                })
-            }, $config);
-
-        )+
-    };
+impl From<Connector> for Node {
+    fn from(v: Connector) -> Self {
+        Self::Symbol(v.variable().symbol())
+    }
 }
 
-impl_expr_ops!(&Expr, [i64, f64, Scalar, Quantity, Symbol], symmetrical);
-impl_expr_ops!(&Expr, [&Expr], normal);
+impl From<&Connector> for Node {
+    fn from(v: &Connector) -> Self {
+        Self::Symbol(v.variable().symbol())
+    }
+}
 
-impl_expr_ops!(Expr, [i64, f64, Scalar, Quantity, Symbol, &Expr], symmetrical);
-impl_expr_ops!(Expr, [Expr], normal);
+#[crabtime::function]
+/// Impls A and B binary operations giving Expr, for every possible combination of the given types
+fn impl_expr_ops(input: TokenStream) {
+    #![dependency(proc-macro2 = "1")]
+    #![dependency(syn = "2")]
+    #![dependency(quote = "1")]
+    #![dependency(itertools = "0.15")]
 
-impl_expr_ops!(Symbol, [i64, f64, Scalar, Quantity], symmetrical);
-impl_expr_ops!(Symbol, [Symbol], normal);
+    use itertools::Itertools;
+    use proc_macro2::*;
+    use quote::ToTokens;
+    use syn::{Token, parse::*, punctuated::Punctuated, *};
+    let types =
+        Punctuated::<Type, Token![,]>::parse_terminated.parse2(input).unwrap();
+
+    for (a, b) in types.iter().cartesian_product(types.iter()) {
+        let a = a.to_token_stream().to_string();
+        let b = b.to_token_stream().to_string();
+
+        if matches!(a.as_str(), "Scalar" | "f64" | "i64" | "Quantity")
+            && matches!(b.as_str(), "Scalar" | "f64" | "i64" | "Quantity")
+        {
+            continue;
+        }
+
+        crabtime::output! {
+            impl Add<{{b}}> for {{a}} {
+                type Output = Expr;
+
+                fn add(self, rhs: {{b}}) -> Expr {
+                    let lhs = Expr::from(self);
+                    let rhs = Expr::from(rhs);
+                    assert_eq!(lhs.shape(), rhs.shape(), "Tried to add two expressions of different shapes: {lhs}, {rhs}");
+
+                    Variadic::Add(vec![lhs, rhs]).into()
+                }
+            }
+
+            impl Mul<{{b}}> for {{a}} {
+                type Output = Expr;
+
+                fn mul(self, rhs: {{b}}) -> Expr {
+                    let lhs = Expr::from(self);
+                    let rhs = Expr::from(rhs);
+                    assert!(
+                        lhs.shape().cols == lhs.shape().rows || (lhs.shape() == rhs.shape() && lhs.shape().is_vec()),
+                        "Matrix multiplication A * B requires A to have as many columns as B has rows.
+                        A special case is when both A and B are vectors of equal shape, in which case Mul means dot product."
+                    );
+
+                    Variadic::Mul(vec![lhs, rhs]).into()
+                }
+            }
+
+            impl Div<{{b}}> for {{a}} {
+                type Output = Expr;
+
+                fn div(self, rhs: {{b}}) -> Expr {
+                    self * Expr::from(Binary::Pow(Pow { base: rhs.into(), exp: (-1.0).into()}))
+                }
+            }
+
+            impl Sub<{{b}}> for {{a}} {
+                type Output = Expr;
+
+                fn sub(self, rhs: {{b}}) -> Expr {
+                    self + (-Expr::from(rhs))
+                }
+            }
+
+            impl num::pow::Pow<{{b}}> for {{a}} {
+                type Output = Expr;
+
+                fn pow(self, rhs: {{b}}) -> Expr {
+                    let lhs = Expr::from(self);
+                    let rhs = Expr::from(rhs);
+
+                    assert!(
+                        lhs.shape().is_square() || lhs.shape().is_scalar(),
+                        "Only square matrices can be raised to a power"
+                    );
+
+                    assert!(
+                        rhs.shape().is_square() || rhs.shape().is_scalar(),
+                        "Only square matrices can be an exponent"
+                    );
+
+                    assert!(
+                        !(lhs.shape().is_square() && rhs.shape().is_square()),
+                        "Cannot raise a matrix to the power of another matrix yet"
+                    );
+
+                    Binary::Pow(Pow{
+                        base: lhs,
+                        exp: rhs
+                    }).into()
+                }
+            }
+        };
+    }
+}
+
+impl_expr_ops!(
+    i64, f64, Scalar, Quantity, Symbol, Expr, &Expr, Variable, &Variable,
+    Connector, &Connector
+);
 
 impl Neg for Expr {
     type Output = Expr;

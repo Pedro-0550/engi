@@ -26,14 +26,18 @@ pub struct Constraint {
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Constraint {
-    pub fn new(lhs: Expr, rhs: Expr, ineq: Inequality) -> Self {
-        Self { lhs, rhs, ineq }
+    pub fn new(
+        lhs: impl Into<Expr>,
+        rhs: impl Into<Expr>,
+        ineq: Inequality,
+    ) -> Self {
+        Self { lhs: lhs.into(), rhs: rhs.into(), ineq }
     }
 }
 
 impl Equation {
-    pub fn new(lhs: Expr, rhs: Expr) -> Self {
-        Self { lhs, rhs }
+    pub fn new(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
+        Self { lhs: lhs.into(), rhs: rhs.into() }
     }
 
     pub fn symbols(&self) -> Vec<Symbol> {

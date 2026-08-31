@@ -16,7 +16,7 @@ use crate::{
     dimension::Quantity,
     expr::{
         Expr, Node,
-        ops::{Binary, Pow, Unary, Variadic, cos, sin, tan},
+        ops::{Binary, Pow, Unary, Variadic, cos, pow, sin, tan},
     },
     simplify::normal::Normalize,
     symbol::Symbol, // set::Set,
@@ -180,7 +180,7 @@ impl Simplify for Binary {
                     && exp.value().is_integer()
                     && inner_exp.value().is_integer()
                 {
-                    (inner_base ^ (*exp * *inner_exp)).simplify_inner(ctx)
+                    pow(inner_base, *exp * *inner_exp).simplify_inner(ctx)
                 } else if let Node::Const(qty) = exp.node()
                     && qty.value().is_zero()
                 {
@@ -267,7 +267,7 @@ impl Simplify for Variadic {
                     } else if exp == 0.0.into() {
                         1.0.into()
                     } else {
-                        base ^ exp
+                        pow(base, exp)
                     }
                     .normalize(false)
                 })

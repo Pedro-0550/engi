@@ -52,7 +52,7 @@ macro_rules! constants {
                 name: stringify!($name).to_owned(),
                 unit: ($value).unit(),
                 shape: crate::expr::Shape::SCALAR,
-                description: String::new(),
+                desc: String::new(),
                 // domain: crate::set::Set::C_NZ
             },
         );
@@ -73,7 +73,8 @@ constants! {
     e = 2.7182818284590452353 * Unit::Unitless,
 
     /// Speed of light in a vacuum
-    /// Source: CODATA 2022 Adjustment
+    ///
+    /// Source: CODATA 2022
     c = 299792458.0 * m / s,
 
     // TODO: add more useful constants
