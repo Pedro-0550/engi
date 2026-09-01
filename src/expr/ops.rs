@@ -12,12 +12,11 @@ use itertools::Itertools;
 use num::complex::ComplexFloat;
 
 use crate::{
-    core::util::to_superscript,
-    dimension::{Quantity, Unit},
+    core::util::{impl_as_variant, to_superscript},
     expr::{Expr, Node, Shape, Shaped},
-    impl_as,
     simplify::separate_consts,
     symbol::constants::e,
+    units::{Quantity, Unit},
 };
 
 #[derive(PartialEq, Clone, Debug, IsVariant, Hash, Eq)]
@@ -49,6 +48,9 @@ pub enum Unary {
     Arg(Expr),
     Det(Expr),
     Norm(Expr),
+
+    Real(Expr),
+    Imag(Expr),
 }
 
 #[derive(PartialEq, Clone, Debug, Hash, Eq)]
@@ -85,11 +87,13 @@ pub struct Matrix {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl_as!(
+impl_as_variant!(
     Binary,
-    Pow => Pow,
-    Log => Log,
-    Atan2 => Atan2,
+    [
+        Pow => Pow,
+        Log => Log,
+        Atan2 => Atan2,
+    ]
 );
 
 impl Matrix {
@@ -198,6 +202,8 @@ impl Unary {
             Unary::Arg(_) => Unary::Arg(arg),
             Unary::Det(_) => Unary::Det(arg),
             Unary::Norm(_) => Unary::Norm(arg),
+            Unary::Real(_) => Unary::Real(arg),
+            Unary::Imag(_) => Unary::Imag(arg),
         }
     }
 
@@ -220,6 +226,8 @@ impl Unary {
             Unary::Arg(arg) => arg,
             Unary::Det(arg) => arg,
             Unary::Norm(arg) => arg,
+            Unary::Real(arg) => arg,
+            Unary::Imag(arg) => arg,
         }
     }
 
@@ -242,6 +250,8 @@ impl Unary {
             Unary::Arg(arg) => arg,
             Unary::Det(arg) => arg,
             Unary::Norm(arg) => arg,
+            Unary::Real(arg) => arg,
+            Unary::Imag(arg) => arg,
         }
     }
 
@@ -264,6 +274,8 @@ impl Unary {
             Unary::Arg(arg) => arg,
             Unary::Det(arg) => arg,
             Unary::Norm(arg) => arg,
+            Unary::Real(arg) => arg,
+            Unary::Imag(arg) => arg,
         }
     }
 
@@ -286,6 +298,8 @@ impl Unary {
             Unary::Arg(_) => "arg",
             Unary::Det(_) => "det",
             Unary::Norm(_) => "norm",
+            Unary::Real(arg) => "real",
+            Unary::Imag(arg) => "imag",
         }
     }
 }
@@ -640,6 +654,9 @@ impl_single_fn!(tanh, Tanh, "hyperbolic tangent");
 impl_single_fn!(asinh, Asinh, "inverse hyperbolic sine");
 impl_single_fn!(acosh, Acosh, "inverse hyperbolic cosine");
 impl_single_fn!(atanh, Atanh, "inverse hyperbolic tangent");
+
+impl_single_fn!(real, Real, "real component of z");
+impl_single_fn!(imag, Imag, "imaginary component of z");
 
 /* -------------------------------------------------------------------------- */
 

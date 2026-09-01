@@ -68,6 +68,8 @@ impl Differentiable for Unary {
             Unary::Arg(_u) => todo!(),
             Unary::Det(_u) => todo!(),
             Unary::Norm(_u) => todo!(),
+            Unary::Real(_u) => todo!(),
+            Unary::Imag(_u) => todo!(),
         }
     }
 }
@@ -106,9 +108,9 @@ impl Differentiable for Binary {
                     * (base.diff(s) * exp / base + exp.diff(s) * ln(base))
             }
             Binary::Log(Log { base, arg }) => {
-                if *base == e.into() {
+                if *base == e {
                     arg.diff(s) / arg
-                } else if base.diff(s) == 0.into() {
+                } else if base.diff(s) == 0 {
                     arg.diff(s) / (arg * ln(base))
                 } else {
                     ((arg.diff(s) / arg) * ln(base)

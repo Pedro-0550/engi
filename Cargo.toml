@@ -15,11 +15,18 @@ dashmap = "6"
 ahash = "0.8"
 variadics_please = "2.0"
 crabtime = "1.1.4"
+faer = "0.24"
 
 engi-macros = { path = "./macros" }
 
 [dev-dependencies]
 criterion = "0.8"
+
+[build-dependencies]
+syn = { version = "3.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+itertools = "0.15"
 
 [[bench]]
 name = "diff"

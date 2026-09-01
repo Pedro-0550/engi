@@ -3,24 +3,23 @@ use std::{
     hash::Hash,
 };
 
-use itertools::Itertools;
 use num::Complex;
 use ordered_float::OrderedFloat;
 use thiserror::Error;
 
 use crate::{
     core::{
-        arena::{Arena, Handle},
-        scalar::Scalar,
+        interned::{Handle, Interned},
         util::to_superscript,
+        value::{Scalar, Value},
     },
-    dimension::isq::DIMENSIONLESS,
     expr::Expr,
+    units::isq::DIMENSIONLESS,
 };
 
 pub mod isq;
+pub mod non_si;
 pub mod ops;
-pub mod other;
 pub mod si;
 
 #[cfg(test)]
@@ -30,7 +29,7 @@ mod test;
 
 type Composition = Vec<(Unit, i8)>;
 
-static COMPOSITIONS: Arena<Composition> = Arena::new();
+static COMPOSITIONS: Interned<Composition> = Interned::new();
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
@@ -54,8 +53,8 @@ pub trait Dimensioned {
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub struct Quantity(Scalar, Unit);
+#[derive(PartialEq, Clone, Debug, Hash)]
+pub struct Quantity(Value, Unit);
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 #[allow(non_snake_case)]
@@ -109,7 +108,7 @@ pub enum Unit {
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Quantity {
-    pub const ZERO: Self = Self(Scalar(Complex::ZERO), Unit::Unitless);
+    pub const ZERO: Self = Self(Value::Scalar(Scalar::ZERO), Unit::Unitless);
 
     /// Normalizes this quantity to its non-scaled form.
     /// If this quantity is given in a scaled unit such as eV, it will convert to Joule and scale its value appropriately.
@@ -154,8 +153,8 @@ impl Quantity {
         Quantity(current_val, current_unit)
     }
 
-    pub fn value(&self) -> Scalar {
-        return self.0;
+    pub fn value(&self) -> &Value {
+        &self.0
     }
 
     pub fn unit(&self) -> Unit {
@@ -264,7 +263,7 @@ impl Dimensioned for Unit {
             }
             Unit::Derived { base, .. } => {
                 for (unit, exp) in *base {
-                    current_dim *= unit.analyze()? ^ *exp;
+                    current_dim *= unit.analyze()?.pow(*exp);
                 }
             }
             Unit::Scaled { base, .. } => {
@@ -272,7 +271,7 @@ impl Dimensioned for Unit {
             }
             Unit::Composed(id) => {
                 for (unit, exp) in COMPOSITIONS.get_cloned(*id).unwrap() {
-                    current_dim *= unit.analyze()? ^ exp;
+                    current_dim *= unit.analyze()?.pow(exp);
                 }
             }
             Unit::Unitless => (),
@@ -372,14 +371,6 @@ impl Display for Quantity {
         }
 
         Ok(())
-    }
-}
-
-impl Hash for Quantity {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        OrderedFloat(self.0.re).hash(state);
-        OrderedFloat(self.0.im).hash(state);
-        self.1.hash(state);
     }
 }
 

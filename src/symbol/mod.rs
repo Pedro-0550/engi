@@ -5,10 +5,10 @@ use std::{
 };
 
 use crate::{
-    core::arena::{Arena, Handle},
-    dimension::Unit,
+    core::interned::{Handle, Interned},
     expr::Shape,
     // set::Set,
+    units::Unit,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -17,7 +17,7 @@ pub mod constants;
 
 /* -------------------------------- CONSTANTS ------------------------------- */
 
-static SYMBOLS: Arena<SymbolInfo> = Arena::new();
+static SYMBOLS: Interned<SymbolInfo> = Interned::new();
 static CONSTANTS_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 /* --------------------------------- STRUCTS -------------------------------- */

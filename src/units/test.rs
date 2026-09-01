@@ -1,6 +1,6 @@
 use super::*;
-use crate::dimension::{
-    other::eV,
+use crate::units::{
+    non_si::eV,
     si::{Hz, J, m, s},
 };
 
@@ -26,6 +26,5 @@ pub fn normalization() {
 
 #[test]
 pub fn analysis() {
-    assert_eq!((eV / J).analyze().unwrap(), DIMENSIONLESS);
     assert_eq!((eV / J).analyze().unwrap(), DIMENSIONLESS);
 }

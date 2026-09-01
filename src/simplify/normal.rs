@@ -5,13 +5,13 @@ use num::complex::ComplexFloat;
 
 use super::separate_consts;
 use crate::{
-    core::scalar::Scalar,
-    dimension::Quantity,
+    core::value::Scalar,
     expr::{
         Expr, Node,
         ops::{Atan2, Binary, Log, Pow, Unary, Variadic},
     },
     symbol::Symbol,
+    units::Quantity,
 };
 
 /* --------------------------------- TRAITS --------------------------------- */
@@ -56,7 +56,7 @@ impl Normalize for Variadic {
                     (acc.value() + x.value()) * x.unit()
                 });
 
-                if folded_const.value() != 0.0.into() || exprs.len() == 0 {
+                if folded_const.value() != 0.0 || exprs.len() == 0 {
                     exprs.push(folded_const.into());
                 }
 
@@ -123,6 +123,8 @@ impl Normalize for Unary {
             Unary::Arg(_) => 15,
             Unary::Det(_) => 16,
             Unary::Norm(_) => 17,
+            Unary::Real(_) => 18,
+            Unary::Imag(_) => 19,
         }
     }
 }
@@ -224,7 +226,7 @@ impl PartialOrd for Symbol {
 
 #[cfg(test)]
 mod test {
-    use crate::{dimension::Unit, simplify::normal::Normalize, symbol::Symbol};
+    use crate::{simplify::normal::Normalize, symbol::Symbol, units::Unit};
 
     #[test]
     fn normalization() {

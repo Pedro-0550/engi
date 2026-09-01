@@ -13,12 +13,14 @@ use derive_more::{Deref, DerefMut, From, IsVariant};
 use itertools::Itertools;
 
 use crate::{
-    core::arena::{Arena, Handle},
-    dimension::Quantity,
+    core::{
+        interned::{Handle, Interned},
+        util::impl_as_variant,
+    },
     expr::ops::{Binary, Matrix, Unary, Variadic},
-    impl_as,
     simplify::{Simplify, normal::Normalize},
     symbol::Symbol,
+    units::Quantity,
 };
 
 /* -------------------------------- CONSTANTS ------------------------------- */
@@ -29,9 +31,6 @@ use crate::{
 
 pub mod impls;
 pub mod ops;
-
-#[cfg(test)]
-mod test;
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
@@ -77,14 +76,14 @@ pub trait Shaped {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl_as!(
+impl_as_variant!(
     Node,
-    Symbol => Symbol,
+    [Symbol => Symbol,
     Const => Quantity,
     Variadic => Variadic,
     Unary => Unary,
     Binary => Binary,
-    Matrix => Matrix,
+    Matrix => Matrix,]
 );
 
 impl From<(usize, usize)> for Shape {
@@ -220,7 +219,7 @@ impl Expr {
             Node::Unary(op) => {
                 op.with_arg(op.arg().substitute(bindings)).into()
             }
-            Node::Const(qty) => (*qty).into(),
+            Node::Const(qty) => qty.into(),
 
             Node::Binary(op) => op
                 .with_args(array::from_fn(|i| {

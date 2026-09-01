@@ -1,6 +1,6 @@
 #![allow(non_upper_case_globals)]
 
-use crate::dimension::{Unit, isq::*};
+use crate::units::{Unit, isq::*};
 
 /* -------------------------------------------------------------------------- */
 

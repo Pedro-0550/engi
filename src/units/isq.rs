@@ -1,4 +1,4 @@
-use crate::dimension::Dimension;
+use crate::units::Dimension;
 
 pub const DIMENSIONLESS: Dimension =
     Dimension { T: 0, L: 0, M: 0, I: 0, Θ: 0, J: 0, N: 0 };

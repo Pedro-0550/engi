@@ -3,7 +3,7 @@ use std::f64::consts::PI;
 
 use ordered_float::OrderedFloat;
 
-use crate::dimension::{Unit, si::*};
+use crate::units::{Unit, si::*};
 
 // Time
 //

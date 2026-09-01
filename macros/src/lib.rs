@@ -19,6 +19,8 @@ struct VariableAttr {
     shape: Option<Expr>,
 }
 
+// TODO: Support custom Default impls by just disabling Default when any field is non-standard
+
 impl VariableAttr {
     fn parse(attr: &syn::Attribute) -> syn::Result<Self> {
         let mut unit = None;
@@ -57,7 +59,7 @@ pub fn model(input: TokenStream) -> TokenStream {
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let Data::Struct(DataStruct { fields, .. }) = data else {
-        panic!("#[derive(Model)] only supports enums");
+        panic!("#[derive(Model)] only supports structs");
     };
 
     let (mut vars, mut submodels, mut interfaces) =
@@ -102,7 +104,7 @@ pub fn model(input: TokenStream) -> TokenStream {
                     var.desc.unwrap_or(LitStr::new("", Span::call_site()));
                 let unit = var.unit.unwrap_or(
                     Expr::parse
-                        .parse(quote! {engi::dimension::Unit::Unitless}.into())
+                        .parse(quote! {engi::units::Unit::Unitless}.into())
                         .unwrap(),
                 );
 
@@ -239,16 +241,16 @@ pub fn model(input: TokenStream) -> TokenStream {
             fn register(self, system: System) -> Self::Builder {
 
                 #(let #variable_builder_idents = {
-                    let id = system.0.borrow_mut().add_variable(self.#variable_idents);
+                    let id = system.0.borrow_mut().add_variable(self.#variable_idents.clone());
                     engi::system::VariableBuilder::new(system.clone(), id)
                 };)*
 
                 #(let #interface_builder_idents = {
-                    let id = system.0.borrow_mut().add_interface(self.#interface_idents);
+                    let id = system.0.borrow_mut().add_interface(self.#interface_idents.clone());
                     engi::system::InterfaceBuilder::new(system.clone(), id)
                 };)*
 
-                #(let #submodel_builder_idents = self.#submodel_idents.register(system.clone());)*
+                #(let #submodel_builder_idents = self.#submodel_idents.clone().register(system.clone());)*
 
                 let own_id = system.0.borrow_mut().add_model(self);
 
@@ -262,6 +264,123 @@ pub fn model(input: TokenStream) -> TokenStream {
             }
         }
     }.into()
+}
+
+/* -------------------------------------------------------------------------- */
+
+struct ConnectAttr {
+    condition: Expr,
+    unit: Expr,
+    desc: LitStr,
+    shape: Expr,
+}
+
+impl Default for ConnectAttr {
+    fn default() -> Self {
+        Self {
+            desc: LitStr::new("", Span::call_site()),
+            unit: Expr::parse
+                .parse(quote! {engi::units::Unit::Unitless}.into())
+                .unwrap(),
+
+            shape: Expr::parse
+                .parse(quote! {engi::expr::Shape::SCALAR}.into())
+                .unwrap(),
+            condition: Expr::parse
+                .parse(quote! {engi::system::Condition::Equal}.into())
+                .unwrap(),
+        }
+    }
+}
+
+impl ConnectAttr {
+    fn parse(attr: &syn::Attribute) -> syn::Result<Self> {
+        let mut s = Self::default();
+
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("unit") {
+                s.unit = meta.value()?.parse()?;
+            } else if meta.path.is_ident("desc") {
+                s.desc = meta.value()?.parse()?;
+            } else if meta.path.is_ident("shape") {
+                s.shape = meta.value()?.parse()?
+            } else if meta.path.is_ident("cond") {
+                s.condition = meta.value()?.parse()?;
+            } else {
+                return Err(meta.error("unknown #[connect] argument"));
+            }
+
+            Ok(())
+        })?;
+
+        Ok(s)
+    }
+}
+
+#[proc_macro_derive(Interface, attributes(connect))]
+pub fn interface(input: TokenStream) -> TokenStream {
+    // Parse the input tokens into a syntax tree
+    let DeriveInput { vis, ident, generics, data, .. } =
+        parse_macro_input!(input as DeriveInput);
+
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    let Data::Struct(DataStruct { fields, .. }) = data else {
+        panic!("#[derive(Interface)] only supports structs");
+    };
+
+    let fields = fields.iter().map(|f| {
+        let attr = f
+            .attrs
+            .iter()
+            .filter(|a| a.path().is_ident("connect"))
+            .at_most_one()
+            .map_err(|_| "()")
+            .expect("A field cannot have more than one #[connect] attr");
+
+        let attr = attr
+            .map(ConnectAttr::parse)
+            .map(|r| r.unwrap())
+            .unwrap_or_default();
+
+        (f, attr)
+    });
+
+    let connector_exprs = fields.clone().map(|(field, _)| field.ident.clone());
+
+    let default_exprs = fields.map(|(field, attr)| {
+        let ConnectAttr { condition, unit, desc, shape } = attr;
+        let field_ident = field.ident.clone().unwrap();
+        let sym_name =
+            LitStr::new(field_ident.to_string().as_str(), Span::call_site());
+        quote! {
+            #field_ident: engi::system::Connector::new(engi::system::Variable::new(
+                engi::symbol::Symbol::new(#sym_name)
+                    .set_unit(#unit)
+                    .set_shape(#shape)
+                    .set_desc(#desc.to_owned())
+            ), #condition)
+        }
+    });
+
+    quote! {
+        impl #impl_generics Default for #ident #ty_generics #where_clause {
+            fn default() -> Self {
+                #ident {
+                    #(#default_exprs,)*
+                }
+            }
+        }
+
+        impl #impl_generics engi::system::Interface for #ident #ty_generics #where_clause {
+            fn connectors(&self) -> Vec<engi::system::Connector> {
+                vec![
+                    #(self.#connector_exprs,)*
+                ]
+            }
+        }
+    }
+    .into()
 }
 
 /* -------------------------------------------------------------------------- */

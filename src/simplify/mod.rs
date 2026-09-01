@@ -10,16 +10,16 @@ use ordered_float::OrderedFloat;
 
 use crate::{
     core::{
-        arena::Arena,
-        scalar::{Scalar, gcd_f64},
+        interned::Interned,
+        value::{Scalar, Value, gcd_f64},
     },
-    dimension::Quantity,
     expr::{
         Expr, Node,
         ops::{Binary, Pow, Unary, Variadic, cos, pow, sin, tan},
     },
     simplify::normal::Normalize,
-    symbol::Symbol, // set::Set,
+    symbol::Symbol,
+    units::Quantity,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -134,7 +134,9 @@ impl Simplify for Expr {
 macro_rules! trig_simplify {
     ($inv:ident, $fn:ident, $expr:ident, $self:ident, $ctx:ident) => {
         match $expr.node() {
-            Node::Const(qty) => Scalar::from(qty.value().$fn()).into(),
+            Node::Const(qty) => {
+                $crate::core::value::Value::from(qty.value().$fn()).into()
+            }
             Node::Unary(op) if let Unary::$inv(ref x) = *op => {
                 x.simplify_inner($ctx)
             }
@@ -180,7 +182,7 @@ impl Simplify for Binary {
                     && exp.value().is_integer()
                     && inner_exp.value().is_integer()
                 {
-                    pow(inner_base, *exp * *inner_exp).simplify_inner(ctx)
+                    pow(inner_base, exp * inner_exp).simplify_inner(ctx)
                 } else if let Node::Const(qty) = exp.node()
                     && qty.value().is_zero()
                 {
@@ -208,7 +210,7 @@ impl Simplify for Variadic {
             self.operands().iter().map(|expr| expr.simplify_inner(ctx));
 
         let mut groupings =
-            AHashMap::<Expr, Scalar>::with_capacity(self.operands().len());
+            AHashMap::<Expr, Value>::with_capacity(self.operands().len());
 
         for term in simplified {
             /* -------------------------------------------------------------------------- */
@@ -597,7 +599,7 @@ pub fn separate_consts(
 ) -> (impl Iterator<Item = Quantity>, impl Iterator<Item = Expr>) {
     (
         terms.clone().into_iter().filter_map(|expr| match expr.node() {
-            Node::Const(qty) => Some(*qty),
+            Node::Const(qty) => Some(qty.clone()),
             _ => None,
         }),
         terms.into_iter().filter(|expr| !expr.node().is_const()),
@@ -608,7 +610,7 @@ pub fn extract_const(
     terms: &Vec<Expr>,
 ) -> (Option<Quantity>, impl Iterator<Item = Expr>) {
     let constant =
-        terms.get(0).and_then(|x| x.clone().into_node().as_const().copied());
+        terms.get(0).and_then(|x| x.clone().into_node().as_const().cloned());
 
     let exprs = terms.iter().cloned().filter(|expr| !expr.node().is_const());
 

@@ -1,10 +1,16 @@
 use std::ops::{Add, BitXor, Div, DivAssign, Mul, MulAssign, Sub};
 
-use num::complex::{Complex32, Complex64};
+use num::{
+    complex::{Complex32, Complex64},
+    pow::Pow,
+};
 
 use crate::{
-    core::scalar::Scalar,
-    dimension::{COMPOSITIONS, Dimension, Quantity, Unit},
+    core::{
+        util::impl_op_permutations,
+        value::{Scalar, Value},
+    },
+    units::{COMPOSITIONS, Dimension, Quantity, Unit},
 };
 
 impl Dimension {
@@ -21,7 +27,7 @@ impl Dimension {
     }
 }
 
-impl const Mul for Dimension {
+impl Mul for Dimension {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -37,35 +43,35 @@ impl const Mul for Dimension {
     }
 }
 
-impl const MulAssign for Dimension {
+impl MulAssign for Dimension {
     fn mul_assign(&mut self, rhs: Self) {
         *self = *self * rhs;
     }
 }
 
-impl const DivAssign for Dimension {
+impl DivAssign for Dimension {
     fn div_assign(&mut self, rhs: Self) {
         *self = *self / rhs;
     }
 }
 
-impl const BitXor<i8> for Dimension {
+impl Pow<i32> for Dimension {
     type Output = Dimension;
 
-    fn bitxor(self, rhs: i8) -> Self::Output {
+    fn pow(self, rhs: i32) -> Self::Output {
         Self {
-            T: self.T * rhs,
-            L: self.L * rhs,
-            M: self.M * rhs,
-            I: self.I * rhs,
-            N: self.N * rhs,
-            Θ: self.Θ * rhs,
-            J: self.J * rhs,
+            T: self.T * rhs as i8,
+            L: self.L * rhs as i8,
+            M: self.M * rhs as i8,
+            I: self.I * rhs as i8,
+            N: self.N * rhs as i8,
+            Θ: self.Θ * rhs as i8,
+            J: self.J * rhs as i8,
         }
     }
 }
 
-impl const Div for Dimension {
+impl Div for Dimension {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -128,28 +134,25 @@ impl Div for Unit {
     type Output = Unit;
 
     fn div(self, rhs: Self) -> Self::Output {
-        self * (rhs ^ -1)
+        self * (rhs.pow(-1))
     }
 }
 
-// Cursed cursed cursed cursed cursed cursed
-//
-//
-//
-// cursed
-impl BitXor<i8> for Unit {
+impl Pow<i32> for Unit {
     type Output = Unit;
 
-    fn bitxor(self, exp: i8) -> Self::Output {
+    fn pow(self, exp: i32) -> Self::Output {
         match self {
             Self::Unitless => self,
-            _ if self.is_atomic() => Unit::new_composition(vec![(self, exp)]),
+            _ if self.is_atomic() => {
+                Unit::new_composition(vec![(self, exp as i8)])
+            }
             Self::Composed(id) => {
                 let comp = COMPOSITIONS
                     .get_cloned(id)
                     .unwrap()
                     .iter()
-                    .map(|(unit, e)| (*unit, e * exp))
+                    .map(|(unit, e)| (*unit, e * exp as i8))
                     .collect();
 
                 Unit::new_composition(comp)
@@ -173,7 +176,7 @@ macro_rules! impl_qty_from_scalar {
 
 impl_qty_from_scalar!(
     u8, i8, u16, i16, u32, i32, u64, i64, f32, f64, Complex32, Complex64,
-    Scalar
+    Scalar, Value
 );
 
 impl From<Unit> for Quantity {
@@ -182,82 +185,35 @@ impl From<Unit> for Quantity {
     }
 }
 
-macro_rules! impl_op {
-    ($t0:ty, $ty:ty, $op:ident, $method:ident, $expr:expr, normal) => {
-        impl $op<$ty> for $t0 {
-            type Output = Quantity;
+impl_op_permutations! {
+    types = [i64, f64, Scalar, Value, Quantity, Unit],
+    exclude_permutations = [i64, f64, Scalar, Value],
+    exclude_specific = [(Unit, Unit)],
+    out = Quantity,
 
-            fn $method(self, rhs: $ty) -> Quantity {
-                $expr(self.into(), rhs.into()).into()
-            }
-        }
-    };
-    ($t0:ty, $ty:ty, $op:ident, $method:ident, $expr:expr, symmetrical) => {
-        impl $op<$ty> for $t0 {
-            type Output = Quantity;
+    add = {
+        assert!(lhs.unit().repr_eq(rhs.unit()), "cannot add two quantities with different units");
+        Quantity(lhs.value().clone() + rhs.value().clone(), lhs.unit())
+    },
 
-            fn $method(self, rhs: $ty) -> Quantity {
-                $expr(self.into(), rhs.into()).into()
-            }
-        }
+    sub = {
+        assert!(lhs.unit().repr_eq(rhs.unit()), "cannot subtract two quantities with different units");
+        Quantity(lhs.value().clone() - rhs.value().clone(), lhs.unit())
+    },
 
-        impl $op<$t0> for $ty {
-            type Output = Quantity;
+    mul = {
+        Quantity(lhs.value().clone() * rhs.value().clone(), lhs.unit() * rhs.unit())
+    },
 
-            fn $method(self, rhs: $t0) -> Quantity {
-                $expr(self.into(), rhs.into()).into()
-            }
-        }
-    };
+    div = {
+        Quantity(lhs.value().clone() / rhs.value().clone(), lhs.unit() / rhs.unit())
+    },
+
+    pow = {
+        todo!()
+    },
+
+    partial_eq = {
+        lhs == rhs
+    }
 }
-
-macro_rules! impl_qty_ops {
-    (
-        $t0:ty, [$($ty:ty),+ $(,)?], $config:tt
-    ) => {
-        $(
-            impl_op!($t0, $ty, Add, add, |lhs: Quantity, rhs: Quantity| {
-                assert!(lhs.unit().repr_eq(rhs.unit()), "cannot add two quantities with different units");
-                Quantity(lhs.value() + rhs.value(), lhs.unit())
-            }, $config);
-            impl_op!($t0, $ty, Mul, mul, |lhs: Quantity, rhs: Quantity| Quantity(lhs.value() * rhs.value(), lhs.unit() * rhs.unit()), $config);
-            impl_op!($t0, $ty, Div, div, |lhs: Quantity, rhs: Quantity| Quantity(lhs.value() / rhs.value(), lhs.unit() / rhs.unit()), $config);
-            impl_op!($t0, $ty, Sub, sub, |lhs: Quantity, rhs: Quantity| {
-                assert!(lhs.unit().repr_eq(rhs.unit()), "cannot subtract two quantities with different units");
-                Quantity(lhs.value() - rhs.value(), lhs.unit())
-            }, $config);
-            // impl_op!($t0, $ty, BitXor, bitxor, |lhs, rhs| Quantity(lhs.value() - rhs.value(), lhs.unit()), $config);
-
-        )+
-    };
-}
-
-impl_qty_ops!(Unit, [Scalar, f64, i64, Complex64, Complex32], symmetrical);
-
-impl_qty_ops!(
-    Quantity,
-    [Scalar, Unit, f64, i64, Complex64, Complex32],
-    symmetrical
-);
-impl_qty_ops!(Quantity, [Quantity], normal);
-
-macro_rules! impl_qty_partial_eq {
-    ($($t:ty),*) => {
-        $(
-            impl PartialEq<$t> for Quantity {
-                fn eq(&self, other: &$t) -> bool {
-                    self.0 == Scalar::from(*other) && self.1 == Unit::Unitless
-                }
-            }
-
-            impl PartialEq<Quantity> for $t {
-                fn eq(&self, other: &Quantity) -> bool {
-                    other.0 == Scalar::from(*self) && other.1 == Unit::Unitless
-                }
-            }
-
-        )*
-    };
-}
-
-impl_qty_partial_eq!(f64, i64, Complex64, Complex32);

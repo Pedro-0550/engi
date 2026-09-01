@@ -19,13 +19,13 @@ use variadics_please::all_tuples;
 use crate::{
     core::{
         graph::{BipartiteGraph, RightNode},
-        scalar::{I, Scalar},
+        value::{I, Scalar, Value},
     },
-    dimension::{Quantity, Unit, si::Hz},
     expr::{Expr, ops::sin},
     symbol::Symbol,
     symbols,
     system::eq::{Constraint, Equation},
+    units::{Quantity, Unit, si::Hz},
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -40,11 +40,12 @@ pub trait Interface {
 
 pub trait ModelBuilder {}
 
-pub trait Model: Constraints + Equations {
+pub trait Model: Constraints + Equations + Clone {
     type Builder: ModelBuilder;
     type Solution;
 
     fn register(self, system: System) -> Self::Builder;
+
     fn erased(self) -> Box<dyn ErasedModel>
     where
         Self: Sized, {
@@ -74,8 +75,8 @@ pub trait InterfaceArrayExt {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Connector {
-    condition: Condition,
     variable: Variable,
+    condition: Condition,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
@@ -136,18 +137,13 @@ pub enum Condition {
     Transported,
 }
 
-#[derive(From, Clone, Copy)]
-pub enum Value {
-    Set(),
-    Matrix(),
-    Scalar(Scalar),
-    // TODO: temp
-    Temp(Quantity),
-}
-
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Connector {
+    pub fn new(variable: Variable, condition: Condition) -> Self {
+        Self { variable, condition }
+    }
+
     pub fn variable(&self) -> Variable {
         self.variable
     }
@@ -257,20 +253,21 @@ impl InterfaceBuilder {
 /* -------------------------------------------------------------------------- */
 
 mod model_based_large_signal_bjt {
-    use engi_macros::{Model, relations};
+    use engi_macros::{Interface, Model, relations};
 
     use crate as engi;
     use crate::{
-        dimension::si::*,
-        expr::ops::exp,
+        expr::ops::{exp, real},
+        symbol::constants::{kB, q},
         system::{
-            Connector, Constraints, Equations, InterfaceArrayExt, System,
-            Variable,
+            Condition, Connector, Constraints, Equations, InterfaceArrayExt,
+            System, Variable,
             eq::{Constraint, Equation},
         },
+        units::si::*,
     };
 
-    #[derive(Interface)]
+    #[derive(Interface, Clone)]
     pub struct ElectricalPin {
         #[connect(cond = Condition::Conserved, unit = A, desc = "Pin current")]
         i: Connector,
@@ -281,7 +278,7 @@ mod model_based_large_signal_bjt {
 
     /* -------------------------------------------------------------------------- */
 
-    #[derive(Model)]
+    #[derive(Model, Clone)]
     pub struct ElectricalPort {
         #[interface]
         p: ElectricalPin,
@@ -310,7 +307,7 @@ mod model_based_large_signal_bjt {
 
     /* -------------------------------------------------------------------------- */
 
-    #[derive(Interface)]
+    #[derive(Interface, Clone)]
     pub struct ThermalPort {
         #[connect(cond = Condition::Equal, unit = W, desc = "Transferred power")]
         p: Connector,
@@ -318,7 +315,7 @@ mod model_based_large_signal_bjt {
 
     /* -------------------------------------------------------------------------- */
 
-    #[derive(Model)]
+    #[derive(Model, Clone)]
     pub struct SemiThermal {
         #[var(unit = K, desc = "Ambient temperature")]
         t_a: Variable,
@@ -352,7 +349,7 @@ mod model_based_large_signal_bjt {
 
     /* -------------------------------------------------------------------------- */
 
-    #[derive(Model)]
+    #[derive(Model, Clone)]
     pub struct StaticBjt {
         #[var(unit = A, desc = "Reverse saturation current")]
         i_s: Variable,
@@ -417,14 +414,14 @@ mod model_based_large_signal_bjt {
 
                 c.i = i_s * (exp(v_be / v_t) - exp(v_bc / v_t) - (exp(v_bc / v_t) - 1) / β_r);
                 b.i = i_s * ((exp(v_be / v_t) - 1) / β_f + (exp(v_bc / v_t) - 1) / β_r);
-                e.i = b.i + c.i;
+                e.i = b.i + c.v;
             }
         }
     }
 
     /* -------------------------------------------------------------------------- */
 
-    #[derive(Model)]
+    #[derive(Model, Clone)]
     pub struct Impedance {
         #[var(unit = Ω, desc = "Complex impedance")]
         z: Variable,
@@ -439,7 +436,7 @@ mod model_based_large_signal_bjt {
             let Impedance { z, port, thermal } = self;
             relations! {
                 port.v = port.i * z;
-                thermal.p = re(port.v * port.i)
+                thermal.p = real(port.v * port.i)
             }
         }
     }
@@ -448,14 +445,14 @@ mod model_based_large_signal_bjt {
         fn constraints(&self) -> Vec<Constraint> {
             let Impedance { z, .. } = self;
             relations! {
-                re(z) > 0;
+                real(z) > 0;
             }
         }
     }
 
     /* -------------------------------------------------------------------------- */
 
-    #[derive(Model)]
+    #[derive(Model, Clone)]
     pub struct Ground {
         #[interface]
         pin: ElectricalPin,
@@ -472,7 +469,7 @@ mod model_based_large_signal_bjt {
 
     /* -------------------------------------------------------------------------- */
 
-    #[derive(Model)]
+    #[derive(Model, Clone)]
     pub struct IdealSupply {
         #[var(unit = V, desc = "Supply output voltage")]
         v: Variable,
@@ -509,15 +506,15 @@ mod model_based_large_signal_bjt {
 
         [&v_c.out.n, &v_b.out.n, &bjt.e].connect(&gnd.pin);
 
-        v_b.v.bind(2 * V);
-        v_c.v.bind(12 * V);
+        v_b.v.bind(2);
+        v_c.v.bind(12);
 
-        r_c.z.bind(1e3 * Ω);
-        bjt.v_ce.bind(6 * V);
+        r_c.z.bind(1e3);
+        bjt.v_ce.bind(6);
 
-        bjt.thermal.t_a.bind((25.0 + 273.15) * K);
-        bjt.thermal.rθ_jc.bind(10 * K / W);
-        bjt.thermal.rθ_ca.bind(20 * K / W);
+        bjt.thermal.t_a.bind(25.0 + 273.15);
+        bjt.thermal.rθ_jc.bind(10);
+        bjt.thermal.rθ_ca.bind(20);
 
         let solution = system.solve();
         println!("{}", solution.get(bjt))

@@ -1,8 +1,8 @@
 #![allow(non_upper_case_globals)]
 
 use crate::{
-    dimension::{Unit, si::*},
     symbol::Symbol,
+    units::{Unit, si::*},
 };
 
 macro_rules! constants {
@@ -35,7 +35,7 @@ macro_rules! constants {
     ) => {
         $(#[$meta])*
         pub const $name: Symbol =
-            Symbol(crate::core::arena::Handle::new($i));
+            Symbol(crate::core::interned::Handle::new($i));
 
         constants!(@defs $i + 1; $($($rest)*)?);
     };
@@ -76,6 +76,17 @@ constants! {
     ///
     /// Source: CODATA 2022
     c = 299792458.0 * m / s,
+
+    /// Boltzmann constant
+    ///
+    /// Source: CODATA 2022
+    kB = 1.380649e-23 * J / K,
+
+
+    /// Elementary charge
+    ///
+    /// Source: CODATA 2022
+    q = 1.602176634e-19 * C,
 
     // TODO: add more useful constants
 }

@@ -20,7 +20,7 @@ use dashmap::{
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-pub struct Arena<T: Hash + Eq> {
+pub struct Interned<T: Hash + Eq> {
     element_to_handle: LazyLock<DashMap<T, Handle<T>>>,
     handle_to_element: LazyLock<DashMap<Handle<T>, T>>,
 
@@ -29,11 +29,9 @@ pub struct Arena<T: Hash + Eq> {
 
 pub struct Handle<T>(pub(crate) usize, PhantomData<T>);
 
-// TODO: register the constants somehow
-
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl<T: Hash + Eq> Arena<T>
+impl<T: Hash + Eq> Interned<T>
 where
     Handle<T>: Eq + Hash,
     T: Clone,
