@@ -157,12 +157,19 @@ impl Connection {
     fn new(a: InterfaceId, b: InterfaceId) -> Self {
         Self { a, b }
     }
+
+    fn transpose(&self) -> Self {
+        Self { a: self.b, b: self.a }
+    }
 }
 
 impl VariableBuilder {
-    fn bind(&self, val: impl Into<Value>) {
-        let val = val.into();
-        self.system.0.borrow_mut().bindings.insert(self.id, val);
+    fn bind(&self, qty: impl Into<Quantity>) {
+        let mut inner = self.system.0.borrow_mut();
+        let var_unit = inner.variables[self.id.0].symbol().unit();
+        let qty = qty.into().convert(var_unit).unwrap();
+        // think: should unitless values automatically have the variables' unit appended?
+        inner.bindings.insert(self.id, qty);
     }
 }
 
@@ -171,7 +178,7 @@ impl InterfaceBuilder {
         let mut inner = self.system.0.borrow_mut();
         let connection = Connection::new(self.id, other.id);
 
-        if inner.connections.contains(&Connection::new(other.id, self.id))
+        if inner.connections.contains(&connection.transpose())
             || inner.connections.contains(&connection)
         {
             return;
@@ -311,18 +318,17 @@ mod model_based_large_signal_bjt {
     pub struct ThermalPort {
         #[connect(cond = Condition::Equal, unit = W, desc = "Transferred power")]
         p: Connector,
+        #[connect(cond = Condition::Equal, unit = K, desc = "Transferred temperature")]
+        t: Connector
     }
 
     /* -------------------------------------------------------------------------- */
 
     #[derive(Model, Clone)]
-    pub struct SemiThermal {
+    pub struct JunctionThermal {
         #[var(unit = K, desc = "Ambient temperature")]
         t_a: Variable,
-
-        #[var(unit = K, desc = "Junction temperature")]
-        t_j: Variable,
-
+        
         #[var(unit = K, desc = "Case temperature")]
         t_c: Variable,
 
@@ -338,10 +344,10 @@ mod model_based_large_signal_bjt {
 
     impl Equations for SemiThermal {
         fn equations(&self) -> Vec<Equation> {
-            let SemiThermal { t_a, t_j, t_c, rθ_jc, rθ_ca, port } = self;
+            let SemiThermal { t_a, t_c, rθ_jc, rθ_ca, port } = self;
 
             relations! [
-                t_j - t_c = rθ_jc * port.p;
+                port.t - t_c = rθ_jc * port.p;
                 t_c - t_a = rθ_ca * port.p;
             ]
         }
@@ -369,9 +375,6 @@ mod model_based_large_signal_bjt {
         β_f: Variable,
         #[var(desc = "Reverse current gain")]
         β_r: Variable,
-        /* -------------------------------------------------------------------------- */
-        #[var(unit = W, desc = "Power dissipation")]
-        p_d: Variable,
 
         /* -------------------------------------------------------------------------- */
         #[interface]
@@ -383,8 +386,8 @@ mod model_based_large_signal_bjt {
         #[interface]
         pub e: ElectricalPin,
 
-        #[model]
-        pub thermal: SemiThermal,
+        #[interface]
+        pub thermal: ThermalPort,
     }
 
     impl Equations for StaticBjt {
@@ -405,16 +408,16 @@ mod model_based_large_signal_bjt {
             } = self;
 
             relations! {
-                v_t = kB * thermal.t_j / q;
+                v_t = kB * thermal.t / q;
                 v_be = b.v - e.v;
                 v_bc = b.v - c.v;
                 v_ce = c.v - e.v;
 
-                p_d = v_be * b.i + v_ce * c.i;
+                thermal.p = v_be * b.i + v_ce * c.i;
 
                 c.i = i_s * (exp(v_be / v_t) - exp(v_bc / v_t) - (exp(v_bc / v_t) - 1) / β_r);
                 b.i = i_s * ((exp(v_be / v_t) - 1) / β_f + (exp(v_bc / v_t) - 1) / β_r);
-                e.i = b.i + c.v;
+                e.i = b.i + c.i:
             }
         }
     }
@@ -497,7 +500,8 @@ mod model_based_large_signal_bjt {
         let r_c = system.add(Impedance::default(), "r_c");
         let r_b = system.add(Impedance::default(), "r_b");
         let gnd = system.add(Ground::default(), "gnd");
-
+        let bjt_thermal = system.add(JunctionThermal::default(), "semi_thermal");
+        
         r_c.port.p.connect(&v_c.out.p);
         r_b.port.n.connect(&bjt.c);
 
@@ -506,15 +510,19 @@ mod model_based_large_signal_bjt {
 
         [&v_c.out.n, &v_b.out.n, &bjt.e].connect(&gnd.pin);
 
-        v_b.v.bind(2);
-        v_c.v.bind(12);
+        bjt.thermal.connect(bjt_thermal.port)
+        
+        v_b.v.bind(2 * V);
+        v_c.v.bind(12 * V);
 
-        r_c.z.bind(1e3);
-        bjt.v_ce.bind(6);
+        r_c.z.bind(1e3 * Ω);
+        bjt.v_ce.bind(6 * V);
+        bjt.β_f.bind(100);
+        bjt.β_r.bind(10);
 
-        bjt.thermal.t_a.bind(25.0 + 273.15);
-        bjt.thermal.rθ_jc.bind(10);
-        bjt.thermal.rθ_ca.bind(20);
+        bjt_thermal.t_a.bind(25.0 * DegC);
+        bjt_thermal.rθ_jc.bind(10 * K / W);
+        bjt_thermal.rθ_ca.bind(20 * K / W);
 
         let solution = system.solve();
         println!("{}", solution.get(bjt))
