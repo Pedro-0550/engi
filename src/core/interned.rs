@@ -20,6 +20,8 @@ use dashmap::{
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
+// TODO: Inventory for pre-interned values
+
 pub struct Interned<T: Hash + Eq> {
     element_to_handle: LazyLock<DashMap<T, Handle<T>>>,
     handle_to_element: LazyLock<DashMap<Handle<T>, T>>,
