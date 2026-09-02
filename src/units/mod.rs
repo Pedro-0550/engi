@@ -11,7 +11,7 @@ use crate::{
     core::{
         interned::{Handle, Interned},
         util::to_superscript,
-        value::{Scalar, Value},
+        value::Value,
     },
     expr::Expr,
     units::isq::DIMENSIONLESS,
@@ -108,7 +108,7 @@ pub enum Unit {
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Quantity {
-    pub const ZERO: Self = Self(Value::Scalar(Scalar::ZERO), Unit::Unitless);
+    pub const ZERO: Self = Self(Value::ZERO, Unit::Unitless);
 
     /// Normalizes this quantity to its non-scaled form.
     /// If this quantity is given in a scaled unit such as eV, it will convert to Joule and scale its value appropriately.
@@ -305,7 +305,7 @@ impl Display for Unit {
                             unit.fmt(f)?;
 
                             if *exp != 1 {
-                                f.write_str(&to_superscript(*exp as i32))?;
+                                f.write_str(&to_superscript(*exp as i64))?;
                             }
 
                             if i < num.len() - 1 {
@@ -329,7 +329,7 @@ impl Display for Unit {
                             unit.fmt(f)?;
 
                             if *exp != -1 {
-                                f.write_str(&to_superscript(exp.abs() as i32))?;
+                                f.write_str(&to_superscript(exp.abs() as i64))?;
                             }
 
                             if i < denom.len() - 1 {
@@ -345,7 +345,7 @@ impl Display for Unit {
                         for (i, (unit, exp)) in denom.iter().enumerate() {
                             unit.fmt(f)?;
 
-                            f.write_str(&to_superscript(*exp as i32))?;
+                            f.write_str(&to_superscript(*exp as i64))?;
 
                             if i < num.len() - 1 {
                                 f.write_str(" * ")?;

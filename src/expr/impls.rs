@@ -8,13 +8,10 @@ use std::{
 };
 
 use crate::{
-    core::{
-        util::impl_op_permutations,
-        value::{Scalar, Value},
-    },
+    core::{util::impl_op_permutations, value::Value},
     expr::{Binary, Expr, Node, Shaped, Variadic, ops::*},
+    model::{Connector, Variable},
     symbol::Symbol,
-    system::{Connector, Variable},
     units::{Quantity, Unit},
 };
 
@@ -37,17 +34,8 @@ where
     Node: From<T>,
     T: Clone,
 {
-    fn from(value: &T) -> Self {
+    default fn from(value: &T) -> Self {
         value.clone().into()
-    }
-}
-
-impl From<Scalar> for Expr {
-    fn from(v: Scalar) -> Self {
-        let node = Node::Const(v.into());
-        let mut hasher = DefaultHasher::new();
-        node.hash(&mut hasher);
-        Self { node: Arc::new(node), hash: hasher.finish() }
     }
 }
 
@@ -87,12 +75,18 @@ impl From<Connector> for Node {
     }
 }
 
+impl From<&Connector> for Node {
+    fn from(v: &Connector) -> Self {
+        Self::Symbol(v.variable().symbol())
+    }
+}
+
 impl_op_permutations! {
     types = [
-        i64, f64, Scalar, Quantity, &Quantity, Value, &Value, Symbol, Expr,
+        i64, f64, Quantity, &Quantity, Value, &Value, Symbol, Expr,
         &Expr, Variable, &Variable, Connector, &Connector
     ],
-    exclude_permutations = [i64, f64, Scalar, Quantity, &Quantity, Value, &Value],
+    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value],
     exclude_specific = [],
     out = Expr,
 

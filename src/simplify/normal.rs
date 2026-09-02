@@ -5,7 +5,6 @@ use num::complex::ComplexFloat;
 
 use super::separate_consts;
 use crate::{
-    core::value::Scalar,
     expr::{
         Expr, Node,
         ops::{Atan2, Binary, Log, Pow, Unary, Variadic},
@@ -56,7 +55,7 @@ impl Normalize for Variadic {
                     (acc.value() + x.value()) * x.unit()
                 });
 
-                if folded_const.value() != 0.0 || exprs.len() == 0 {
+                if *folded_const.value() != 0.0 || exprs.len() == 0 {
                     exprs.push(folded_const.into());
                 }
 
@@ -66,13 +65,13 @@ impl Normalize for Variadic {
                 let folded_const =
                     consts.fold(1.into(), |acc: Quantity, x| acc * x);
 
-                if folded_const.value() == 0.0.into() {
+                if *folded_const.value() == 0.0 {
                     return 0.0.into();
                 }
 
                 let mut exprs = exprs.collect_vec();
 
-                if folded_const.value() != 1.0.into() || exprs.len() == 0 {
+                if *folded_const.value() != 1.0 || exprs.len() == 0 {
                     exprs.push(folded_const.into());
                 }
 
@@ -179,9 +178,7 @@ impl Ord for Expr {
                 (Node::Const(lhs), Node::Const(rhs)) => {
                     let lhs = lhs.value();
                     let rhs = rhs.value();
-                    lhs.norm()
-                        .total_cmp(&rhs.norm())
-                        .then_with(|| lhs.arg().total_cmp(&rhs.arg()))
+                    todo!()
                 }
                 (Node::Unary(lhs), Node::Unary(rhs)) => lhs
                     .rank()

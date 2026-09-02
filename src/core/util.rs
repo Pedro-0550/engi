@@ -1,4 +1,4 @@
-pub fn to_superscript(num: i32) -> String {
+pub fn to_superscript(num: i64) -> String {
     let superscripts = ["⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"];
 
     num.to_string()
@@ -64,7 +64,14 @@ fn impl_as_variant(input: TokenStream) {
 
         crabtime::output! {
             impl {{ty}} {
-                pub fn as_{{variant_lower}}(self) -> Option<{{output}}> {
+                pub fn as_{{variant_lower}}(&self) -> Option<&{{output}}> {
+                    match self {
+                        {{ty}}::{{variant}}(out) => Some(out),
+                        _ => None
+                    }
+                }
+
+                pub fn into_{{variant_lower}}(self) -> Option<{{output}}> {
                     match self {
                         {{ty}}::{{variant}}(out) => Some(out),
                         _ => None
@@ -89,6 +96,7 @@ fn impl_op_permutations(input: TokenStream) {
         pub types: Vec<String>,
         pub exclude_permutations: Vec<String>,
         pub exclude_specific: Vec<(String, String)>,
+        pub op_exclusions: HashMap<String, (Vec<String>, Vec<String>)>,
         pub output: String,
         pub bodies: HashMap<String, String>,
     }
@@ -165,6 +173,59 @@ fn impl_op_permutations(input: TokenStream) {
                 }
 
                 Ok(())
+            } else if meta.path.is_ident("exclude") {
+                let content;
+                let value = meta.value()?;
+                braced!(content in value);
+
+                while !content.is_empty() {
+                    let op_ident: Ident = content.parse()?;
+                    let _eq: Token![=] = content.parse()?;
+                    let op_content;
+                    braced!(op_content in content);
+
+                    let mut lhs_types = Vec::new();
+                    let mut rhs_types = Vec::new();
+
+                    while !op_content.is_empty() {
+                        let side_ident: Ident = op_content.parse()?;
+                        let _eq2: Token![=] = op_content.parse()?;
+                        let array_content;
+                        bracketed!(array_content in op_content);
+
+                        let types =
+                            Punctuated::<Type, Token![,]>::parse_terminated(
+                                &array_content,
+                            )?;
+                        let parsed_types: Vec<String> = types
+                            .into_iter()
+                            .map(|x| x.to_token_stream().to_string())
+                            .collect();
+
+                        if side_ident == "lhs" {
+                            lhs_types = parsed_types;
+                        } else if side_ident == "rhs" {
+                            rhs_types = parsed_types;
+                        } else {
+                            return Err(syn::Error::new(
+                                side_ident.span(),
+                                "expected `lhs` or `rhs`",
+                            ));
+                        }
+
+                        if op_content.peek(Token![,]) {
+                            let _comma: Token![,] = op_content.parse()?;
+                        }
+                    }
+
+                    self.op_exclusions
+                        .insert(op_ident.to_string(), (lhs_types, rhs_types));
+
+                    if content.peek(Token![,]) {
+                        let _comma: Token![,] = content.parse()?;
+                    }
+                }
+                Ok(())
             } else if meta.path.is_ident("out") {
                 let value = meta.value()?;
 
@@ -197,91 +258,89 @@ fn impl_op_permutations(input: TokenStream) {
         .parse2(input)
         .expect("failed to parse impl_op_permutations arguments");
 
-    let body = |name: &str| {
-        args.bodies
-            .get(name)
-            .unwrap_or_else(|| panic!("missing `{name}` operation body"))
-    };
-
     let out = args.output;
 
-    let add = body("add");
-    let mul = body("mul");
-    let div = body("div");
-    let sub = body("sub");
-    let pow = body("pow");
-    let partial_eq = body("partial_eq");
-
-    // `exclude_specific` is order-independent:
-    //
-    //     (A, B)
-    //
-    // excludes both:
-    //
-    //     A op B
-    //     B op A
-    //
     let is_excluded_specific = |a: &str, b: &str| {
         args.exclude_specific
             .iter()
             .any(|(x, y)| (a == x && b == y) || (a == y && b == x))
     };
 
+    let is_op_excluded = |op: &str, a: &str, b: &str| -> bool {
+        if let Some((lhs_excl, rhs_excl)) = args.op_exclusions.get(op) {
+            if lhs_excl.iter().any(|x| x == a)
+                || rhs_excl.iter().any(|x| x == b)
+            {
+                return true;
+            }
+        }
+        false
+    };
+
     for (a, b) in args.types.iter().cartesian_product(args.types.iter()) {
-        // `exclude_permutations = [A, B, C]` means that no permutation where
-        // BOTH operands belong to that set is generated.
-        //
-        // Excludes:
-        //     A-A, A-B, A-C
-        //     B-A, B-B, B-C
-        //     C-A, C-B, C-C
-        //
-        // But does NOT exclude:
-        //     A-X, X-A
-        //     B-X, X-B
-        //     C-X, X-C
-        //
-        // where X is not in `exclude_permutations`.
         if args.exclude_permutations.contains(a)
             && args.exclude_permutations.contains(b)
         {
             continue;
         }
 
-        // Explicit pair exclusions are also order-independent.
         if is_excluded_specific(a, b) {
             continue;
         }
 
         if *a == out {
-            crabtime::output! {
-                impl std::ops::AddAssign<{{b}}> for {{a}} {
-                    fn add_assign(&mut self, rhs: {{b}}) {
-                        *self = self.clone() + {{out}}::from(rhs)
+            if args.bodies.get("add").is_some() && !is_op_excluded("add", a, b)
+            {
+                crabtime::output! {
+                    impl std::ops::AddAssign<{{b}}> for {{a}} {
+                        fn add_assign(&mut self, rhs: {{b}}) {
+                            *self = self.clone() + {{out}}::from(rhs)
+                        }
                     }
                 }
+            }
 
-                impl std::ops::SubAssign<{{b}}> for {{a}} {
-                    fn sub_assign(&mut self, rhs: {{b}}) {
-                        *self = self.clone() - {{out}}::from(rhs)
+            if args.bodies.get("sub").is_some() && !is_op_excluded("sub", a, b)
+            {
+                crabtime::output! {
+                    impl std::ops::SubAssign<{{b}}> for {{a}} {
+                        fn sub_assign(&mut self, rhs: {{b}}) {
+                            *self = self.clone() - {{out}}::from(rhs)
+                        }
                     }
                 }
+            }
 
-                impl std::ops::MulAssign<{{b}}> for {{a}} {
-                    fn mul_assign(&mut self, rhs: {{b}}) {
-                        *self = self.clone() * {{out}}::from(rhs)
+            if args.bodies.get("mul").is_some() && !is_op_excluded("mul", a, b)
+            {
+                crabtime::output! {
+                    impl std::ops::MulAssign<{{b}}> for {{a}} {
+                        fn mul_assign(&mut self, rhs: {{b}}) {
+                            *self = self.clone() * {{out}}::from(rhs)
+                        }
                     }
                 }
+            }
 
-                impl std::ops::DivAssign<{{b}}> for {{a}} {
-                    fn div_assign(&mut self, rhs: {{b}}) {
-                        *self = self.clone() / {{out}}::from(rhs)
+            if args.bodies.get("div").is_some() && !is_op_excluded("div", a, b)
+            {
+                crabtime::output! {
+                    impl std::ops::DivAssign<{{b}}> for {{a}} {
+                        fn div_assign(&mut self, rhs: {{b}}) {
+                            *self = self.clone() / {{out}}::from(rhs)
+                        }
                     }
                 }
             }
         }
 
-        if (a == &out || b == &out) && !(a == b) {
+        if let Some(partial_eq) = args.bodies.get("partial_eq")
+            && (a.strip_prefix('&').unwrap_or(a).trim() == &out
+                || b.strip_prefix('&').unwrap_or(b).trim() == &out)
+            && !(a == b)
+            && !(a.starts_with("&") && b.starts_with("&"))
+            && !is_op_excluded("partial_eq", a, b)
+        {
             crabtime::output! {
                 impl std::cmp::PartialEq<{{b}}> for {{a}} {
                     fn eq(&self, rhs: &{{b}}) -> bool {
@@ -294,62 +353,90 @@ fn impl_op_permutations(input: TokenStream) {
             }
         }
 
-        crabtime::output! {
-            impl std::ops::Add<{{b}}> for {{a}} {
-                type Output = {{out}};
+        if let Some(add) = args.bodies.get("add") {
+            if !is_op_excluded("add", a, b) {
+                crabtime::output! {
+                    impl std::ops::Add<{{b}}> for {{a}} {
+                        type Output = {{out}};
 
-                fn add(self, rhs: {{b}}) -> {{out}} {
-                    let lhs = {{out}}::from(self);
-                    let rhs = {{out}}::from(rhs);
+                        fn add(self, rhs: {{b}}) -> {{out}} {
+                            let lhs = {{out}}::from(self);
+                            let rhs = {{out}}::from(rhs);
 
-                    {{add}}
+                            {{add}}
+                        }
+                    }
                 }
             }
+        }
 
-            impl std::ops::Mul<{{b}}> for {{a}} {
-                type Output = {{out}};
+        if let Some(mul) = args.bodies.get("mul") {
+            if !is_op_excluded("mul", a, b) {
+                crabtime::output! {
+                    impl std::ops::Mul<{{b}}> for {{a}} {
+                        type Output = {{out}};
 
-                fn mul(self, rhs: {{b}}) -> {{out}} {
-                    let lhs = {{out}}::from(self);
-                    let rhs = {{out}}::from(rhs);
+                        fn mul(self, rhs: {{b}}) -> {{out}} {
+                            let lhs = {{out}}::from(self);
+                            let rhs = {{out}}::from(rhs);
 
-                    {{mul}}
+                            {{mul}}
+                        }
+                    }
                 }
             }
+        }
 
-            impl std::ops::Div<{{b}}> for {{a}} {
-                type Output = {{out}};
+        if let Some(div) = args.bodies.get("div") {
+            if !is_op_excluded("div", a, b) {
+                crabtime::output! {
+                    impl std::ops::Div<{{b}}> for {{a}} {
+                        type Output = {{out}};
 
-                fn div(self, rhs: {{b}}) -> {{out}} {
-                    let lhs = {{out}}::from(self);
-                    let rhs = {{out}}::from(rhs);
+                        fn div(self, rhs: {{b}}) -> {{out}} {
+                            let lhs = {{out}}::from(self);
+                            let rhs = {{out}}::from(rhs);
 
-                    {{div}}
+                            {{div}}
+                        }
+                    }
                 }
             }
+        }
 
-            impl std::ops::Sub<{{b}}> for {{a}} {
-                type Output = {{out}};
+        if let Some(sub) = args.bodies.get("sub") {
+            if !is_op_excluded("sub", a, b) {
+                crabtime::output! {
+                    impl std::ops::Sub<{{b}}> for {{a}} {
+                        type Output = {{out}};
 
-                fn sub(self, rhs: {{b}}) -> {{out}} {
-                    let lhs = {{out}}::from(self);
-                    let rhs = {{out}}::from(rhs);
+                        fn sub(self, rhs: {{b}}) -> {{out}} {
+                            let lhs = {{out}}::from(self);
+                            let rhs = {{out}}::from(rhs);
 
-                    {{sub}}
+                            {{sub}}
+                        }
+                    }
                 }
             }
+        }
 
-            impl num::pow::Pow<{{b}}> for {{a}} {
-                type Output = {{out}};
+        if let Some(pow) = args.bodies.get("pow") {
+            if !is_op_excluded("pow", a, b) {
+                crabtime::output! {
+                    impl num::pow::Pow<{{b}}> for {{a}} {
+                        type Output = {{out}};
 
-                fn pow(self, rhs: {{b}}) -> {{out}} {
-                    let lhs = {{out}}::from(self);
-                    let rhs = {{out}}::from(rhs);
+                        fn pow(self, rhs: {{b}}) -> {{out}} {
+                            let lhs = {{out}}::from(self);
+                            let rhs = {{out}}::from(rhs);
 
-                    {{pow}}
+                            {{pow}}
+                        }
+                    }
                 }
             }
-        };
+        }
     }
 }
 

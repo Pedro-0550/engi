@@ -11,7 +11,7 @@ use ordered_float::OrderedFloat;
 use crate::{
     core::{
         interned::Interned,
-        value::{Scalar, Value, gcd_f64},
+        value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
         Expr, Node,
@@ -179,20 +179,20 @@ impl Simplify for Binary {
                 })) = &base.node()
                     && let Node::Const(exp) = exp.node()
                     && let Node::Const(inner_exp) = inner_exp.node()
-                    && exp.value().is_integer()
-                    && inner_exp.value().is_integer()
+                    && exp.value().is_scalar_integer()
+                    && inner_exp.value().is_scalar_integer()
                 {
                     pow(inner_base, exp * inner_exp).simplify_inner(ctx)
                 } else if let Node::Const(qty) = exp.node()
-                    && qty.value().is_zero()
+                    && qty.value() == 0.0
                 {
                     (1.0).into()
                 } else if let Node::Const(qty) = exp.node()
-                    && qty.value().is_one()
+                    && qty.value() == 1.0
                 {
                     base.clone()
                 } else if let Node::Const(qty) = base.node()
-                    && qty.value().is_one()
+                    && qty.value() == 1.0
                 {
                     (1.0).into()
                 } else {
@@ -229,7 +229,7 @@ impl Simplify for Variadic {
                 && let Node::Binary(Binary::Pow(Pow { base, exp })) =
                     term.node()
                 && let Node::Const(exp) = exp.node()
-                && exp.value().is_integer()
+                && exp.value().is_scalar_integer()
             {
                 if let Node::Variadic(Variadic::Mul(terms)) = base.node() {
                     for term in terms {
@@ -251,9 +251,9 @@ impl Simplify for Variadic {
             Variadic::Add(_) => groupings
                 .into_iter()
                 .map(|(base, coef)| {
-                    if coef == 1.0.into() {
+                    if coef == 1.0 {
                         base
-                    } else if coef == 0.0.into() {
+                    } else if coef == 0.0 {
                         0.0.into()
                     } else {
                         base * coef
@@ -264,9 +264,9 @@ impl Simplify for Variadic {
             Variadic::Mul(_) => groupings
                 .into_iter()
                 .map(|(base, exp)| {
-                    if exp == 1.0.into() {
+                    if exp == 1.0 {
                         base
-                    } else if exp == 0.0.into() {
+                    } else if exp == 0.0 {
                         1.0.into()
                     } else {
                         pow(base, exp)

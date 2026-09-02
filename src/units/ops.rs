@@ -6,10 +6,7 @@ use num::{
 };
 
 use crate::{
-    core::{
-        util::impl_op_permutations,
-        value::{Scalar, Value},
-    },
+    core::{util::impl_op_permutations, value::Value},
     units::{COMPOSITIONS, Dimension, Quantity, Unit},
 };
 
@@ -138,10 +135,10 @@ impl Div for Unit {
     }
 }
 
-impl Pow<i32> for Unit {
+impl Pow<i64> for Unit {
     type Output = Unit;
 
-    fn pow(self, exp: i32) -> Self::Output {
+    fn pow(self, exp: i64) -> Self::Output {
         match self {
             Self::Unitless => self,
             _ if self.is_atomic() => {
@@ -174,10 +171,7 @@ macro_rules! impl_qty_from_scalar {
     };
 }
 
-impl_qty_from_scalar!(
-    u8, i8, u16, i16, u32, i32, u64, i64, f32, f64, Complex32, Complex64,
-    Scalar, Value
-);
+impl_qty_from_scalar!(i64, f64, Complex64, Value);
 
 impl From<Unit> for Quantity {
     fn from(unit: Unit) -> Self {
@@ -185,11 +179,24 @@ impl From<Unit> for Quantity {
     }
 }
 
+impl From<&Quantity> for Quantity {
+    fn from(qty: &Quantity) -> Self {
+        qty.clone()
+    }
+}
+
 impl_op_permutations! {
-    types = [i64, f64, Scalar, Value, Quantity, Unit],
-    exclude_permutations = [i64, f64, Scalar, Value],
+    types = [i64, f64, Complex64, Value, Quantity, &Quantity, Unit],
+    exclude_permutations = [i64, f64, Complex64, Value],
     exclude_specific = [(Unit, Unit)],
     out = Quantity,
+
+    exclude = {
+        pow = {
+            lhs = [Unit],
+            rhs = [Unit, f64, Complex64, Value],
+        },
+    },
 
     add = {
         assert!(lhs.unit().repr_eq(rhs.unit()), "cannot add two quantities with different units");
@@ -210,7 +217,7 @@ impl_op_permutations! {
     },
 
     pow = {
-        todo!()
+        todo!();
     },
 
     partial_eq = {

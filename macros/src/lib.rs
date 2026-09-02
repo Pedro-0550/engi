@@ -156,17 +156,17 @@ pub fn model(input: TokenStream) -> TokenStream {
         .iter()
         .map(|(Field { vis, ident, .. }, ..)| {
             quote! {
-                #vis #ident: engi::system::VariableBuilder
+                #vis #ident: engi::model::VariableBuilder
             }
         })
         .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
             quote! {
-                #vis #ident: <#ty as engi::system::Model>::Builder
+                #vis #ident: <#ty as engi::model::Model>::Builder
             }
         }))
         .chain(interfaces.iter().map(|Field { vis, ident, .. }| {
             quote! {
-                #vis #ident: engi::system::InterfaceBuilder
+                #vis #ident: engi::model::InterfaceBuilder
             }
         }));
 
@@ -179,7 +179,7 @@ pub fn model(input: TokenStream) -> TokenStream {
                 Span::call_site(),
             );
             quote! {
-                #field_ident: engi::system::Variable::new(
+                #field_ident: engi::model::Variable::new(
                     engi::symbol::Symbol::new(#sym_name)
                         .set_unit(#unit)
                         .set_shape(#shape)
@@ -204,23 +204,23 @@ pub fn model(input: TokenStream) -> TokenStream {
         .iter()
         .map(|(Field { vis, ident, .. }, ..)| {
             quote! {
-                #vis #ident: engi::system::Value
+                #vis #ident: engi::model::Value
             }
         })
         .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
             quote! {
-                #vis #ident: <#ty as engi::system::Model>::Solution
+                #vis #ident: <#ty as engi::model::Model>::Solution
             }
         }));
 
     quote! {
         #vis struct #builder_ident {
-            __system: engi::system::System,
-            __id: engi::system::ModelId,
+            __system: engi::model::System,
+            __id: engi::model::ModelId,
             #(#builder_fields,)*
         }
 
-        impl engi::system::ModelBuilder for #builder_ident {}
+        impl engi::model::ModelBuilder for #builder_ident {}
 
         #vis struct #solution_ident {
             #(#solution_fields,)*
@@ -234,7 +234,7 @@ pub fn model(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics engi::system::Model for #ident #ty_generics #where_clause {
+        impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
             type Solution = #solution_ident;
             type Builder = #builder_ident;
 
@@ -242,12 +242,12 @@ pub fn model(input: TokenStream) -> TokenStream {
 
                 #(let #variable_builder_idents = {
                     let id = system.0.borrow_mut().add_variable(self.#variable_idents.clone());
-                    engi::system::VariableBuilder::new(system.clone(), id)
+                    engi::model::VariableBuilder::new(system.clone(), id)
                 };)*
 
                 #(let #interface_builder_idents = {
                     let id = system.0.borrow_mut().add_interface(self.#interface_idents.clone());
-                    engi::system::InterfaceBuilder::new(system.clone(), id)
+                    engi::model::InterfaceBuilder::new(system.clone(), id)
                 };)*
 
                 #(let #submodel_builder_idents = self.#submodel_idents.clone().register(system.clone());)*
@@ -287,7 +287,7 @@ impl Default for ConnectAttr {
                 .parse(quote! {engi::expr::Shape::SCALAR}.into())
                 .unwrap(),
             condition: Expr::parse
-                .parse(quote! {engi::system::Condition::Equal}.into())
+                .parse(quote! {engi::model::Condition::Equal}.into())
                 .unwrap(),
         }
     }
@@ -354,7 +354,7 @@ pub fn interface(input: TokenStream) -> TokenStream {
         let sym_name =
             LitStr::new(field_ident.to_string().as_str(), Span::call_site());
         quote! {
-            #field_ident: engi::system::Connector::new(engi::system::Variable::new(
+            #field_ident: engi::model::Connector::new(engi::model::Variable::new(
                 engi::symbol::Symbol::new(#sym_name)
                     .set_unit(#unit)
                     .set_shape(#shape)
@@ -372,8 +372,8 @@ pub fn interface(input: TokenStream) -> TokenStream {
             }
         }
 
-        impl #impl_generics engi::system::Interface for #ident #ty_generics #where_clause {
-            fn connectors(&self) -> Vec<engi::system::Connector> {
+        impl #impl_generics engi::model::Interface for #ident #ty_generics #where_clause {
+            fn connectors(&self) -> Vec<engi::model::Connector> {
                 vec![
                     #(self.#connector_exprs,)*
                 ]
@@ -486,19 +486,19 @@ pub fn relations(input: TokenStream) -> TokenStream {
     let terms =
         punc.iter().map(|Equation { lhs, constraint, rhs }| match constraint {
             Constraint::Eq => quote! {
-                engi::system::eq::Equation::new(#lhs, #rhs)
+                engi::model::eq::Equation::new(#lhs, #rhs)
             },
             Constraint::Gt => quote! {
-                engi::system::eq::Constraint::new(#lhs, #rhs, engi::system::eq::Inequality::Greater)
+                engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Greater)
             },
             Constraint::Ge => quote! {
-                engi::system::eq::Constraint::new(#lhs, #rhs, engi::system::eq::Inequality::GreaterOrEq)
+                engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::GreaterOrEq)
             },
             Constraint::Lt => quote! {
-                engi::system::eq::Constraint::new(#lhs, #rhs, engi::system::eq::Inequality::Less)
+                engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Less)
             },
             Constraint::Le => quote! {
-                engi::system::eq::Constraint::new(#lhs, #rhs, engi::system::eq::Inequality::LessOrEq)
+                engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::LessOrEq)
             },
         });
 

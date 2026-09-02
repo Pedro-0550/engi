@@ -7,15 +7,14 @@ edition = "2024"
 num = "0.4"
 itertools = "0.15"
 thiserror = "2.0"
-paste = "1.0"
 derive_more = { version = "2", features = ["from", "deref", "deref_mut", "is_variant", "into",] }
 float_eq = "1.0"
 ordered-float = "5.3"
 dashmap = "6"
 ahash = "0.8"
-variadics_please = "2.0"
 crabtime = "1.1.4"
 faer = "0.24"
+linkme = "0.3"
 
 engi-macros = { path = "./macros" }
 

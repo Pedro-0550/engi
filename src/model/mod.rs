@@ -14,17 +14,16 @@ use std::{
 use derive_more::From;
 use itertools::Either;
 use num::complex::Complex;
-use variadics_please::all_tuples;
 
 use crate::{
     core::{
         graph::{BipartiteGraph, RightNode},
-        value::{I, Scalar, Value},
+        value::Value,
     },
     expr::{Expr, ops::sin},
+    model::eq::{Constraint, Equation},
     symbol::Symbol,
     symbols,
-    system::eq::{Constraint, Equation},
     units::{Quantity, Unit, si::Hz},
 };
 
@@ -258,12 +257,12 @@ mod model_based_large_signal_bjt {
     use crate as engi;
     use crate::{
         expr::ops::{exp, real},
-        symbol::constants::{kB, q},
-        system::{
+        model::{
             Condition, Connector, Constraints, Equations, InterfaceArrayExt,
             System, Variable,
             eq::{Constraint, Equation},
         },
+        symbol::constants::{kB, q},
         units::si::*,
     };
 

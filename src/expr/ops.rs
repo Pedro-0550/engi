@@ -388,12 +388,11 @@ impl Display for Binary {
 
                 write_enclosed(base, f, parenthesize_base)?;
 
-                if let Node::Const(x) = exp.node()
-                    && x.unit() == Unit::Unitless
-                    && let value = x.value()
-                    && value.is_integer()
+                if let Node::Const(qty) = exp.node()
+                    && qty.unit() == Unit::Unitless
+                    && let Some(integer) = qty.value().as_scalar_integer()
                 {
-                    f.write_str(&to_superscript(value.re as i32))?;
+                    f.write_str(&to_superscript(integer))?;
                 } else {
                     f.write_str("^")?;
 
@@ -403,7 +402,7 @@ impl Display for Binary {
                 Ok(())
             }
             Binary::Log(Log { base, arg }) => {
-                if *base == e.into() {
+                if *base == e {
                     f.write_str("ln")?;
                     write_enclosed(arg, f, true)
                 } else {
@@ -434,8 +433,8 @@ impl Display for Variadic {
                         && let (mut consts, exprs) =
                             separate_consts(terms.iter().cloned())
                         && let Ok(coef) = consts.by_ref().exactly_one()
-                        && coef.value().is_real()
-                        && coef.value().re < 0.0
+                        && let Some(real) = coef.value().as_scalar_real()
+                        && real < 0.0
                     {
                         if i > 0 {
                             f.write_str(" - ")?;
@@ -444,7 +443,7 @@ impl Display for Variadic {
                         }
 
                         Variadic::Mul(
-                            once(Expr::from(coef.value().abs() * coef.unit()))
+                            once(Expr::from(coef.value().norm() * coef.unit()))
                                 .chain(exprs)
                                 .collect(),
                         )
@@ -497,10 +496,9 @@ impl Display for Variadic {
                             .as_binary()
                             .and_then(|bin| bin.as_pow())
                             .and_then(|pow| {
-                                pow.exp
-                                    .node()
-                                    .as_const()
-                                    .and_then(|qty| qty.value().as_real())
+                                pow.exp.node().as_const().and_then(|qty| {
+                                    qty.value().as_scalar_real()
+                                })
                             })
                             .is_some_and(|exp| exp < 0.0)
                     });
@@ -563,12 +561,14 @@ impl Display for Variadic {
                                     ),
                                 };
 
-                                if exp.value().re == -1.0 {
+                                if let Some(real) = exp.value().as_scalar_real()
+                                    && real == -1.0
+                                {
                                     base.clone()
                                 } else {
                                     Binary::Pow(Pow {
                                         base: base.clone(),
-                                        exp: (exp.value().abs() * exp.unit())
+                                        exp: (exp.value().norm() * exp.unit())
                                             .into(),
                                     })
                                     .into()
