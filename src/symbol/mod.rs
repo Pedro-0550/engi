@@ -1,14 +1,18 @@
 use std::{
     fmt::Display,
     hash::Hash,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        LazyLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
+
+use num::complex::Complex64;
 
 use crate::{
     core::interned::{Handle, Interned},
     expr::Shape,
-    // set::Set,
-    units::Unit,
+    units::{Quantity, Unit},
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -18,7 +22,6 @@ pub mod constants;
 /* -------------------------------- CONSTANTS ------------------------------- */
 
 static SYMBOLS: Interned<SymbolInfo> = Interned::new();
-static CONSTANTS_REGISTERED: AtomicBool = AtomicBool::new(false);
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
@@ -51,11 +54,6 @@ macro_rules! symbols {
 
 impl Symbol {
     pub fn new(name: &str) -> Self {
-        if !CONSTANTS_REGISTERED.load(Ordering::SeqCst) {
-            constants::register();
-            CONSTANTS_REGISTERED.store(true, Ordering::SeqCst);
-        }
-
         let handle = SYMBOLS.insert(SymbolInfo {
             name: name.to_owned(),
             desc: String::new(),

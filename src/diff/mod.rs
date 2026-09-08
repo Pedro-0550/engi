@@ -37,7 +37,7 @@ impl Differentiable for Expr {
     fn diff(&self, s: Symbol) -> Expr {
         let mut ctx = SimplifyContext::new();
         match self.normalize(true).into_node() {
-            Node::Const(_) => 0.into(),
+            Node::Quantity(_) => 0.into(),
             Node::Symbol(sym) => if sym == s { 1 } else { 0 }.into(),
             Node::Variadic(op) => op.diff(s),
             Node::Unary(op) => op.arg().diff(s) * op.diff(s),

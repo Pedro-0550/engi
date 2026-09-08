@@ -10,8 +10,8 @@ use std::{
 use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{Binary, Expr, Node, Shaped, Variadic, ops::*},
-    model::{Connector, Variable},
-    symbol::Symbol,
+    model::{Connector, Variable, VariableBuilder},
+    symbol::{Symbol, constants::Constant},
     units::{Quantity, Unit},
 };
 
@@ -41,7 +41,7 @@ where
 
 impl From<f64> for Expr {
     fn from(v: f64) -> Self {
-        let node = Node::Const(v.into());
+        let node = Node::Quantity(v.into());
         let mut hasher = DefaultHasher::new();
         node.hash(&mut hasher);
         Self { node: Arc::new(node), hash: hasher.finish() }
@@ -50,10 +50,16 @@ impl From<f64> for Expr {
 
 impl From<i64> for Expr {
     fn from(v: i64) -> Self {
-        let node = Node::Const(v.into());
+        let node = Node::Quantity(v.into());
         let mut hasher = DefaultHasher::new();
         node.hash(&mut hasher);
         Self { node: Arc::new(node), hash: hasher.finish() }
+    }
+}
+
+impl From<VariableBuilder> for Node {
+    fn from(v: VariableBuilder) -> Self {
+        v.variable().into()
     }
 }
 
@@ -65,7 +71,7 @@ impl From<Variable> for Node {
 
 impl From<Value> for Node {
     fn from(v: Value) -> Self {
-        Self::Const(v * Unit::Unitless)
+        Self::Quantity(v * Unit::Unitless)
     }
 }
 
@@ -83,10 +89,10 @@ impl From<&Connector> for Node {
 
 impl_op_permutations! {
     types = [
-        i64, f64, Quantity, &Quantity, Value, &Value, Symbol, Expr,
-        &Expr, Variable, &Variable, Connector, &Connector
+        i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, Expr,
+        &Expr, Variable, &Variable, Connector, &Connector, VariableBuilder, &VariableBuilder
     ],
-    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value],
+    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant],
     exclude_specific = [],
     out = Expr,
 

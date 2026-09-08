@@ -1,8 +1,11 @@
 #![allow(non_upper_case_globals)]
 
+use std::{fmt::Display, sync::LazyLock};
+
 use crate::{
+    core::value::Value,
     symbol::Symbol,
-    units::{Unit, si::*},
+    units::{Quantity, Unit, si::*},
 };
 
 macro_rules! constants {
@@ -12,58 +15,39 @@ macro_rules! constants {
             $name:ident = $value:expr
         ),* $(,)?
     ) => {
-        constants!(@defs 0;
+        $(
+            $(#[$meta])*
+            pub const $name: Constant = Constant {
+                name: stringify!($name),
+                value: || $value,
+            };
+        )*
+
+        pub const CONSTANTS: [Constant; constants!(@count $($name),*)] = [
             $(
-                $(#[$meta])*
-                $name = $value
-            ),*
-        );
-
-        pub(super) fn register() {
-            constants!(@register 0;
-                $(
-                    $name = $value
-                ),*
-            );
-        }
+                $name,
+            )*
+        ];
     };
 
-    (@defs $i:expr;
-        $(#[$meta:meta])*
-        $name:ident = $value:expr
-        $(, $($rest:tt)*)?
-    ) => {
-        $(#[$meta])*
-        pub const $name: Symbol =
-            Symbol(crate::core::interned::Handle::new($i));
-
-        constants!(@defs $i + 1; $($($rest)*)?);
+    (@count $($name:ident),*) => {
+        <[()]>::len(&[$(constants!(@unit $name)),*])
     };
 
-    (@defs $i:expr;) => {};
-
-    (@register $i:expr;
-        $name:ident = $value:expr
-        $(, $($rest:tt)*)?
-    ) => {
-        crate::symbol::SYMBOLS.insert_at(
-            $i,
-            crate::symbol::SymbolInfo {
-                name: stringify!($name).to_owned(),
-                unit: ($value).unit(),
-                shape: crate::expr::Shape::SCALAR,
-                desc: String::new(),
-                // domain: crate::set::Set::C_NZ
-            },
-        );
-
-        constants!(@register $i + 1; $($($rest)*)?);
+    (@unit $name:ident) => {
+        ()
     };
-
-    (@register $i:expr;) => {};
 }
 
 /* -------------------------------- CONSTANTS ------------------------------- */
+
+// pub const CONSTANTS: [Constant; 1] = [Constant {
+//     name: "π",
+//     desc: "Archimedes's constant",
+//     value: LazyLock::new(|| 3.1415926535897932384 * Unit::Unitless),
+// }];
+
+// pub const π: Constant = CONSTANTS[1];
 
 constants! {
     /// Archimedes's constant
@@ -89,4 +73,34 @@ constants! {
     q = 1.602176634e-19 * C,
 
     // TODO: add more useful constants
+}
+
+#[derive(Hash, Debug, PartialEq)]
+pub struct Constant {
+    name: &'static str,
+    value: fn() -> Quantity,
+}
+
+impl Constant {
+    pub fn quantity(&self) -> Quantity {
+        (self.value)()
+    }
+
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+impl Clone for Constant {
+    fn clone(&self) -> Self {
+        Self { name: self.name.clone(), value: self.value.clone() }
+    }
+}
+
+impl Eq for Constant {}
+
+impl Display for Constant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name)
+    }
 }

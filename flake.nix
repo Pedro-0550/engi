@@ -56,6 +56,7 @@
           LIBCLANG_PATH = "${pkgs.libclang}/lib";
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath packages;
           CONFIG_MINIMAL_LIBC = "y";
+          RUST_BACKTRACE = "1";
         };
 
       }

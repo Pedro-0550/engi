@@ -170,17 +170,13 @@ pub fn model(input: TokenStream) -> TokenStream {
             }
         }));
 
-    let default_constructor = vars
+    let constructor = vars
         .iter()
         .map(|(field, desc, unit, shape)| {
             let field_ident = field.ident.clone().unwrap();
-            let sym_name = LitStr::new(
-                field_ident.to_string().as_str(),
-                Span::call_site(),
-            );
             quote! {
                 #field_ident: engi::model::Variable::new(
-                    engi::symbol::Symbol::new(#sym_name)
+                    engi::symbol::Symbol::new(&format!("{}.{}", name, stringify!(#field_ident)))
                         .set_unit(#unit)
                         .set_shape(#shape)
                         .set_desc(#desc.to_owned())
@@ -189,14 +185,18 @@ pub fn model(input: TokenStream) -> TokenStream {
         })
         .chain(interfaces.iter().map(|f| {
             let field_ident = f.ident.clone().unwrap();
+            let field_ty = f.ty.clone();
+
             quote! {
-                #field_ident: Default::default()
+                #field_ident: <#field_ty as engi::model::Interface>::new(&format!("{}.{}", name, stringify!(#field_ident)))
             }
         }))
         .chain(submodels.iter().map(|f| {
             let field_ident = f.ident.clone().unwrap();
+            let field_ty = f.ty.clone();
+
             quote! {
-                #field_ident: Default::default()
+                #field_ident: <#field_ty as engi::model::Model>::new(&format!("{}.{}", name, stringify!(#field_ident)))
             }
         }));
 
@@ -226,17 +226,15 @@ pub fn model(input: TokenStream) -> TokenStream {
             #(#solution_fields,)*
         }
 
-        impl #impl_generics Default for #ident #ty_generics #where_clause {
-            fn default() -> #ident {
-                #ident {
-                    #(#default_constructor,)*
-                }
-            }
-        }
-
         impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
             type Solution = #solution_ident;
             type Builder = #builder_ident;
+
+            fn new(name: &str) -> #ident {
+                #ident {
+                    #(#constructor,)*
+                }
+            }
 
             fn register(self, system: System) -> Self::Builder {
 
@@ -348,14 +346,12 @@ pub fn interface(input: TokenStream) -> TokenStream {
 
     let connector_exprs = fields.clone().map(|(field, _)| field.ident.clone());
 
-    let default_exprs = fields.map(|(field, attr)| {
+    let constructor = fields.map(|(field, attr)| {
         let ConnectAttr { condition, unit, desc, shape } = attr;
         let field_ident = field.ident.clone().unwrap();
-        let sym_name =
-            LitStr::new(field_ident.to_string().as_str(), Span::call_site());
         quote! {
             #field_ident: engi::model::Connector::new(engi::model::Variable::new(
-                engi::symbol::Symbol::new(#sym_name)
+                engi::symbol::Symbol::new(&format!("{}.{}", name, stringify!(#field_ident)))
                     .set_unit(#unit)
                     .set_shape(#shape)
                     .set_desc(#desc.to_owned())
@@ -364,15 +360,13 @@ pub fn interface(input: TokenStream) -> TokenStream {
     });
 
     quote! {
-        impl #impl_generics Default for #ident #ty_generics #where_clause {
-            fn default() -> Self {
+        impl #impl_generics engi::model::Interface for #ident #ty_generics #where_clause {
+            fn new(name: &str) -> Self {
                 #ident {
-                    #(#default_exprs,)*
+                    #(#constructor,)*
                 }
             }
-        }
 
-        impl #impl_generics engi::model::Interface for #ident #ty_generics #where_clause {
             fn connectors(&self) -> Vec<engi::model::Connector> {
                 vec![
                     #(self.#connector_exprs,)*
@@ -503,4 +497,30 @@ pub fn relations(input: TokenStream) -> TokenStream {
         });
 
     quote! {vec![#(#terms),*]}.into()
+}
+
+#[proc_macro]
+pub fn relation(input: TokenStream) -> TokenStream {
+    let Equation { lhs, constraint, rhs } =
+        Equation::parse.parse(input).unwrap();
+
+    let expr = match constraint {
+        Constraint::Eq => quote! {
+            engi::model::eq::Equation::new(#lhs, #rhs)
+        },
+        Constraint::Gt => quote! {
+            engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Greater)
+        },
+        Constraint::Ge => quote! {
+            engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::GreaterOrEq)
+        },
+        Constraint::Lt => quote! {
+            engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Less)
+        },
+        Constraint::Le => quote! {
+            engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::LessOrEq)
+        },
+    };
+
+    quote! { #expr }.into()
 }

@@ -377,18 +377,18 @@ impl Display for Binary {
                 let parenthesize_base = !matches!(
                     base.node(),
                     Node::Symbol(_)
-                        | Node::Const(_)
+                        | Node::Quantity(_)
                         | Node::Unary(_)
                         | Node::Binary(
                             Binary::Log { .. } | Binary::Atan2 { .. }
                         )
                 );
                 let parenthesize_exp =
-                    !matches!(exp.node(), Node::Symbol(_) | Node::Const(_));
+                    !matches!(exp.node(), Node::Symbol(_) | Node::Quantity(_));
 
                 write_enclosed(base, f, parenthesize_base)?;
 
-                if let Node::Const(qty) = exp.node()
+                if let Node::Quantity(qty) = exp.node()
                     && qty.unit() == Unit::Unitless
                     && let Some(integer) = qty.value().as_scalar_integer()
                 {
@@ -462,7 +462,7 @@ impl Display for Variadic {
                     matches!(
                         expr.node(),
                         Node::Symbol(_)
-                            | Node::Const(_)
+                            | Node::Quantity(_)
                             | Node::Binary(Binary::Pow { .. })
                     )
                 }
@@ -474,7 +474,7 @@ impl Display for Variadic {
                     ) = terms.iter().partition(|x| x.shape().is_rect());
 
                     scalar_part.sort_by(|a, b| {
-                        if matches!(a.node(), Node::Const(_)) {
+                        if matches!(a.node(), Node::Quantity(_)) {
                             return Ordering::Less;
                         }
 
@@ -496,7 +496,7 @@ impl Display for Variadic {
                             .as_binary()
                             .and_then(|bin| bin.as_pow())
                             .and_then(|pow| {
-                                pow.exp.node().as_const().and_then(|qty| {
+                                pow.exp.node().as_quantity().and_then(|qty| {
                                     qty.value().as_scalar_real()
                                 })
                             })
@@ -555,7 +555,7 @@ impl Display for Variadic {
                         let new_term = match term.node() {
                             Node::Binary(Binary::Pow(Pow { base, exp })) => {
                                 let exp = match exp.node() {
-                                    Node::Const(qty) => qty,
+                                    Node::Quantity(qty) => qty,
                                     _ => unreachable!(
                                         "Expression must be a Pow with negative const exp in order to be on the denominator"
                                     ),

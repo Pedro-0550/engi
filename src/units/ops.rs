@@ -185,9 +185,15 @@ impl From<&Quantity> for Quantity {
     }
 }
 
+impl From<&Value> for Quantity {
+    fn from(val: &Value) -> Self {
+        val.clone().into()
+    }
+}
+
 impl_op_permutations! {
-    types = [i64, f64, Complex64, Value, Quantity, &Quantity, Unit],
-    exclude_permutations = [i64, f64, Complex64, Value],
+    types = [i64, f64, Complex64, Value, &Value, Quantity, &Quantity, Unit],
+    exclude_permutations = [i64, f64, Complex64, Value, &Value],
     exclude_specific = [(Unit, Unit)],
     out = Quantity,
 

@@ -1,37 +1,35 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BipartiteGraph {
-    left_adj: Vec<Vec<RightNode>>,
-    right_adj: Vec<Vec<LeftNode>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LeftNode(usize);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RightNode(usize);
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    hash::Hash,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Matching {
-    left_to_right: Vec<Option<RightNode>>,
-    right_to_left: Vec<Option<LeftNode>>,
-    size: usize,
+pub struct BipartiteGraph<L: Hash + Eq, R: Hash + Eq> {
+    left_adj: HashMap<L, HashSet<R>>,
+    right_adj: HashMap<R, HashSet<L>>,
 }
 
-impl Matching {
-    pub fn new(left_count: usize, right_count: usize) -> Self {
-        Self {
-            left_to_right: vec![None; left_count],
-            right_to_left: vec![None; right_count],
-            size: 0,
-        }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Matching<L: Hash + Eq, R: Hash + Eq> {
+    left_to_right: HashMap<L, R>,
+    right_to_left: HashMap<R, L>,
+}
+
+impl<L, R> Matching<L, R>
+where
+    L: Eq + Hash + Clone,
+    R: Eq + Hash + Clone,
+{
+    pub fn new() -> Self {
+        Self { left_to_right: HashMap::new(), right_to_left: HashMap::new() }
     }
 
     pub fn size(&self) -> usize {
-        self.size
+        self.left_to_right.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.size == 0
+        self.left_to_right.is_empty()
     }
 
     pub fn left_count(&self) -> usize {
@@ -42,165 +40,96 @@ impl Matching {
         self.right_to_left.len()
     }
 
-    /// Number of unmatched left nodes.
-    pub fn unmatched_left_count(&self) -> usize {
-        self.left_count() - self.size
+    pub fn right(&self, left: &L) -> Option<&R> {
+        self.left_to_right.get(left)
     }
 
-    /// Number of unmatched right nodes.
-    pub fn unmatched_right_count(&self) -> usize {
-        self.right_count() - self.size
+    pub fn left(&self, right: &R) -> Option<&L> {
+        self.right_to_left.get(right)
     }
 
-    /// Returns true if every left node is matched.
-    pub fn covers_left(&self) -> bool {
-        self.size == self.left_count()
+    pub fn is_matched_left(&self, left: &L) -> bool {
+        self.left_to_right.contains_key(left)
     }
 
-    /// Returns true if every right node is matched.
-    pub fn covers_right(&self) -> bool {
-        self.size == self.right_count()
+    pub fn is_matched_right(&self, right: &R) -> bool {
+        self.right_to_left.contains_key(right)
     }
 
-    /// A matching is perfect iff every node on both sides is matched.
-    pub fn is_perfect(&self) -> bool {
-        self.left_count() == self.right_count()
-            && self.size == self.left_count()
+    pub fn unmatched_left<'a>(
+        &'a self,
+        nodes: impl Iterator<Item = &'a L>,
+    ) -> impl Iterator<Item = &'a L> {
+        nodes.filter(|left| !self.left_to_right.contains_key(*left))
     }
 
-    /// Returns the right node matched to `left`.
-    pub fn right(&self, left: LeftNode) -> Option<RightNode> {
-        self.left_to_right[left.index()]
+    pub fn unmatched_right<'a>(
+        &'a self,
+        nodes: impl Iterator<Item = &'a R>,
+    ) -> impl Iterator<Item = &'a R> {
+        nodes.filter(|right| !self.right_to_left.contains_key(*right))
     }
 
-    /// Returns the left node matched to `right`.
-    pub fn left(&self, right: RightNode) -> Option<LeftNode> {
-        self.right_to_left[right.index()]
+    pub fn edges(&self) -> impl Iterator<Item = (&L, &R)> {
+        self.left_to_right.iter()
     }
 
-    pub fn is_matched_left(&self, left: LeftNode) -> bool {
-        self.right(left).is_some()
-    }
+    pub(crate) fn match_pair(&mut self, left: L, right: R) {
+        debug_assert!(!self.left_to_right.contains_key(&left));
+        debug_assert!(!self.right_to_left.contains_key(&right));
 
-    pub fn is_matched_right(&self, right: RightNode) -> bool {
-        self.left(right).is_some()
-    }
-
-    pub fn is_unmatched_left(&self, left: LeftNode) -> bool {
-        self.right(left).is_none()
-    }
-
-    pub fn is_unmatched_right(&self, right: RightNode) -> bool {
-        self.left(right).is_none()
-    }
-
-    pub fn unmatched_left(&self) -> impl Iterator<Item = LeftNode> + '_ {
-        self.left_to_right.iter().enumerate().filter_map(|(i, right)| {
-            right.is_none().then_some(LeftNode::new(i))
-        })
-    }
-
-    pub fn unmatched_right(&self) -> impl Iterator<Item = RightNode> + '_ {
-        self.right_to_left
-            .iter()
-            .enumerate()
-            .filter_map(|(i, left)| left.is_none().then_some(RightNode::new(i)))
-    }
-
-    pub fn edges(&self) -> impl Iterator<Item = (LeftNode, RightNode)> + '_ {
-        self.left_to_right.iter().enumerate().filter_map(|(i, right)| {
-            right.map(|right| (LeftNode::new(i), right))
-        })
-    }
-
-    pub fn contains_left(&self, left: LeftNode) -> bool {
-        self.is_matched_left(left)
-    }
-
-    pub fn contains_right(&self, right: RightNode) -> bool {
-        self.is_matched_right(right)
-    }
-
-    pub(crate) fn match_pair(&mut self, left: LeftNode, right: RightNode) {
-        debug_assert!(left.index() < self.left_count());
-        debug_assert!(right.index() < self.right_count());
-        debug_assert!(self.left(right).is_none());
-        debug_assert!(self.right(left).is_none());
-
-        self.left_to_right[left.index()] = Some(right);
-        self.right_to_left[right.index()] = Some(left);
-        self.size += 1;
+        self.left_to_right.insert(left.clone(), right.clone());
+        self.right_to_left.insert(right, left);
     }
 }
 
-impl LeftNode {
-    pub const fn new(id: usize) -> Self {
-        Self(id)
-    }
-
-    pub const fn index(self) -> usize {
-        self.0
-    }
-}
-
-impl RightNode {
-    pub const fn new(id: usize) -> Self {
-        Self(id)
-    }
-
-    pub const fn index(self) -> usize {
-        self.0
+impl<L, R> Default for Matching<L, R>
+where
+    L: Eq + Hash + Clone,
+    R: Eq + Hash + Clone,
+{
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-impl BipartiteGraph {
+impl<L, R> BipartiteGraph<L, R>
+where
+    L: Eq + Hash + Clone,
+    R: Eq + Hash + Clone,
+{
     pub fn new() -> Self {
-        Self { left_adj: Vec::new(), right_adj: Vec::new() }
+        Self { left_adj: HashMap::new(), right_adj: HashMap::new() }
     }
 
-    pub fn with_capacity(left: usize, right: usize) -> Self {
-        Self {
-            left_adj: Vec::with_capacity(left),
-            right_adj: Vec::with_capacity(right),
-        }
+    pub fn add_left(&mut self, left: L) {
+        self.left_adj.entry(left).or_default();
     }
 
-    pub fn add_left(&mut self) -> LeftNode {
-        let node = LeftNode::new(self.left_adj.len());
-        self.left_adj.push(Vec::new());
-        node
+    pub fn add_right(&mut self, right: R) {
+        self.right_adj.entry(right).or_default();
     }
 
-    pub fn add_right(&mut self) -> RightNode {
-        let node = RightNode::new(self.right_adj.len());
-        self.right_adj.push(Vec::new());
-        node
+    pub fn add_edge(&mut self, left: L, right: R) {
+        self.left_adj.entry(left.clone()).or_default().insert(right.clone());
+
+        self.right_adj.entry(right).or_default().insert(left);
     }
 
-    pub fn add_edge(&mut self, left: LeftNode, right: RightNode) {
-        debug_assert!(left.index() < self.left_adj.len());
-        debug_assert!(right.index() < self.right_adj.len());
-
-        if !self.left_adj[left.index()].contains(&right) {
-            self.left_adj[left.index()].push(right);
-            self.right_adj[right.index()].push(left);
-        }
+    pub fn left_neighbors(&self, left: &L) -> Option<&HashSet<R>> {
+        self.left_adj.get(left)
     }
 
-    pub fn left_neighbors(&self, left: LeftNode) -> &[RightNode] {
-        &self.left_adj[left.index()]
+    pub fn right_neighbors(&self, right: &R) -> Option<&HashSet<L>> {
+        self.right_adj.get(right)
     }
 
-    pub fn right_neighbors(&self, right: RightNode) -> &[LeftNode] {
-        &self.right_adj[right.index()]
+    pub fn left_degree(&self, left: &L) -> usize {
+        self.left_adj.get(left).map_or(0, HashSet::len)
     }
 
-    pub fn left_degree(&self, left: LeftNode) -> usize {
-        self.left_adj[left.index()].len()
-    }
-
-    pub fn right_degree(&self, right: RightNode) -> usize {
-        self.right_adj[right.index()].len()
+    pub fn right_degree(&self, right: &R) -> usize {
+        self.right_adj.get(right).map_or(0, HashSet::len)
     }
 
     pub fn left_count(&self) -> usize {
@@ -212,81 +141,65 @@ impl BipartiteGraph {
     }
 
     pub fn edge_count(&self) -> usize {
-        self.left_adj.iter().map(Vec::len).sum()
+        self.left_adj.values().map(HashSet::len).sum()
     }
 
-    pub fn left_nodes(&self) -> impl Iterator<Item = LeftNode> {
-        (0..self.left_adj.len()).map(LeftNode::new)
+    pub fn left_nodes(&self) -> impl Iterator<Item = &L> {
+        self.left_adj.keys()
     }
 
-    pub fn right_nodes(&self) -> impl Iterator<Item = RightNode> {
-        (0..self.right_adj.len()).map(RightNode::new)
+    pub fn right_nodes(&self) -> impl Iterator<Item = &R> {
+        self.right_adj.keys()
     }
 
-    pub fn has_edge(&self, left: LeftNode, right: RightNode) -> bool {
-        self.left_adj[left.index()].contains(&right)
+    pub fn has_edge(&self, left: &L, right: &R) -> bool {
+        self.left_adj
+            .get(left)
+            .is_some_and(|neighbors| neighbors.contains(right))
     }
-}
 
-impl Default for BipartiteGraph {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// START OF LLM CODED SECTION
-
-use std::collections::VecDeque;
-
-impl BipartiteGraph {
-    // -------------------------------------------------------------------------
-    // Generic BFS
-    // -------------------------------------------------------------------------
-
-    /// Breadth-first traversal from a left node.
-    ///
-    /// Visits every reachable edge exactly once.
-    pub fn bfs<F>(&self, start: LeftNode, mut visit: F)
+    pub fn bfs<F>(&self, start: &L, mut visit: F)
     where
-        F: FnMut(LeftNode, RightNode), {
-        let mut visited_left = vec![false; self.left_count()];
-        let mut visited_right = vec![false; self.right_count()];
+        F: FnMut(&L, &R), {
+        let mut visited_left = HashSet::new();
+        let mut visited_right = HashSet::new();
         let mut queue = VecDeque::new();
 
-        visited_left[start.index()] = true;
-        queue.push_back(start);
+        if !self.left_adj.contains_key(start) {
+            return;
+        }
+
+        visited_left.insert(start.clone());
+        queue.push_back(start.clone());
 
         while let Some(left) = queue.pop_front() {
-            for &right in self.left_neighbors(left) {
-                if visited_right[right.index()] {
+            let Some(neighbors) = self.left_adj.get(&left) else {
+                continue;
+            };
+
+            for right in neighbors {
+                if !visited_right.insert(right.clone()) {
                     continue;
                 }
 
-                visited_right[right.index()] = true;
-                visit(left, right);
+                visit(&left, right);
 
-                for &next_left in self.right_neighbors(right) {
-                    if !visited_left[next_left.index()] {
-                        visited_left[next_left.index()] = true;
-                        queue.push_back(next_left);
+                if let Some(next_lefts) = self.right_adj.get(right) {
+                    for next_left in next_lefts {
+                        if visited_left.insert(next_left.clone()) {
+                            queue.push_back(next_left.clone());
+                        }
                     }
                 }
             }
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Generic DFS
-    // -------------------------------------------------------------------------
-
-    /// Depth-first traversal from a left node.
-    ///
-    /// Visits every reachable edge exactly once.
-    pub fn dfs<F>(&self, start: LeftNode, mut visit: F)
+    pub fn dfs<F>(&self, start: &L, mut visit: F)
     where
-        F: FnMut(LeftNode, RightNode), {
-        let mut visited_left = vec![false; self.left_count()];
-        let mut visited_right = vec![false; self.right_count()];
+        F: FnMut(&L, &R), {
+        let mut visited_left = HashSet::new();
+        let mut visited_right = HashSet::new();
 
         self.dfs_inner(
             start,
@@ -298,28 +211,29 @@ impl BipartiteGraph {
 
     fn dfs_inner<F>(
         &self,
-        left: LeftNode,
-        visited_left: &mut [bool],
-        visited_right: &mut [bool],
+        left: &L,
+        visited_left: &mut HashSet<L>,
+        visited_right: &mut HashSet<R>,
         visit: &mut F,
     ) where
-        F: FnMut(LeftNode, RightNode), {
-        if visited_left[left.index()] {
+        F: FnMut(&L, &R), {
+        if !visited_left.insert(left.clone()) {
             return;
         }
 
-        visited_left[left.index()] = true;
+        let Some(neighbors) = self.left_adj.get(left) else {
+            return;
+        };
 
-        for &right in self.left_neighbors(left) {
-            if visited_right[right.index()] {
+        for right in neighbors {
+            if !visited_right.insert(right.clone()) {
                 continue;
             }
 
-            visited_right[right.index()] = true;
             visit(left, right);
 
-            for &next_left in self.right_neighbors(right) {
-                if !visited_left[next_left.index()] {
+            if let Some(next_lefts) = self.right_adj.get(right) {
+                for next_left in next_lefts {
                     self.dfs_inner(
                         next_left,
                         visited_left,
@@ -331,32 +245,15 @@ impl BipartiteGraph {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Hopcroft-Karp
-    // -------------------------------------------------------------------------
+    pub fn maximum_matching(&self) -> Matching<L, R> {
+        let mut pair_left: HashMap<L, R> = HashMap::new();
+        let mut pair_right: HashMap<R, L> = HashMap::new();
+        let mut distance: HashMap<L, usize> = HashMap::new();
 
-    /// Computes a maximum-cardinality matching using Hopcroft-Karp.
-    ///
-    /// Complexity: O(E * sqrt(V))
-    pub fn maximum_matching(&self) -> Matching {
-        let n_left = self.left_count();
-        let n_right = self.right_count();
-
-        let mut pair_left = vec![None; n_left];
-        let mut pair_right = vec![None; n_right];
-
-        let mut distance = vec![usize::MAX; n_left];
-
-        while Self::hopcroft_karp_bfs(
-            self,
-            &pair_left,
-            &pair_right,
-            &mut distance,
-        ) {
+        while self.hopcroft_karp_bfs(&pair_left, &pair_right, &mut distance) {
             for left in self.left_nodes() {
-                if pair_left[left.index()].is_none() {
-                    Self::hopcroft_karp_dfs(
-                        self,
+                if !pair_left.contains_key(left) {
+                    self.hopcroft_karp_dfs(
                         left,
                         &mut pair_left,
                         &mut pair_right,
@@ -366,108 +263,191 @@ impl BipartiteGraph {
             }
         }
 
-        let mut matching = Matching::new(n_left, n_right);
-
-        for left in self.left_nodes() {
-            if let Some(right) = pair_left[left.index()] {
-                matching.match_pair(left, right);
-            }
-        }
-
-        matching
+        Matching { left_to_right: pair_left, right_to_left: pair_right }
     }
 
-    /// BFS phase of Hopcroft-Karp.
-    ///
-    /// Builds the layered graph containing shortest augmenting paths.
     fn hopcroft_karp_bfs(
         &self,
-        pair_left: &[Option<RightNode>],
-        pair_right: &[Option<LeftNode>],
-        distance: &mut [usize],
+        pair_left: &HashMap<L, R>,
+        pair_right: &HashMap<R, L>,
+        distance: &mut HashMap<L, usize>,
     ) -> bool {
         let mut queue = VecDeque::new();
 
-        // Every currently-unmatched left node is a possible
-        // starting point of an augmenting path.
+        distance.clear();
+
         for left in self.left_nodes() {
-            if pair_left[left.index()].is_none() {
-                distance[left.index()] = 0;
-                queue.push_back(left);
-            } else {
-                distance[left.index()] = usize::MAX;
+            if !pair_left.contains_key(left) {
+                distance.insert(left.clone(), 0);
+                queue.push_back(left.clone());
             }
         }
 
-        let mut found_augmenting_path = false;
+        let mut found = false;
 
         while let Some(left) = queue.pop_front() {
-            let current_distance = distance[left.index()];
+            let current_distance = distance[&left];
 
-            for &right in self.left_neighbors(left) {
-                match pair_right[right.index()] {
+            let Some(neighbors) = self.left_adj.get(&left) else {
+                continue;
+            };
+
+            for right in neighbors {
+                match pair_right.get(right) {
                     None => {
-                        // We found a free right node.
-                        found_augmenting_path = true;
+                        found = true;
                     }
 
                     Some(next_left) => {
-                        // Follow the matched edge right -> left.
-                        if distance[next_left.index()] == usize::MAX {
-                            distance[next_left.index()] = current_distance + 1;
-
-                            queue.push_back(next_left);
+                        if !distance.contains_key(next_left) {
+                            distance.insert(
+                                next_left.clone(),
+                                current_distance + 1,
+                            );
+                            queue.push_back(next_left.clone());
                         }
                     }
                 }
             }
         }
 
-        found_augmenting_path
+        found
     }
 
-    /// DFS phase of Hopcroft-Karp.
-    ///
-    /// Searches for an augmenting path in the layered graph created by BFS.
     fn hopcroft_karp_dfs(
         &self,
-        left: LeftNode,
-        pair_left: &mut [Option<RightNode>],
-        pair_right: &mut [Option<LeftNode>],
-        distance: &mut [usize],
+        left: &L,
+        pair_left: &mut HashMap<L, R>,
+        pair_right: &mut HashMap<R, L>,
+        distance: &mut HashMap<L, usize>,
     ) -> bool {
-        for &right in self.left_neighbors(left) {
-            match pair_right[right.index()] {
-                // Free right node => augmenting path found.
-                None => {
-                    pair_left[left.index()] = Some(right);
-                    pair_right[right.index()] = Some(left);
+        let Some(neighbors) = self.left_adj.get(left) else {
+            return false;
+        };
+
+        for right in neighbors {
+            let Some(next_left) = pair_right.get(right).cloned() else {
+                pair_left.insert(left.clone(), right.clone());
+                pair_right.insert(right.clone(), left.clone());
+                return true;
+            };
+
+            if distance.get(&next_left).copied()
+                == distance.get(left).map(|d| d + 1)
+            {
+                if self.hopcroft_karp_dfs(
+                    &next_left, pair_left, pair_right, distance,
+                ) {
+                    pair_left.insert(left.clone(), right.clone());
+                    pair_right.insert(right.clone(), left.clone());
                     return true;
                 }
-
-                // Right is already matched. Follow its matched edge
-                // only if it belongs to the next BFS layer.
-                Some(next_left)
-                    if distance[next_left.index()]
-                        == distance[left.index()] + 1 =>
-                {
-                    if Self::hopcroft_karp_dfs(
-                        self, next_left, pair_left, pair_right, distance,
-                    ) {
-                        pair_left[left.index()] = Some(right);
-                        pair_right[right.index()] = Some(left);
-                        return true;
-                    }
-                }
-
-                _ => {}
             }
         }
 
-        // No augmenting path exists through this node in the
-        // current layered graph.
-        distance[left.index()] = usize::MAX;
-
+        distance.remove(left);
         false
+    }
+}
+
+impl<L, R> Default for BipartiteGraph<L, R>
+where
+    L: Eq + Hash + Clone,
+    R: Eq + Hash + Clone,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectedGraph<T> {
+    edges: HashMap<T, HashSet<T>>,
+}
+
+impl<T> DirectedGraph<T>
+where
+    T: Eq + std::hash::Hash + Clone,
+{
+    pub fn new() -> Self {
+        Self { edges: HashMap::new() }
+    }
+
+    pub fn add_node(&mut self, node: T) {
+        self.edges.entry(node).or_default();
+    }
+
+    pub fn add_edge(&mut self, from: T, to: T) {
+        self.edges.entry(from).or_default().insert(to.clone());
+        self.edges.entry(to).or_default();
+    }
+
+    pub fn sccs(&self) -> Vec<Vec<T>> {
+        struct State<T> {
+            index: usize,
+            indices: HashMap<T, usize>,
+            lowlink: HashMap<T, usize>,
+            stack: Vec<T>,
+            on_stack: HashSet<T>,
+            result: Vec<Vec<T>>,
+        }
+
+        fn dfs<T>(graph: &DirectedGraph<T>, v: T, state: &mut State<T>)
+        where
+            T: Eq + std::hash::Hash + Clone, {
+            let index = state.index;
+            state.index += 1;
+
+            state.indices.insert(v.clone(), index);
+            state.lowlink.insert(v.clone(), index);
+
+            state.stack.push(v.clone());
+            state.on_stack.insert(v.clone());
+
+            for w in graph.edges[&v].iter().cloned() {
+                if !state.indices.contains_key(&w) {
+                    dfs(graph, w.clone(), state);
+
+                    let low = state.lowlink[&v].min(state.lowlink[&w]);
+                    state.lowlink.insert(v.clone(), low);
+                } else if state.on_stack.contains(&w) {
+                    let low = state.lowlink[&v].min(state.indices[&w]);
+                    state.lowlink.insert(v.clone(), low);
+                }
+            }
+
+            if state.lowlink[&v] == state.indices[&v] {
+                let mut component = Vec::new();
+
+                loop {
+                    let w = state.stack.pop().unwrap();
+                    state.on_stack.remove(&w);
+                    component.push(w.clone());
+
+                    if w == v {
+                        break;
+                    }
+                }
+
+                state.result.push(component);
+            }
+        }
+
+        let mut state = State {
+            index: 0,
+            indices: HashMap::new(),
+            lowlink: HashMap::new(),
+            stack: Vec::new(),
+            on_stack: HashSet::new(),
+            result: Vec::new(),
+        };
+
+        for node in self.edges.keys().cloned() {
+            if !state.indices.contains_key(&node) {
+                dfs(self, node, &mut state);
+            }
+        }
+
+        state.result
     }
 }

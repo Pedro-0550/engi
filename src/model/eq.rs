@@ -1,8 +1,10 @@
+use std::fmt::Display;
+
 use crate::{expr::Expr, symbol::Symbol};
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug, Hash, Eq)]
 pub struct Equation {
     lhs: Expr,
     rhs: Expr,
@@ -50,5 +52,23 @@ impl Equation {
         result.dedup();
 
         result
+    }
+
+    pub fn lhs(&self) -> &Expr {
+        &self.lhs
+    }
+
+    pub fn rhs(&self) -> &Expr {
+        &self.rhs
+    }
+}
+
+impl Display for Equation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.lhs.fmt(f)?;
+
+        f.write_str(" = ")?;
+
+        self.rhs.fmt(f)
     }
 }

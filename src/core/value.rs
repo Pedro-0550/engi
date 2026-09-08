@@ -7,17 +7,21 @@ use std::{
 };
 
 use derive_more::{Deref, DerefMut, From};
-use faer::{Mat, MatRef, traits::ComplexField};
+use faer::{
+    Mat, MatRef, Scale, Side, linalg::solvers::DenseSolveCore,
+    traits::ComplexField,
+};
 use float_eq::float_eq;
 use num::{
     Complex, Float, Zero,
     complex::{Complex32, Complex64, ComplexFloat},
     pow::Pow,
 };
+use ordered_float::OrderedFloat;
 
 use crate::{
-    core::util::{impl_as_variant, impl_op_permutations},
-    expr::ops::Matrix,
+    core::util::{ArcExt, impl_as_variant, impl_op_permutations},
+    expr::{Shape, Shaped, ops::Matrix},
 };
 
 pub const EQ_ABS_TOL: f64 = 1e-18;
@@ -65,6 +69,16 @@ impl_as_variant!(Value, [Set => Arc<Set>, Matrix => Arc<Mat<Complex64>>, Scalar 
 //     }
 // }
 
+impl Shaped for Value {
+    fn shape(&self) -> crate::expr::Shape {
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => Shape::rect(mat.nrows(), mat.ncols()),
+            Value::Scalar(complex) => Shape::SCALAR,
+        }
+    }
+}
+
 impl From<f64> for Value {
     fn from(value: f64) -> Self {
         Value::Scalar(Complex { re: value, im: 0.0 })
@@ -102,6 +116,14 @@ impl Value {
     pub const ZERO: Value = Value::Scalar(Complex64::ZERO);
     pub const ONE: Value = Value::Scalar(Complex64::ONE);
     pub const I: Value = Value::Scalar(Complex64::I);
+
+    pub fn precedence(&self) -> u32 {
+        match self {
+            Value::Set(set) => 1,
+            Value::Matrix(mat) => 2,
+            Value::Scalar(complex) => 3,
+        }
+    }
 
     /// Returns the n by n identity matrix, or 1 for n = 1
     fn identity(n: usize) -> Value {
@@ -226,62 +248,6 @@ impl ComplexExt for Complex64 {
     }
 }
 
-impl Div for Value {
-    type Output = Value;
-
-    fn div(self, rhs: Self) -> Self::Output {
-        todo!()
-    }
-}
-
-impl DivAssign for Value {
-    fn div_assign(&mut self, rhs: Self) {
-        todo!()
-    }
-}
-
-impl Add for Value {
-    type Output = Value;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        todo!()
-    }
-}
-
-impl AddAssign for Value {
-    fn add_assign(&mut self, rhs: Self) {
-        todo!()
-    }
-}
-
-impl Sub for Value {
-    type Output = Value;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        todo!()
-    }
-}
-
-impl SubAssign for Value {
-    fn sub_assign(&mut self, rhs: Self) {
-        todo!()
-    }
-}
-
-impl Mul for Value {
-    type Output = Value;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        todo!()
-    }
-}
-
-impl MulAssign for Value {
-    fn mul_assign(&mut self, rhs: Self) {
-        todo!()
-    }
-}
-
 impl Neg for Value {
     type Output = Value;
 
@@ -295,27 +261,116 @@ impl_op_permutations! {
         f64, i64, Complex64, Set, &Set, Value, &Value
     ],
     exclude_permutations = [f64, i64, Complex64, Set, &Set],
-    exclude_specific = [(Value, Value)],
     out = Value,
 
     add = {
-        todo!()
+        match (lhs, rhs) {
+            (Value::Set(_), Value::Set(_)) => todo!(),
+            (Value::Set(set), Value::Matrix(mat)) => todo!(),
+            (Value::Set(set), Value::Scalar(complex)) => todo!(),
+            (Value::Matrix(mat), Value::Set(set)) => todo!(),
+            (Value::Scalar(complex), Value::Set(set)) => todo!(),
+
+            (Value::Matrix(lhs), Value::Matrix(rhs)) => {
+                Value::Matrix(Arc::new(lhs.make_owned() + rhs.make_owned()))
+            }
+            (Value::Matrix(mat), Value::Scalar(scalar))
+            | (Value::Scalar(scalar), Value::Matrix(mat)) => {
+                panic!("Cannot add a scalar to a matrix")
+            }
+            (Value::Scalar(lhs), Value::Scalar(rhs)) => {
+                Value::Scalar(lhs + rhs)
+            }
+        }
     },
 
     mul = {
-        todo!()
+        match (lhs, rhs) {
+            (Value::Set(_), Value::Set(_)) => todo!(),
+            (Value::Set(set), Value::Matrix(mat)) => todo!(),
+            (Value::Set(set), Value::Scalar(complex)) => todo!(),
+            (Value::Matrix(mat), Value::Set(set)) => todo!(),
+            (Value::Scalar(complex), Value::Set(set)) => todo!(),
+
+            (Value::Matrix(lhs), Value::Matrix(rhs)) => {
+                Value::Matrix(Arc::new(lhs.make_owned() * rhs.make_owned()))
+            }
+            (Value::Matrix(mat), Value::Scalar(scalar))
+            | (Value::Scalar(scalar), Value::Matrix(mat)) => {
+                Value::Matrix(Arc::new(mat.make_owned() * Scale(scalar)))
+            }
+            (Value::Scalar(lhs), Value::Scalar(rhs)) => {
+                Value::Scalar(lhs * rhs)
+            }
+        }
     },
 
     div = {
-        todo!()
+        match (lhs, rhs) {
+            (Value::Set(_), Value::Set(_)) => todo!(),
+            (Value::Set(set), Value::Matrix(mat)) => todo!(),
+            (Value::Set(set), Value::Scalar(complex)) => todo!(),
+            (Value::Matrix(mat), Value::Set(set)) => todo!(),
+            (Value::Scalar(complex), Value::Set(set)) => todo!(),
+
+            (Value::Matrix(lhs), Value::Matrix(rhs)) => {
+                Value::Matrix(Arc::new(lhs.make_owned() * rhs.make_owned().partial_piv_lu().inverse()))
+            }
+            (Value::Matrix(mat), Value::Scalar(scalar))
+            | (Value::Scalar(scalar), Value::Matrix(mat)) => {
+                Value::Matrix(Arc::new(mat.make_owned() / Scale(scalar)))
+            }
+            (Value::Scalar(lhs), Value::Scalar(rhs)) => {
+                Value::Scalar(lhs / rhs)
+            }
+        }
     },
 
     sub = {
-        todo!()
+        match (lhs, rhs) {
+            (Value::Set(_), Value::Set(_)) => todo!(),
+            (Value::Set(set), Value::Matrix(mat)) => todo!(),
+            (Value::Set(set), Value::Scalar(complex)) => todo!(),
+            (Value::Matrix(mat), Value::Set(set)) => todo!(),
+            (Value::Scalar(complex), Value::Set(set)) => todo!(),
+
+            (Value::Matrix(lhs), Value::Matrix(rhs)) => {
+                Value::Matrix(Arc::new(lhs.make_owned() - rhs.make_owned()))
+            }
+            (Value::Matrix(mat), Value::Scalar(scalar))
+            | (Value::Scalar(scalar), Value::Matrix(mat)) => {
+                panic!("Cannot subtract a scalar from a matrix, or vice versa")
+            }
+            (Value::Scalar(lhs), Value::Scalar(rhs)) => {
+                Value::Scalar(lhs - rhs)
+            }
+        }
     },
 
     pow = {
-        todo!()
+        match (lhs, rhs) {
+            (Value::Set(_), Value::Set(_)) => todo!(),
+            (Value::Set(set), Value::Matrix(mat)) => todo!(),
+            (Value::Set(set), Value::Scalar(complex)) => todo!(),
+            (Value::Matrix(mat), Value::Set(set)) => todo!(),
+            (Value::Scalar(complex), Value::Set(set)) => todo!(),
+
+            (Value::Matrix(base), Value::Matrix(exp)) => {
+                // A^B = exp(B * log(A))
+                Value::Matrix(Arc::new(mat_exp(exp.make_owned() * mat_ln(&base))))
+            }
+            (Value::Matrix(base), Value::Scalar(exp)) => {
+                // A^n = exp(log(A) * n)
+                Value::Matrix(Arc::new(mat_exp(mat_ln(&base) * Scale(exp))))
+            }
+            (Value::Scalar(base), Value::Matrix(exp)) => {
+                // n^A = exp(log(n) * A)
+                Value::Matrix(Arc::new(mat_exp(Scale(base.ln()) * exp.make_owned())))
+            }
+            (Value::Scalar(base), Value::Scalar(exp)) => {
+                Value::Scalar(base.powc(exp))
+            }
+        }
     },
 
     partial_eq = {
@@ -325,17 +380,56 @@ impl_op_permutations! {
 
 impl Hash for Value {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        todo!()
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => {
+                for row in mat.row_iter() {
+                    for el in row.iter() {
+                        OrderedFloat(el.re).hash(state);
+                        OrderedFloat(el.im).hash(state);
+                    }
+                }
+            }
+            Value::Scalar(s) => {
+                OrderedFloat(s.re).hash(state);
+                OrderedFloat(s.im).hash(state);
+            }
+        }
     }
 }
 
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        todo!()
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => todo!(),
+            Value::Scalar(complex) => {
+                complex.re.fmt(f)?;
+
+                if complex.re != 0.0 && complex.im != 0.0 {
+                    f.write_str(" + ")?;
+                }
+
+                if complex.im != 0.0 {
+                    complex.im.fmt(f)?;
+                    f.write_char('i')?;
+                }
+
+                Ok(())
+            }
+        }
     }
 }
 
 /* -------------------------------- FUNCTIONS ------------------------------- */
+
+pub fn mat_exp(mat: Mat<Complex64>) -> Mat<Complex64> {
+    todo!()
+}
+
+pub fn mat_ln(mat: &Mat<Complex64>) -> Mat<Complex64> {
+    todo!()
+}
 
 pub fn gcd_f64(mut a: f64, mut b: f64) -> f64 {
     a = a.abs();

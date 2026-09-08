@@ -1,8 +1,10 @@
 use std::{
     fmt::{Display, Write},
     hash::Hash,
+    ops::Mul,
 };
 
+use itertools::Itertools;
 use num::Complex;
 use ordered_float::OrderedFloat;
 use thiserror::Error;
@@ -13,8 +15,12 @@ use crate::{
         util::to_superscript,
         value::Value,
     },
-    expr::Expr,
-    units::isq::DIMENSIONLESS,
+    expr::{
+        Expr, Node,
+        ops::{Binary, Unary, Variadic},
+    },
+    model::Variable,
+    units::{Unit::Unitless, isq::DIMENSIONLESS, si::rad},
 };
 
 pub mod isq;
@@ -34,11 +40,9 @@ static COMPOSITIONS: Interned<Composition> = Interned::new();
 /* ---------------------------------- ENUMS --------------------------------- */
 
 #[derive(Error, Debug, Clone)]
-pub enum DimensionalAnalysisError {
-    #[error(
-        "Tried to sum dimensionally incompatible expressions: {lhs} and {rhs}"
-    )]
-    IncompatibleSum { lhs: Expr, rhs: Expr },
+pub enum DimensionalError {
+    #[error("Tried to sum dimensionally incompatible expressions: {expr}")]
+    IncompatibleSum { expr: Expr },
     #[error(
         "Tried to apply a transcendental function to a dimensioned expression: {expr}"
     )]
@@ -48,7 +52,8 @@ pub enum DimensionalAnalysisError {
 /* --------------------------------- TRAITS --------------------------------- */
 
 pub trait Dimensioned {
-    fn analyze(&self) -> Result<Dimension, DimensionalAnalysisError>;
+    fn dimension(&self) -> Result<Dimension, DimensionalError>;
+    fn unit(&self) -> Result<Unit, DimensionalError>;
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
@@ -97,17 +102,32 @@ pub enum Unit {
         base: &'static [(Unit, i8)],
     },
     Composed(Handle<Composition>),
-    Scaled {
+    Linear {
         symbol: &'static str,
         base: &'static Unit,
         scale: OrderedFloat<f64>,
     },
+    // Affine {
+    //     symbol: &'static str,
+    //     base: &'static Unit,
+    //     offset: OrderedFloat<f64>,
+    // },
+    // // Function syntax for setting refernces: dB(V), dB(mW)
+    // Logarithmic {
+    //     symbol: &'static str,
+    //     reference: (OrderedFloat<f64>, &'static Unit),
+    //     base: OrderedFloat<f64>,
+    // },
     Unitless,
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Quantity {
+    pub const fn new(value: Value, unit: Unit) -> Self {
+        Self(value, unit)
+    }
+
     pub const ZERO: Self = Self(Value::ZERO, Unit::Unitless);
 
     /// Normalizes this quantity to its non-scaled form.
@@ -124,7 +144,7 @@ impl Quantity {
 
         loop {
             let normalized = match current_unit {
-                Unit::Scaled { base, scale, .. } => {
+                Unit::Linear { base, scale, .. } => {
                     current_val *= scale.0;
                     *base
                 }
@@ -132,7 +152,7 @@ impl Quantity {
                     let mut composition = COMPOSITIONS.get_cloned(id).unwrap();
 
                     for (unit, exp) in composition.iter_mut() {
-                        if let Unit::Scaled { base, scale, .. } = *unit {
+                        if let Unit::Linear { base, scale, .. } = *unit {
                             *unit = *base;
                             current_val *= scale.powi(*exp as i32);
                         }
@@ -155,6 +175,10 @@ impl Quantity {
 
     pub fn value(&self) -> &Value {
         &self.0
+    }
+
+    pub fn into_value(self) -> Value {
+        self.0
     }
 
     pub fn unit(&self) -> Unit {
@@ -193,8 +217,8 @@ impl Unit {
     /// For example, `s^-1 * m` and `m * Hz` are equivalent at the dimensional level, but not in the representational level.
     /// In contrast, `s^-1 * m` and `m * s^-1` are equivalent in both worlds.
     pub fn dimensional_eq(self, rhs: Unit) -> bool {
-        if let Ok(self_dim) = self.analyze()
-            && let Ok(rhs_dim) = rhs.analyze()
+        if let Ok(self_dim) = self.dimension()
+            && let Ok(rhs_dim) = rhs.dimension()
         {
             self_dim == rhs_dim
         } else {
@@ -224,7 +248,7 @@ impl Unit {
         match self {
             Self::Base { .. } | Self::Derived { .. } => true,
 
-            Self::Scaled { base, .. } => base.is_atomic(),
+            Self::Linear { base, .. } => base.is_atomic(),
 
             Self::Unitless | Self::Composed(_) => false,
         }
@@ -254,7 +278,7 @@ impl Unit {
 }
 
 impl Dimensioned for Unit {
-    fn analyze(&self) -> Result<Dimension, DimensionalAnalysisError> {
+    fn dimension(&self) -> Result<Dimension, DimensionalError> {
         let mut current_dim = DIMENSIONLESS;
 
         match self {
@@ -263,15 +287,15 @@ impl Dimensioned for Unit {
             }
             Unit::Derived { base, .. } => {
                 for (unit, exp) in *base {
-                    current_dim *= unit.analyze()?.pow(*exp);
+                    current_dim *= unit.dimension()?.pow(*exp);
                 }
             }
-            Unit::Scaled { base, .. } => {
-                current_dim *= base.analyze()?;
+            Unit::Linear { base, .. } => {
+                current_dim *= base.dimension()?;
             }
             Unit::Composed(id) => {
                 for (unit, exp) in COMPOSITIONS.get_cloned(*id).unwrap() {
-                    current_dim *= unit.analyze()?.pow(exp);
+                    current_dim *= unit.dimension()?.pow(exp);
                 }
             }
             Unit::Unitless => (),
@@ -279,11 +303,137 @@ impl Dimensioned for Unit {
 
         Ok(current_dim)
     }
+
+    fn unit(&self) -> Result<Unit, DimensionalError> {
+        Ok(self.clone())
+    }
 }
 
 impl Dimensioned for Quantity {
-    fn analyze(&self) -> Result<Dimension, DimensionalAnalysisError> {
-        self.1.analyze()
+    fn dimension(&self) -> Result<Dimension, DimensionalError> {
+        self.1.dimension()
+    }
+
+    fn unit(&self) -> Result<Unit, DimensionalError> {
+        Ok(self.unit())
+    }
+}
+
+impl Dimensioned for Expr {
+    fn dimension(&self) -> Result<Dimension, DimensionalError> {
+        self.unit().and_then(|u| u.dimension())
+    }
+
+    fn unit(&self) -> Result<Unit, DimensionalError> {
+        match self.node() {
+            Node::Symbol(symbol) => Ok(symbol.unit()),
+            Node::Constant(constant) => Ok(constant.quantity().unit()),
+            Node::Quantity(quantity) => Ok(quantity.unit()),
+            Node::Variadic(variadic) => variadic.unit(),
+            Node::Unary(unary) => unary.unit(),
+            Node::Binary(binary) => binary.unit(),
+            Node::Matrix(matrix) => Ok(Unit::Unitless),
+        }
+    }
+}
+
+impl Dimensioned for Variadic {
+    fn dimension(&self) -> Result<Dimension, DimensionalError> {
+        self.unit().and_then(|u| u.dimension())
+    }
+
+    fn unit(&self) -> Result<Unit, DimensionalError> {
+        match self {
+            Variadic::Add(exprs) => {
+                let first = exprs.first().unwrap().unit()?;
+
+                for expr in exprs.iter().skip(1) {
+                    if expr.unit()? != first {
+                        return Err(DimensionalError::IncompatibleSum {
+                            expr: self.into(),
+                        });
+                    }
+                }
+
+                Ok(first)
+            }
+            Variadic::Mul(exprs) => Ok(exprs
+                .iter()
+                .try_fold(Unit::Unitless, |acc, x| Ok(acc * x.unit()?))?),
+        }
+    }
+}
+
+impl Dimensioned for Binary {
+    fn dimension(&self) -> Result<Dimension, DimensionalError> {
+        self.unit().and_then(|u| u.dimension())
+    }
+
+    fn unit(&self) -> Result<Unit, DimensionalError> {
+        match self {
+            Binary::Pow(pow) => {
+                if pow.exp.dimension()? != DIMENSIONLESS {
+                    Err(DimensionalError::DimensionedTranscendental {
+                        expr: self.into(),
+                    })
+                } else {
+                    Ok(Unit::Unitless)
+                }
+            }
+            Binary::Log(log) => {
+                if log.arg.dimension()? != DIMENSIONLESS {
+                    Err(DimensionalError::DimensionedTranscendental {
+                        expr: self.into(),
+                    })
+                } else {
+                    Ok(Unit::Unitless)
+                }
+            }
+            Binary::Atan2(atan2) => {
+                if atan2.a.dimension()? != DIMENSIONLESS
+                    && atan2.b.dimension()? != DIMENSIONLESS
+                {
+                    Err(DimensionalError::DimensionedTranscendental {
+                        expr: self.into(),
+                    })
+                } else {
+                    Ok(rad)
+                }
+            }
+        }
+    }
+}
+
+impl Dimensioned for Unary {
+    fn dimension(&self) -> Result<Dimension, DimensionalError> {
+        self.unit().and_then(|u| u.dimension())
+    }
+
+    fn unit(&self) -> Result<Unit, DimensionalError> {
+        match self {
+            Unary::Sin(expr)
+            | Unary::Cos(expr)
+            | Unary::Tan(expr)
+            | Unary::Asin(expr)
+            | Unary::Acos(expr)
+            | Unary::Atan(expr)
+            | Unary::Sinh(expr)
+            | Unary::Cosh(expr)
+            | Unary::Tanh(expr)
+            | Unary::Asinh(expr)
+            | Unary::Acosh(expr)
+            | Unary::Atanh(expr) => expr.dimension().and_then(|x| {
+                if x != DIMENSIONLESS {
+                    Err(DimensionalError::DimensionedTranscendental {
+                        expr: self.into(),
+                    })
+                } else {
+                    Ok(Unit::Unitless)
+                }
+            }),
+            Unary::Arg(expr) => Ok(rad),
+            _ => self.arg().unit(),
+        }
     }
 }
 
@@ -292,7 +442,7 @@ impl Display for Unit {
         match self {
             Unit::Base { symbol, .. }
             | Unit::Derived { symbol, .. }
-            | Unit::Scaled { symbol, .. } => f.write_str(symbol),
+            | Unit::Linear { symbol, .. } => f.write_str(symbol),
             Unit::Unitless => Ok(()),
             Unit::Composed(id) => {
                 let comp = COMPOSITIONS.get_cloned(*id).unwrap();

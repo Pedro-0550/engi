@@ -440,5 +440,22 @@ fn impl_op_permutations(input: TokenStream) {
     }
 }
 
+use std::sync::Arc;
+
 pub(crate) use impl_as_variant;
 pub(crate) use impl_op_permutations;
+
+/* --------------------------------- TRAITS --------------------------------- */
+
+pub(crate) trait ArcExt<T: Clone> {
+    fn make_owned(&self) -> T;
+}
+
+impl<T: Clone> ArcExt<T> for Arc<T> {
+    fn make_owned(&self) -> T {
+        match Arc::try_unwrap(self.clone()) {
+            Ok(value) => value,
+            Err(arc) => (*arc).clone(),
+        }
+    }
+}

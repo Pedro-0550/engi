@@ -76,7 +76,10 @@ impl SimplifyContext {
 
 impl Expr {
     pub(crate) fn simplify_inner(&self, ctx: &mut SimplifyContext) -> Self {
-        if self.node().is_symbol() || self.node().is_const() {
+        if self.node().is_symbol()
+            || self.node().is_quantity()
+            || self.node().is_constant()
+        {
             return self.clone();
         }
 
@@ -100,7 +103,10 @@ impl Expr {
 
 impl Simplify for Expr {
     fn simplify(&self, ctx: &mut SimplifyContext) -> Expr {
-        if self.node().is_symbol() || self.node().is_const() {
+        if self.node().is_symbol()
+            || self.node().is_quantity()
+            || self.node().is_constant()
+        {
             return self.clone();
         }
 
@@ -134,7 +140,7 @@ impl Simplify for Expr {
 macro_rules! trig_simplify {
     ($inv:ident, $fn:ident, $expr:ident, $self:ident, $ctx:ident) => {
         match $expr.node() {
-            Node::Const(qty) => {
+            Node::Quantity(qty) => {
                 $crate::core::value::Value::from(qty.value().$fn()).into()
             }
             Node::Unary(op) if let Unary::$inv(ref x) = *op => {
@@ -177,21 +183,21 @@ impl Simplify for Binary {
                     base: inner_base,
                     exp: inner_exp,
                 })) = &base.node()
-                    && let Node::Const(exp) = exp.node()
-                    && let Node::Const(inner_exp) = inner_exp.node()
+                    && let Node::Quantity(exp) = exp.node()
+                    && let Node::Quantity(inner_exp) = inner_exp.node()
                     && exp.value().is_scalar_integer()
                     && inner_exp.value().is_scalar_integer()
                 {
                     pow(inner_base, exp * inner_exp).simplify_inner(ctx)
-                } else if let Node::Const(qty) = exp.node()
+                } else if let Node::Quantity(qty) = exp.node()
                     && qty.value() == 0.0
                 {
                     (1.0).into()
-                } else if let Node::Const(qty) = exp.node()
+                } else if let Node::Quantity(qty) = exp.node()
                     && qty.value() == 1.0
                 {
                     base.clone()
-                } else if let Node::Const(qty) = base.node()
+                } else if let Node::Quantity(qty) = base.node()
                     && qty.value() == 1.0
                 {
                     (1.0).into()
@@ -228,7 +234,7 @@ impl Simplify for Variadic {
             } else if self.is_mul()
                 && let Node::Binary(Binary::Pow(Pow { base, exp })) =
                     term.node()
-                && let Node::Const(exp) = exp.node()
+                && let Node::Quantity(exp) = exp.node()
                 && exp.value().is_scalar_integer()
             {
                 if let Node::Variadic(Variadic::Mul(terms)) = base.node() {
@@ -599,10 +605,10 @@ pub fn separate_consts(
 ) -> (impl Iterator<Item = Quantity>, impl Iterator<Item = Expr>) {
     (
         terms.clone().into_iter().filter_map(|expr| match expr.node() {
-            Node::Const(qty) => Some(qty.clone()),
+            Node::Quantity(qty) => Some(qty.clone()),
             _ => None,
         }),
-        terms.into_iter().filter(|expr| !expr.node().is_const()),
+        terms.into_iter().filter(|expr| !expr.node().is_quantity()),
     )
 }
 
@@ -610,9 +616,9 @@ pub fn extract_const(
     terms: &Vec<Expr>,
 ) -> (Option<Quantity>, impl Iterator<Item = Expr>) {
     let constant =
-        terms.get(0).and_then(|x| x.clone().into_node().as_const().cloned());
+        terms.get(0).and_then(|x| x.clone().into_node().as_quantity().cloned());
 
-    let exprs = terms.iter().cloned().filter(|expr| !expr.node().is_const());
+    let exprs = terms.iter().cloned().filter(|expr| !expr.node().is_quantity());
 
     (constant, exprs)
 }

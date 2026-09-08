@@ -26,5 +26,5 @@ pub fn normalization() {
 
 #[test]
 pub fn analysis() {
-    assert_eq!((eV / J).analyze().unwrap(), DIMENSIONLESS);
+    assert_eq!((eV / J).dimension().unwrap(), DIMENSIONLESS);
 }

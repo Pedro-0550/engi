@@ -19,7 +19,7 @@ use crate::{
     },
     expr::ops::{Binary, Matrix, Unary, Variadic},
     simplify::{Simplify, normal::Normalize},
-    symbol::Symbol,
+    symbol::{Symbol, constants::Constant},
     units::Quantity,
 };
 
@@ -38,7 +38,8 @@ pub mod ops;
 #[from(forward)]
 pub enum Node {
     Symbol(Symbol),
-    Const(Quantity),
+    Constant(Constant),
+    Quantity(Quantity),
     Variadic(Variadic),
     Unary(Unary),
     Binary(Binary),
@@ -62,6 +63,12 @@ pub struct Binding {
     to: Expr,
 }
 
+impl Binding {
+    pub fn new(from: Symbol, to: Expr) -> Self {
+        Self { from, to }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Shape {
     rows: NonZero<usize>,
@@ -79,7 +86,8 @@ pub trait Shaped {
 impl_as_variant!(
     Node,
     [Symbol => Symbol,
-    Const => Quantity,
+    Quantity => Quantity,
+    Constant => Constant,
     Variadic => Variadic,
     Unary => Unary,
     Binary => Binary,
@@ -163,8 +171,9 @@ impl Expr {
     /// Returns the total number of nodes in this expression
     pub fn size(&self) -> usize {
         match self.node() {
-            Node::Symbol(_symbol) => 1,
-            Node::Const(_quantity) => 1,
+            Node::Symbol(_) => 1,
+            Node::Constant(_) => 1,
+            Node::Quantity(_) => 1,
             Node::Variadic(variadic) => {
                 variadic.operands().iter().map(|x| x.size()).sum::<usize>() + 1
             }
@@ -182,7 +191,8 @@ impl Expr {
         fn symbols_inner(expr: &Expr, vec: &mut Vec<Symbol>) {
             match expr.node() {
                 Node::Symbol(symbol) => vec.push(*symbol),
-                Node::Const(quantity) => (),
+                Node::Quantity(quantity) => (),
+                Node::Constant(_) => (),
                 Node::Variadic(variadic) => {
                     for op in variadic.operands() {
                         symbols_inner(op, vec);
@@ -216,10 +226,12 @@ impl Expr {
                         .collect(),
                 )
                 .into(),
+            Node::Constant(c) => c.into(),
+
             Node::Unary(op) => {
                 op.with_arg(op.arg().substitute(bindings)).into()
             }
-            Node::Const(qty) => qty.into(),
+            Node::Quantity(qty) => qty.into(),
 
             Node::Binary(op) => op
                 .with_args(array::from_fn(|i| {
@@ -253,7 +265,8 @@ impl Shaped for Expr {
     fn shape(&self) -> Shape {
         match self.node() {
             Node::Symbol(symbol) => symbol.shape(),
-            Node::Const(_) => Shape::SCALAR,
+            Node::Quantity(v) => v.value().shape(),
+            Node::Constant(c) => c.quantity().value().shape(),
             Node::Variadic(variadic) => variadic.shape(),
             Node::Unary(single) => single.shape(),
             Node::Binary(double) => double.shape(),
@@ -265,11 +278,12 @@ impl Shaped for Expr {
 impl Display for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.node() {
-            Node::Const(qty) => <Quantity as Display>::fmt(&qty, f),
+            Node::Quantity(qty) => <Quantity as Display>::fmt(&qty, f),
             Node::Binary(op) => <Binary as Display>::fmt(&op, f),
             Node::Unary(op) => <Unary as Display>::fmt(&op, f),
             Node::Variadic(op) => <Variadic as Display>::fmt(&op, f),
             Node::Symbol(symb) => <Symbol as Display>::fmt(&symb, f),
+            Node::Constant(c) => <Constant as Display>::fmt(&c, f),
             Node::Matrix(_m) => todo!(),
         }
     }
@@ -278,11 +292,12 @@ impl Display for Expr {
 impl Debug for Expr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.node() {
-            Node::Const(qty) => <Quantity as Display>::fmt(&qty, f),
+            Node::Quantity(qty) => <Quantity as Display>::fmt(&qty, f),
             Node::Binary(op) => write!(f, "{:?}", op),
             Node::Unary(op) => write!(f, "{:?}", op),
             Node::Variadic(op) => write!(f, "{:?}", op),
             Node::Symbol(symb) => <Symbol as Display>::fmt(&symb, f),
+            Node::Constant(c) => <Constant as Display>::fmt(&c, f),
             Node::Matrix(_m) => todo!(),
         }
     }

@@ -1,5 +1,11 @@
-use std::{collections::HashMap, iter::once, mem::discriminant};
+use std::{
+    collections::HashMap,
+    hash::{BuildHasher, Hash},
+    iter::once,
+    mem::discriminant,
+};
 
+use ahash::AHasher;
 use itertools::Itertools;
 use num::complex::ComplexFloat;
 
@@ -26,7 +32,7 @@ pub trait Normalize {
     /// Returns the rank of this expression, not considering its children.
     /// In this context, rank defines the sorting order during normalization.
     /// Dont confuse this with the rank operation, which returns the rank of a tensor.
-    fn rank(&self) -> usize;
+    fn precedence(&self) -> usize;
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
@@ -88,7 +94,7 @@ impl Normalize for Variadic {
         }
     }
 
-    fn rank(&self) -> usize {
+    fn precedence(&self) -> usize {
         match self {
             Variadic::Mul(_) => 0,
             Variadic::Add(_) => 1,
@@ -101,7 +107,7 @@ impl Normalize for Unary {
         self.with_arg(self.arg().normalize(recurse)).into()
     }
 
-    fn rank(&self) -> usize {
+    fn precedence(&self) -> usize {
         match self {
             // Why does this start at one? We had a 0 variant but i removed it, and writing this comment definetly took
             // less time than shifting all the numbers.
@@ -137,7 +143,7 @@ impl Normalize for Binary {
         .into()
     }
 
-    fn rank(&self) -> usize {
+    fn precedence(&self) -> usize {
         match self {
             Binary::Pow(..) => 0,
             Binary::Log(..) => 1,
@@ -150,7 +156,8 @@ impl Normalize for Expr {
     fn normalize(&self, recurse: bool) -> Self {
         match &*self.node() {
             Node::Symbol(_) => self.clone(),
-            Node::Const(_) => self.clone(),
+            Node::Quantity(_) => self.clone(),
+            Node::Constant(_) => self.clone(),
             Node::Variadic(variadic) => variadic.normalize(recurse),
             Node::Unary(single) => single.normalize(recurse),
             Node::Binary(double) => double.normalize(recurse),
@@ -158,47 +165,27 @@ impl Normalize for Expr {
         }
     }
 
-    fn rank(&self) -> usize {
+    fn precedence(&self) -> usize {
         match *self.node() {
-            Node::Const(_) => 0,
+            Node::Quantity(_) => 0,
             Node::Symbol(_) => 1,
-            Node::Unary(_) => 2,
-            Node::Binary(_) => 3,
-            Node::Variadic(_) => 4,
-            Node::Matrix(_) => 5,
+            Node::Constant(_) => 2,
+            Node::Unary(_) => 3,
+            Node::Binary(_) => 4,
+            Node::Variadic(_) => 5,
+            Node::Matrix(_) => 6,
         }
     }
 }
 
 impl Ord for Expr {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.rank().cmp(&other.rank()).then_with(|| {
-            match (self.node(), other.node()) {
-                (Node::Symbol(lhs), Node::Symbol(rhs)) => lhs.cmp(&rhs),
-                (Node::Const(lhs), Node::Const(rhs)) => {
-                    let lhs = lhs.value();
-                    let rhs = rhs.value();
-                    todo!()
-                }
-                (Node::Unary(lhs), Node::Unary(rhs)) => lhs
-                    .rank()
-                    .cmp(&rhs.rank())
-                    .then_with(|| lhs.arg().cmp(&rhs.arg())),
-                (Node::Binary(lhs), Node::Binary(rhs)) => lhs
-                    .rank()
-                    .cmp(&rhs.rank())
-                    .then_with(|| lhs.args()[0].cmp(&rhs.args()[0]))
-                    .then_with(|| lhs.args()[1].cmp(&rhs.args()[1])),
-                (Node::Variadic(lhs), Node::Variadic(rhs)) => {
-                    lhs.rank().cmp(&rhs.rank()).then_with(|| {
-                        lhs.operands().iter().cmp(rhs.operands().iter())
-                    })
-                }
-                (Node::Matrix(_lhs), Node::Matrix(_rhs)) => todo!(),
-                _ => unreachable!(
-                    "Only two nodes of the same variant can be Ordering::Equal",
-                ),
-            }
+        self.precedence().cmp(&other.precedence()).then_with(|| {
+            // We already have a hash... so might as well
+            // This is actually faster than writing out every case, like i actually benched it, its up to 15% faster lmao
+            ahash::RandomState::with_seeds(0, 0, 0, 0).hash_one(self).cmp(
+                &ahash::RandomState::with_seeds(0, 0, 0, 0).hash_one(other),
+            )
         })
     }
 }
@@ -231,8 +218,7 @@ mod test {
         let b = Symbol::new("b");
         let c = Symbol::new("c");
 
-        panic!(
-            "{}, {}",
+        assert_eq!(
             (a * b * -c + 0).normalize(true),
             (-(1 * a * b * c)).normalize(true)
         );
