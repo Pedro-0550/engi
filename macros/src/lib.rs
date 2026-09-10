@@ -57,7 +57,6 @@ pub fn model(input: TokenStream) -> TokenStream {
         parse_macro_input!(input as DeriveInput);
 
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-
     let Data::Struct(DataStruct { fields, .. }) = data else {
         panic!("#[derive(Model)] only supports structs");
     };
@@ -126,79 +125,102 @@ pub fn model(input: TokenStream) -> TokenStream {
         }
     }
 
-    let solution_ident = format_ident!("{}Solution", ident);
-    let builder_ident = format_ident!("{}Builder", ident);
-    let variable_idents = vars.iter().map(|f| f.0.ident.clone().unwrap());
-    let variable_idents2 = variable_idents.clone();
+    let variable_idents: Vec<Ident> =
+        vars.iter().map(|(field, ..)| field.ident.clone().unwrap()).collect();
 
-    let submodel_idents = submodels.iter().map(|f| f.ident.clone().unwrap());
-    let submodel_idents2 = submodel_idents.clone();
+    let submodel_idents: Vec<Ident> =
+        submodels.iter().map(|field| field.ident.clone().unwrap()).collect();
 
-    let interface_idents = interfaces.iter().map(|f| f.ident.clone().unwrap());
-    let interface_idents2 = interface_idents.clone();
+    let interface_idents: Vec<Ident> =
+        interfaces.iter().map(|field| field.ident.clone().unwrap()).collect();
 
-    let variable_builder_idents = vars.iter().map(|(field, ..)| {
-        format_ident!("{}_builder", field.ident.clone().unwrap())
-    });
-    let variable_builder_idents2 = variable_builder_idents.clone();
-
-    let submodel_builder_idents = submodels
+    let variable_builder_idents: Vec<Ident> = vars
         .iter()
-        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()));
-    let submodel_builder_idents2 = submodel_builder_idents.clone();
+        .map(|(field, ..)| {
+            format_ident!("{}_builder", field.ident.clone().unwrap())
+        })
+        .collect();
 
-    let interface_builder_idents = interfaces
+    let submodel_builder_idents: Vec<Ident> = submodels
         .iter()
-        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()));
-    let interface_builder_idents2 = interface_builder_idents.clone();
+        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()))
+        .collect();
+
+    let interface_builder_idents: Vec<Ident> = interfaces
+        .iter()
+        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()))
+        .collect();
 
     let builder_fields = vars
         .iter()
         .map(|(Field { vis, ident, .. }, ..)| {
             quote! {
-                #vis #ident: engi::model::VariableBuilder
+                #vis #ident: engi::model::VariableBuilder<'s>
             }
         })
         .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
             quote! {
-                #vis #ident: <#ty as engi::model::Model>::Builder
+                #vis #ident: <<#ty as engi::model::Model>::Registration as engi::model::ModelRegistration>::Builder<'s>
             }
         }))
         .chain(interfaces.iter().map(|Field { vis, ident, .. }| {
             quote! {
-                #vis #ident: engi::model::InterfaceBuilder
+                #vis #ident: engi::model::InterfaceBuilder<'s>
             }
-        }));
+        }))
+        .collect::<Vec<_>>();
 
     let constructor = vars
         .iter()
         .map(|(field, desc, unit, shape)| {
             let field_ident = field.ident.clone().unwrap();
+
             quote! {
                 #field_ident: engi::model::Variable::new(
-                    engi::symbol::Symbol::new(&format!("{}.{}", name, stringify!(#field_ident)))
-                        .set_unit(#unit)
-                        .set_shape(#shape)
-                        .set_desc(#desc.to_owned())
+                    engi::symbol::Symbol::new(
+                        &format!(
+                            "{}.{}",
+                            name,
+                            stringify!(#field_ident)
+                        )
+                    )
+                    .set_unit(#unit)
+                    .set_shape(#shape)
+                    .set_desc(#desc.to_owned())
                 )
             }
         })
-        .chain(interfaces.iter().map(|f| {
-            let field_ident = f.ident.clone().unwrap();
-            let field_ty = f.ty.clone();
+        .chain(interfaces.iter().map(|field| {
+            let field_ident = field.ident.clone().unwrap();
+            let field_ty = field.ty.clone();
 
             quote! {
-                #field_ident: <#field_ty as engi::model::Interface>::new(&format!("{}.{}", name, stringify!(#field_ident)))
+                #field_ident:
+                    <#field_ty as engi::model::Interface>::new(
+                        &format!(
+                            "{}.{}",
+                            name,
+                            stringify!(#field_ident)
+                        )
+                    )
             }
         }))
-        .chain(submodels.iter().map(|f| {
-            let field_ident = f.ident.clone().unwrap();
-            let field_ty = f.ty.clone();
+        .chain(submodels.iter().map(|field| {
+            let field_ident = field.ident.clone().unwrap();
+            let field_ty = field.ty.clone();
 
             quote! {
-                #field_ident: <#field_ty as engi::model::Model>::new(&format!("{}.{}", name, stringify!(#field_ident)))
+                #field_ident:
+                    <#field_ty as engi::model::Model>::new(
+                        &format!(
+                            "{}.{}",
+                            name,
+                            stringify!(#field_ident)
+                        )
+                    )
             }
-        }));
+        }))
+        .collect::<Vec<_>>();
 
     let solution_fields = vars
         .iter()
@@ -209,58 +231,93 @@ pub fn model(input: TokenStream) -> TokenStream {
         })
         .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
             quote! {
-                #vis #ident: <#ty as engi::model::Model>::Solution
+                #vis #ident:
+                    <#ty as engi::model::Model>::Solution
             }
-        }));
+        }))
+        .collect::<Vec<_>>();
+
+    let registration_fields = vars
+        .iter()
+        .map(|(Field { vis, ident, .. }, ..)| {
+            quote! {
+                #vis #ident: engi::model::VariableId
+            }
+        })
+        .chain(interfaces.iter().map(|Field { vis, ident, .. }| {
+            quote! {
+                #vis #ident: engi::model::InterfaceId
+            }
+        }))
+        .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
+            quote! {
+                #vis #ident:
+                    <#ty as engi::model::Model>::Registration
+            }
+        }))
+        .collect::<Vec<_>>();
+
+    let solution_ident = format_ident!("{}Solution", ident);
+    let builder_ident = format_ident!("{}Builder", ident);
+    let registration_ident = format_ident!("{}Registration", ident);
 
     quote! {
-        #vis struct #builder_ident {
-            __system: engi::model::System,
-            __id: engi::model::ModelId,
+        #vis struct #builder_ident<'s> {
+            system: &'s engi::model::System,
+            id: engi::model::ModelId,
             #(#builder_fields,)*
         }
 
-        impl engi::model::ModelBuilder for #builder_ident {}
+        impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
+            type Builder<'s> = #builder_ident<'s>;
+            type Solution = #solution_ident;
+
+            fn builder<'s>(id: engi::model::ModelId, system: &'s System) -> Self::Builder<'s> {
+                #builder_ident {
+
+                }
+            }
+        }
 
         #vis struct #solution_ident {
             #(#solution_fields,)*
         }
 
-        impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
-            type Solution = #solution_ident;
-            type Builder = #builder_ident;
-
-            fn new(name: &str) -> #ident {
-                #ident {
-                    #(#constructor,)*
+        impl #impl_generics engi::model::Solution for #ident #ty_generics #where_clause {
+            fn disassemble(assembled: engi::model::AssembledSolution) -> Self {
+                Self {
+                    #(#variable_idents:)
                 }
             }
 
-            fn register(self, system: System) -> Self::Builder {
-
-                #(let #variable_builder_idents = {
-                    let id = system.0.borrow_mut().add_variable(self.#variable_idents.clone());
-                    engi::model::VariableBuilder::new(system.clone(), id)
-                };)*
-
-                #(let #interface_builder_idents = {
-                    let id = system.0.borrow_mut().add_interface(self.#interface_idents.clone());
-                    engi::model::InterfaceBuilder::new(system.clone(), id)
-                };)*
-
-                #(let #submodel_builder_idents = self.#submodel_idents.clone().register(system.clone());)*
-
-                let own_id = system.0.borrow_mut().add_model(self);
-
-                #builder_ident {
-                    __system: system,
-                    __id: own_id,
-                    #(#submodel_idents2: #submodel_builder_idents2,)*
-                    #(#interface_idents2: #interface_builder_idents2,)*
-                    #(#variable_idents2: #variable_builder_idents2,)*
-                }
-            }
         }
+
+        // impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
+        //     type Solution = #solution_ident;
+        //     type Registration = #registration_ident;
+
+        //     fn new(name: &str) -> #ident {
+        //         #ident {
+        //             #(#constructor,)*
+        //         }
+        //     }
+
+        //     fn register(self, system: &mut System) -> Self::Registration {
+        //         #(let #variable_builder_idents = system.add_variable(self.#variable_idents.clone());)*
+        //         #(let #interface_builder_idents = system.add_interface(self.#interface_idents.clone());)*
+
+        //         #(let #submodel_builder_idents = self.#submodel_idents.clone().register(system);)*
+
+        //         let own_id = system.add_model(self);
+
+        //         #registration_ident {
+        //             id: own_id,
+        //             #(#submodel_idents: #submodel_builder_idents,)*
+        //             #(#interface_idents: #interface_builder_idents,)*
+        //             #(#variable_idents: #variable_builder_idents,)*
+        //         }
+        //     }
+        // }
     }.into()
 }
 

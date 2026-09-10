@@ -3,6 +3,8 @@ use std::{
     any::{Any, TypeId},
     cell::RefCell,
     collections::{HashMap, HashSet},
+    fmt::Debug,
+    hash::Hash,
     marker::PhantomData,
     rc::Rc,
     sync::{
@@ -36,6 +38,7 @@ use crate::{
 /* --------------------------------- MODULES -------------------------------- */
 
 pub mod eq;
+pub mod solve;
 
 /* --------------------------------- TRAITS --------------------------------- */
 
@@ -43,48 +46,42 @@ pub trait Interface {
     fn connectors(&self) -> Vec<Connector>;
     fn new(name: &str) -> Self;
 
-    fn erased(self) -> Box<dyn ErasedInterface>
-    where
-        Self: Sized + Any, {
-        Box::new(self)
-    }
+    // fn erased(self) -> Box<dyn ErasedInterface>
+    // where
+    //     Self: Sized + Any, {
+    //     Box::new(self)
+    // }
 }
 
-pub trait ErasedInterface: Any {
-    fn connectors(&self) -> Vec<Connector>;
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any>;
+// pub trait ErasedInterface: Any {
+//     fn connectors(&self) -> Vec<Connector>;
+//     fn as_any(&self) -> &dyn Any;
+//     fn as_any_mut(&mut self) -> &mut dyn Any;
+//     fn into_any(self: Box<Self>) -> Box<dyn Any>;
+// }
+
+pub trait Solution {
+    fn disassemble(assembled: AssembledSolution) -> Self;
 }
 
-pub trait ModelBuilder {}
+pub trait Model: Relations + Clone {
+    type Solution: Solution;
+    type Builder<'s>;
 
-pub trait Model: Constraints + Equations + Clone {
-    type Builder: ModelBuilder;
-    type Solution;
-
-    fn register(self, system: System) -> Self::Builder;
     fn new(name: &str) -> Self;
+    fn builder<'s>(id: ModelId, system: &'s System) -> Self::Builder<'s>;
 
-    fn erased(self) -> Box<dyn ErasedModel>
-    where
-        Self: Sized + Any, {
-        Box::new(self)
+    fn assemble(self) -> AssembledModel;
+}
+
+pub trait Relations {
+    fn constraints(&self) -> Vec<Constraint> {
+        vec![]
     }
-}
 
-pub trait ErasedModel: Any + Constraints + Equations {
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn into_any(self: Box<Self>) -> Box<dyn Any>;
-}
-
-pub trait Constraints {
-    fn constraints(&self) -> Vec<Constraint>;
-}
-
-pub trait Equations {
-    fn equations(&self) -> Vec<Equation>;
+    fn equations(&self) -> Vec<Equation> {
+        vec![]
+    }
 }
 
 pub trait InterfaceArrayExt {
@@ -93,57 +90,74 @@ pub trait InterfaceArrayExt {
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
+pub struct AssembledModel {
+    equations: Vec<Equation>,
+    constraints: Vec<Constraint>,
+    variables: Vec<Variable>,
+    interfaces: Vec<AssembledInterface>,
+    submodels: Vec<AssembledSolution>,
+}
+
+pub struct AssembledSolution {
+    values: Vec<Value>,
+    subsolutions: Vec<AssembledSolution>,
+}
+
+pub struct AssembledInterface {
+    connectors: Vec<Connector>,
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Connector {
     variable: Variable,
     condition: Condition,
 }
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct InterfaceId(usize);
+pub struct VariableId {
+    model: ModelPath,
+    var_id: usize,
+}
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct ModelId(usize);
+pub struct InterfaceId {
+    model: ModelPath,
+    if_id: usize,
+}
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct VariableId(usize);
+pub struct ModelPath(Vec<usize>);
 
 #[derive(Default)]
-struct SystemInner {
-    models: Vec<Box<dyn ErasedModel>>,
-    interfaces: Vec<Box<dyn ErasedInterface>>,
-    variables: Vec<Variable>,
-    connections: HashMap<InterfaceId, HashSet<InterfaceId>>,
-    bindings: HashMap<VariableId, Expr>,
+pub struct System {
+    models: RefCell<Vec<AssembledModel>>,
+    connections: RefCell<HashMap<InterfaceId, HashSet<InterfaceId>>>,
+    bindings: RefCell<HashMap<VariableId, Expr>>,
 }
 
-#[derive(Clone)]
-pub struct System(Rc<RefCell<SystemInner>>);
+// pub struct AssembledSystem {
+//     knowns: HashMap<Variable, Expr>,
+//     equations: Vec<Equation>,
+// }
 
-pub struct AssembledSystem {
-    knowns: HashMap<Variable, Expr>,
-    equations: Vec<Equation>,
-}
-
-pub struct AnalyzedSystem {
+pub struct CompiledSystem {
     blocks: Vec<Vec<Equation>>,
 }
 
+pub struct SolvedSystem {
+    solutions: Vec<AssembledSolution>,
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct Variable {
-    symbol: Symbol,
-}
+pub struct Variable(Symbol);
 
 #[derive(Clone)]
-pub struct VariableBuilder {
+pub struct VariableBuilder<'s> {
     id: VariableId,
-    system: System,
+    system: &'s System,
 }
 
 #[derive(Clone)]
-pub struct InterfaceBuilder {
+pub struct InterfaceBuilder<'s> {
     id: InterfaceId,
-    system: System,
+    system: &'s System,
 }
 
 /* ---------------------------------- ENUMS --------------------------------- */
@@ -157,43 +171,26 @@ pub enum Condition {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl<M> ErasedModel for M
-where
-    M: Model + 'static,
-{
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
+// impl<I> ErasedInterface for I
+// where
+//     I: Interface + 'static,
+// {
+//     fn connectors(&self) -> Vec<Connector> {
+//         self.connectors()
+//     }
 
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
+//     fn as_any(&self) -> &dyn Any {
+//         self
+//     }
 
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-}
+//     fn as_any_mut(&mut self) -> &mut dyn Any {
+//         self
+//     }
 
-impl<I> ErasedInterface for I
-where
-    I: Interface + 'static,
-{
-    fn connectors(&self) -> Vec<Connector> {
-        self.connectors()
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
-
-    fn into_any(self: Box<Self>) -> Box<dyn Any> {
-        self
-    }
-}
+//     fn into_any(self: Box<Self>) -> Box<dyn Any> {
+//         self
+//     }
+// }
 
 impl Connector {
     pub fn new(variable: Variable, condition: Condition) -> Self {
@@ -219,42 +216,44 @@ impl Connector {
 //     }
 // }
 
-impl VariableBuilder {
+impl<'s> VariableBuilder<'s> {
     pub fn variable(&self) -> Variable {
-        self.system.0.borrow().variables[self.id.0]
+        self.system.variables[self.id.0]
     }
 
     pub fn bind(&self, expr: impl Into<Expr>) {
         let expr = expr.into();
-        let mut inner = self.system.0.borrow_mut();
+        let system = self.system;
         assert_eq!(
             expr.unit().expect("Tried to bind expr with invalid dimension"),
-            inner.variables[self.id.0].symbol().unit(),
+            system.variables[self.id.0].symbol().unit(),
             "Tried to bind an expression with different units to a variable"
         );
-        inner.bindings.insert(self.id, expr);
+        system.bindings.borrow_mut().insert(self.id, expr);
     }
 }
 
-impl InterfaceBuilder {
+impl<'s> InterfaceBuilder<'s> {
     pub fn connect(&self, other: &InterfaceBuilder) {
-        let mut inner = self.system.0.borrow_mut();
+        let system = self.system;
 
-        inner
+        system
             .connections
+            .borrow_mut()
             .entry(self.id)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(other.id);
 
-        inner
+        system
             .connections
+            .borrow_mut()
             .entry(other.id)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(self.id);
     }
 }
 
-impl<const N: usize> InterfaceArrayExt for [&InterfaceBuilder; N] {
+impl<'s, const N: usize> InterfaceArrayExt for [&InterfaceBuilder<'s>; N] {
     fn connect(self, other: &InterfaceBuilder) {
         for interface in self {
             interface.connect(other);
@@ -262,38 +261,39 @@ impl<const N: usize> InterfaceArrayExt for [&InterfaceBuilder; N] {
     }
 }
 
-impl<M: Model> Constraints for M {
-    default fn constraints(&self) -> Vec<Constraint> {
-        Vec::new()
-    }
-}
-
 impl Variable {
     pub fn new(symbol: Symbol) -> Self {
-        Self { symbol }
+        Self(symbol)
     }
 
     pub fn symbol(&self) -> Symbol {
-        self.symbol
+        self.0
     }
 }
 
 impl System {
     pub fn new() -> Self {
-        Self(Rc::new(RefCell::new(SystemInner::default())))
+        Self::default()
     }
 
-    pub fn add<M: Model>(&self, model: M) -> M::Builder {
-        model.register(self.clone())
+    pub fn add<'s, M: Model>(
+        &'s mut self,
+        model: M,
+    ) -> <M::Registration as ModelRegistration>::Builder<'s>
+    where
+        Self: 's, {
+        model.register(self).builder(&*self)
     }
 
     pub fn assemble(self) -> AssembledSystem {
-        let inner = self.0.take();
         let mut equations = Vec::new();
+
+        let connections = self.connections.into_inner();
+        let bindings = self.bindings.into_inner();
 
         /* -------------------------------------------------------------------------- */
 
-        for model in &inner.models {
+        for model in &self.models {
             equations.extend(model.equations());
         }
 
@@ -308,7 +308,7 @@ impl System {
             if a.0 < b.0 { (a, b) } else { (b, a) }
         }
 
-        for start_id in 0..inner.interfaces.len() {
+        for start_id in 0..self.interfaces.len() {
             let start = InterfaceId(start_id);
 
             if !visited.insert(start) {
@@ -321,7 +321,7 @@ impl System {
             while let Some(id) = stack.pop() {
                 component.push(id);
 
-                if let Some(adjacent) = inner.connections.get(&id) {
+                if let Some(adjacent) = connections.get(&id) {
                     for &next in adjacent {
                         if visited.insert(next) {
                             stack.push(next);
@@ -335,9 +335,9 @@ impl System {
             let mut explored_edges = HashSet::new();
 
             for &a_id in &component {
-                let a = &inner.interfaces[a_id.0];
+                let a = &self.interfaces[a_id.0];
 
-                let Some(adjacent) = inner.connections.get(&a_id) else {
+                let Some(adjacent) = connections.get(&a_id) else {
                     continue;
                 };
 
@@ -346,7 +346,7 @@ impl System {
                         continue;
                     }
 
-                    let b = &inner.interfaces[b_id.0];
+                    let b = &self.interfaces[b_id.0];
 
                     for (a_conn, b_conn) in
                         a.connectors().iter().zip(b.connectors())
@@ -365,7 +365,7 @@ impl System {
             let mut conserved_terms: HashMap<usize, Vec<Expr>> = HashMap::new();
 
             for &id in &component {
-                let interface = &inner.interfaces[id.0];
+                let interface = &self.interfaces[id.0];
 
                 for (i, connector) in interface.connectors().iter().enumerate()
                 {
@@ -394,12 +394,11 @@ impl System {
             }
         }
 
-        let knowns: HashMap<Variable, Expr> = inner
-            .bindings
+        let knowns: HashMap<Variable, Expr> = bindings
             .iter()
             .map(|(var_id, expr)| {
                 (
-                    inner.variables[var_id.0],
+                    self.variables[var_id.0],
                     expr.simplify(&mut SimplifyContext::new()),
                 )
             })
@@ -487,43 +486,18 @@ impl AssembledSystem {
             }
         }
 
-        panic!("{:#?}", dependency_graph.sccs());
-
         AnalyzedSystem { blocks: dependency_graph.sccs() }
     }
 }
 
-impl SystemInner {
-    fn add_variable(&mut self, var: Variable) -> VariableId {
-        let id = VariableId(self.variables.len());
-        self.variables.push(var);
-        id
-    }
-
-    fn add_interface(
-        &mut self,
-        interface: impl Interface + 'static,
-    ) -> InterfaceId {
-        let id = InterfaceId(self.interfaces.len());
-        self.interfaces.push(Box::new(interface));
-        id
-    }
-
-    fn add_model(&mut self, model: impl Model + 'static) -> ModelId {
-        let id = ModelId(self.models.len());
-        self.models.push(model.erased());
-        id
-    }
-}
-
-impl VariableBuilder {
-    pub fn new(system: System, id: VariableId) -> Self {
+impl<'s> VariableBuilder<'s> {
+    pub fn new(system: &'s System, id: VariableId) -> Self {
         Self { id, system }
     }
 }
 
-impl InterfaceBuilder {
-    pub fn new(system: System, id: InterfaceId) -> Self {
+impl<'s> InterfaceBuilder<'s> {
+    pub fn new(system: &'s System, id: InterfaceId) -> Self {
         Self { id, system }
     }
 }
@@ -537,8 +511,8 @@ mod model_based_large_signal_bjt {
     use crate::{
         expr::ops::{exp, real},
         model::{
-            Condition, Connector, Constraints, Equations, InterfaceArrayExt,
-            Model, System, Variable,
+            Condition, Connector, InterfaceArrayExt, Model, Relations, System,
+            Variable,
             eq::{Constraint, Equation},
         },
         symbol::constants::{kB, q},
@@ -571,7 +545,7 @@ mod model_based_large_signal_bjt {
         i: Variable,
     }
 
-    impl Equations for ElectricalPort {
+    impl Relations for ElectricalPort {
         fn equations(&self) -> Vec<Equation> {
             let ElectricalPort { p, n, v, i } = self;
 
@@ -613,7 +587,7 @@ mod model_based_large_signal_bjt {
         pub port: ThermalPort,
     }
 
-    impl Equations for JunctionThermal {
+    impl Relations for JunctionThermal {
         fn equations(&self) -> Vec<Equation> {
             let JunctionThermal { t_a, t_c, rθ_jc, rθ_ca, port } = self;
 
@@ -661,7 +635,7 @@ mod model_based_large_signal_bjt {
         pub thermal: ThermalPort,
     }
 
-    impl Equations for StaticBjt {
+    impl Relations for StaticBjt {
         fn equations(&self) -> Vec<Equation> {
             let StaticBjt {
                 i_s,
@@ -704,7 +678,7 @@ mod model_based_large_signal_bjt {
         // thermal: ThermalPort,
     }
 
-    impl Equations for Impedance {
+    impl Relations for Impedance {
         fn equations(&self) -> Vec<Equation> {
             let Impedance { z, port } = self;
             relations! {
@@ -712,9 +686,7 @@ mod model_based_large_signal_bjt {
                 // thermal.p = real(port.v * port.i)
             }
         }
-    }
 
-    impl Constraints for Impedance {
         fn constraints(&self) -> Vec<Constraint> {
             let Impedance { z, .. } = self;
             relations! {
@@ -731,7 +703,7 @@ mod model_based_large_signal_bjt {
         pin: ElectricalPin,
     }
 
-    impl Equations for Ground {
+    impl Relations for Ground {
         fn equations(&self) -> Vec<Equation> {
             let Ground { pin } = self;
             relations! {
@@ -750,7 +722,7 @@ mod model_based_large_signal_bjt {
         out: ElectricalPort,
     }
 
-    impl Equations for IdealSupply {
+    impl Relations for IdealSupply {
         fn equations(&self) -> Vec<Equation> {
             let IdealSupply { out, v } = self;
             relations! {
