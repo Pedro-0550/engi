@@ -128,27 +128,37 @@ pub fn model(input: TokenStream) -> TokenStream {
     let variable_idents: Vec<Ident> =
         vars.iter().map(|(field, ..)| field.ident.clone().unwrap()).collect();
 
+    let variable_idxs: Vec<usize> = vars
+        .iter()
+        .map(|(field, ..)| field.ident.clone().unwrap())
+        .enumerate()
+        .map(|(i, _)| i)
+        .collect();
+
     let submodel_idents: Vec<Ident> =
         submodels.iter().map(|field| field.ident.clone().unwrap()).collect();
+
+    let submodel_idxs: Vec<usize> = submodels
+        .iter()
+        .map(|field| field.ident.clone().unwrap())
+        .enumerate()
+        .map(|(i, _)| i)
+        .collect();
+
+    let submodel_tys: Vec<Type> =
+        submodels.iter().map(|field| field.ty.clone()).collect();
 
     let interface_idents: Vec<Ident> =
         interfaces.iter().map(|field| field.ident.clone().unwrap()).collect();
 
-    let variable_builder_idents: Vec<Ident> = vars
-        .iter()
-        .map(|(field, ..)| {
-            format_ident!("{}_builder", field.ident.clone().unwrap())
-        })
-        .collect();
+    let interface_tys: Vec<Type> =
+        interfaces.iter().map(|field| field.ty.clone()).collect();
 
-    let submodel_builder_idents: Vec<Ident> = submodels
+    let interface_idxs: Vec<usize> = interfaces
         .iter()
-        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()))
-        .collect();
-
-    let interface_builder_idents: Vec<Ident> = interfaces
-        .iter()
-        .map(|field| format_ident!("{}_builder", field.ident.clone().unwrap()))
+        .map(|field| field.ident.clone().unwrap())
+        .enumerate()
+        .map(|(i, _)| i)
         .collect();
 
     let builder_fields = vars
@@ -160,12 +170,12 @@ pub fn model(input: TokenStream) -> TokenStream {
         })
         .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
             quote! {
-                #vis #ident: <<#ty as engi::model::Model>::Registration as engi::model::ModelRegistration>::Builder<'s>
+                #vis #ident: <#ty as engi::model::Model>::Builder<'s>
             }
         }))
-        .chain(interfaces.iter().map(|Field { vis, ident, .. }| {
+        .chain(interfaces.iter().map(|Field { vis, ident, ty, .. }| {
             quote! {
-                #vis #ident: engi::model::InterfaceBuilder<'s>
+                #vis #ident: engi::model::InterfaceBuilder<'s, #ty>
             }
         }))
         .collect::<Vec<_>>();
@@ -231,93 +241,70 @@ pub fn model(input: TokenStream) -> TokenStream {
         })
         .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
             quote! {
-                #vis #ident:
-                    <#ty as engi::model::Model>::Solution
-            }
-        }))
-        .collect::<Vec<_>>();
-
-    let registration_fields = vars
-        .iter()
-        .map(|(Field { vis, ident, .. }, ..)| {
-            quote! {
-                #vis #ident: engi::model::VariableId
-            }
-        })
-        .chain(interfaces.iter().map(|Field { vis, ident, .. }| {
-            quote! {
-                #vis #ident: engi::model::InterfaceId
-            }
-        }))
-        .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
-            quote! {
-                #vis #ident:
-                    <#ty as engi::model::Model>::Registration
+                #vis #ident: <#ty as engi::model::Model>::Solution
             }
         }))
         .collect::<Vec<_>>();
 
     let solution_ident = format_ident!("{}Solution", ident);
     let builder_ident = format_ident!("{}Builder", ident);
-    let registration_ident = format_ident!("{}Registration", ident);
 
     quote! {
         #vis struct #builder_ident<'s> {
             system: &'s engi::model::System,
-            id: engi::model::ModelId,
+            path: engi::model::ModelPath,
             #(#builder_fields,)*
-        }
-
-        impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
-            type Builder<'s> = #builder_ident<'s>;
-            type Solution = #solution_ident;
-
-            fn builder<'s>(id: engi::model::ModelId, system: &'s System) -> Self::Builder<'s> {
-                #builder_ident {
-
-                }
-            }
         }
 
         #vis struct #solution_ident {
             #(#solution_fields,)*
         }
 
-        impl #impl_generics engi::model::Solution for #ident #ty_generics #where_clause {
-            fn disassemble(assembled: engi::model::AssembledSolution) -> Self {
+        impl engi::model::Solution for #solution_ident {
+            fn disassemble(mut assembled: engi::model::AssembledSolution) -> Self {
+                use engi::model::*;
+
                 Self {
-                    #(#variable_idents:)
+                    #(#variable_idents: assembled.values.pop().unwrap(),)*
+                    #(#submodel_idents: <<#submodel_tys as Model>::Solution as Solution>::disassemble(assembled.subsolutions.pop().unwrap()),)*
                 }
             }
 
         }
 
-        // impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
-        //     type Solution = #solution_ident;
-        //     type Registration = #registration_ident;
+        impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
+            type Solution = #solution_ident;
+            type Builder<'s> = #builder_ident<'s>;
 
-        //     fn new(name: &str) -> #ident {
-        //         #ident {
-        //             #(#constructor,)*
-        //         }
-        //     }
+            fn new(name: &str) -> #ident {
+                #ident {
+                    #(#constructor,)*
+                }
+            }
 
-        //     fn register(self, system: &mut System) -> Self::Registration {
-        //         #(let #variable_builder_idents = system.add_variable(self.#variable_idents.clone());)*
-        //         #(let #interface_builder_idents = system.add_interface(self.#interface_idents.clone());)*
+            fn assemble(self) -> engi::model::AssembledModel {
+                use engi::model::{Interface, Model};
 
-        //         #(let #submodel_builder_idents = self.#submodel_idents.clone().register(system);)*
+                engi::model::AssembledModel {
+                    name: "todo".to_owned(),
+                    equations: self.equations(),
+                    constraints: self.constraints(),
+                    variables: vec![#(self.#variable_idents,)*],
+                    interfaces: vec![#(self.#interface_idents.assemble(),)*],
+                    submodels: vec![#(self.#submodel_idents.assemble(),)*]
+                }
+            }
 
-        //         let own_id = system.add_model(self);
-
-        //         #registration_ident {
-        //             id: own_id,
-        //             #(#submodel_idents: #submodel_builder_idents,)*
-        //             #(#interface_idents: #interface_builder_idents,)*
-        //             #(#variable_idents: #variable_builder_idents,)*
-        //         }
-        //     }
-        // }
+            fn builder<'s>(path: engi::model::ModelPath, system: &'s engi::model::System) -> Self::Builder<'s> {
+                use engi::model::*;
+                #builder_ident {
+                    #(#variable_idents: VariableBuilder::new(system, VariableId::new(path.clone(), #variable_idxs)),)*
+                    #(#interface_idents: InterfaceBuilder::<'s, #interface_tys>::new(system, InterfaceId::new(path.clone(), #interface_idxs)),)*
+                    #(#submodel_idents: <#submodel_tys as Model>::builder(path.with(&[#submodel_idxs]), system),)*
+                    system, path,
+                }
+            }
+        }
     }.into()
 }
 
@@ -424,10 +411,12 @@ pub fn interface(input: TokenStream) -> TokenStream {
                 }
             }
 
-            fn connectors(&self) -> Vec<engi::model::Connector> {
-                vec![
-                    #(self.#connector_exprs,)*
-                ]
+            fn assemble(self) -> engi::model::AssembledInterface {
+                engi::model::AssembledInterface {
+                    connectors: vec![
+                        #(self.#connector_exprs,)*
+                    ]
+                }
             }
         }
     }

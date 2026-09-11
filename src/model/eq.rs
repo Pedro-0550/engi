@@ -10,7 +10,7 @@ pub struct Equation {
     rhs: Expr,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug, Hash, Eq)]
 pub enum Inequality {
     Greater,
     GreaterOrEq,
@@ -18,7 +18,7 @@ pub enum Inequality {
     LessOrEq,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug, Hash, Eq)]
 pub struct Constraint {
     lhs: Expr,
     rhs: Expr,

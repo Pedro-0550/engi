@@ -7,6 +7,8 @@ use std::{
     sync::Arc,
 };
 
+use num::pow::Pow;
+
 use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{Binary, Expr, Node, Shaped, Variadic, ops::*},
@@ -57,7 +59,7 @@ impl From<i64> for Expr {
     }
 }
 
-impl From<VariableBuilder> for Node {
+impl From<VariableBuilder<'_>> for Node {
     fn from(v: VariableBuilder) -> Self {
         v.variable().into()
     }
@@ -90,7 +92,7 @@ impl From<&Connector> for Node {
 impl_op_permutations! {
     types = [
         i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, Expr,
-        &Expr, Variable, &Variable, Connector, &Connector, VariableBuilder, &VariableBuilder
+        &Expr, Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>
     ],
     exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant],
     exclude_specific = [],
@@ -117,7 +119,7 @@ impl_op_permutations! {
     },
 
     div = {
-        lhs * pow(rhs, -1)
+        lhs * rhs.pow(-1)
     },
 
     sub = {
@@ -140,7 +142,7 @@ impl_op_permutations! {
             "Cannot raise a matrix to the power of another matrix yet"
         );
 
-        Binary::Pow(Pow {
+        Binary::Pow(crate::expr::ops::Pow {
             base: lhs,
             exp: rhs,
         })

@@ -10,6 +10,7 @@ use std::{
 use derive_more::IsVariant;
 use itertools::Itertools;
 use num::complex::ComplexFloat;
+use ordered_float::Pow as _;
 
 use crate::{
     core::util::{impl_as_variant, to_superscript},
@@ -682,41 +683,41 @@ pub fn ln(x: impl Into<Expr>) -> Expr {
 }
 
 pub fn exp(x: impl Into<Expr>) -> Expr {
-    pow(e, x)
+    e.pow(x.into())
 }
 
 /* -------------------------------------------------------------------------- */
 
 pub fn sqrt(x: impl Into<Expr>) -> Expr {
-    pow(x.into(), 1 / 2)
+    x.into().pow(1 / 2)
 }
 
 pub fn cbrt(x: impl Into<Expr>) -> Expr {
-    pow(x.into(), 1 / 3)
+    x.into().pow(1 / 3)
 }
 
 pub fn qtrt(x: impl Into<Expr>) -> Expr {
-    pow(x.into(), 1 / 4)
+    x.into().pow(1 / 4)
 }
 
-pub fn pow(base: impl Into<Expr>, exp: impl Into<Expr>) -> Expr {
-    let base = base.into();
-    let exp = exp.into();
+// pub fn pow(base: impl Into<Expr>, exp: impl Into<Expr>) -> Expr {
+//     let base = base.into();
+//     let exp = exp.into();
 
-    assert!(
-        base.shape().is_square() || base.shape().is_scalar(),
-        "Only square matrices can be raised to a power"
-    );
+//     assert!(
+//         base.shape().is_square() || base.shape().is_scalar(),
+//         "Only square matrices can be raised to a power"
+//     );
 
-    assert!(
-        exp.shape().is_square() || exp.shape().is_scalar(),
-        "Only square matrices can be an exponent"
-    );
+//     assert!(
+//         exp.shape().is_square() || exp.shape().is_scalar(),
+//         "Only square matrices can be an exponent"
+//     );
 
-    assert!(
-        !(base.shape().is_square() && exp.shape().is_square()),
-        "Cannot raise a matrix to the power of another matrix yet"
-    );
+//     assert!(
+//         !(base.shape().is_square() && exp.shape().is_square()),
+//         "Cannot raise a matrix to the power of another matrix yet"
+//     );
 
-    Binary::Pow(Pow { base, exp }).into()
-}
+//     Binary::Pow(Pow { base, exp }).into()
+// }

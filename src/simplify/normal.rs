@@ -13,7 +13,7 @@ use super::separate_consts;
 use crate::{
     expr::{
         Expr, Node,
-        ops::{Atan2, Binary, Log, Pow, Unary, Variadic},
+        ops::{Atan2, Binary, Log, Unary, Variadic},
     },
     symbol::Symbol,
     units::Quantity,

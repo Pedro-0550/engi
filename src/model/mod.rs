@@ -1,7 +1,7 @@
 use core::panic;
 use std::{
     any::{Any, TypeId},
-    cell::RefCell,
+    cell::{Ref, RefCell},
     collections::{HashMap, HashSet},
     fmt::Debug,
     hash::Hash,
@@ -25,7 +25,7 @@ use crate::{
         value::Value,
     },
     expr::{
-        self, Expr,
+        self, Binding, Expr,
         ops::{Variadic, sin},
     },
     model::eq::{Constraint, Equation},
@@ -43,22 +43,9 @@ pub mod solve;
 /* --------------------------------- TRAITS --------------------------------- */
 
 pub trait Interface {
-    fn connectors(&self) -> Vec<Connector>;
     fn new(name: &str) -> Self;
-
-    // fn erased(self) -> Box<dyn ErasedInterface>
-    // where
-    //     Self: Sized + Any, {
-    //     Box::new(self)
-    // }
+    fn assemble(self) -> AssembledInterface;
 }
-
-// pub trait ErasedInterface: Any {
-//     fn connectors(&self) -> Vec<Connector>;
-//     fn as_any(&self) -> &dyn Any;
-//     fn as_any_mut(&mut self) -> &mut dyn Any;
-//     fn into_any(self: Box<Self>) -> Box<dyn Any>;
-// }
 
 pub trait Solution {
     fn disassemble(assembled: AssembledSolution) -> Self;
@@ -69,7 +56,7 @@ pub trait Model: Relations + Clone {
     type Builder<'s>;
 
     fn new(name: &str) -> Self;
-    fn builder<'s>(id: ModelId, system: &'s System) -> Self::Builder<'s>;
+    fn builder<'s>(path: ModelPath, system: &'s System) -> Self::Builder<'s>;
 
     fn assemble(self) -> AssembledModel;
 }
@@ -78,33 +65,36 @@ pub trait Relations {
     fn constraints(&self) -> Vec<Constraint> {
         vec![]
     }
-
     fn equations(&self) -> Vec<Equation> {
         vec![]
     }
 }
 
-pub trait InterfaceArrayExt {
-    fn connect(self, other: &InterfaceBuilder);
+pub trait InterfaceArrayExt<I: Interface> {
+    fn connect(self, other: &InterfaceBuilder<I>);
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AssembledModel {
-    equations: Vec<Equation>,
-    constraints: Vec<Constraint>,
-    variables: Vec<Variable>,
-    interfaces: Vec<AssembledInterface>,
-    submodels: Vec<AssembledSolution>,
+    pub name: String,
+    pub equations: Vec<Equation>,
+    pub constraints: Vec<Constraint>,
+    pub variables: Vec<Variable>,
+    pub interfaces: Vec<AssembledInterface>,
+    pub submodels: Vec<AssembledModel>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
 pub struct AssembledSolution {
-    values: Vec<Value>,
-    subsolutions: Vec<AssembledSolution>,
+    pub values: Vec<Value>,
+    pub subsolutions: Vec<AssembledSolution>,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct AssembledInterface {
-    connectors: Vec<Connector>,
+    pub connectors: Vec<Connector>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -113,19 +103,21 @@ pub struct Connector {
     condition: Condition,
 }
 
+#[derive(Clone, Hash, Debug, PartialEq, PartialOrd, Eq)]
 pub struct VariableId {
-    model: ModelPath,
-    var_id: usize,
+    path: ModelPath,
+    idx: usize,
 }
-
+#[derive(Clone, Hash, Debug, PartialEq, PartialOrd, Eq)]
 pub struct InterfaceId {
-    model: ModelPath,
-    if_id: usize,
+    path: ModelPath,
+    idx: usize,
 }
 
+#[derive(Clone, Hash, Debug, PartialEq, PartialOrd, Eq)]
 pub struct ModelPath(Vec<usize>);
 
-#[derive(Default)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct System {
     models: RefCell<Vec<AssembledModel>>,
     connections: RefCell<HashMap<InterfaceId, HashSet<InterfaceId>>>,
@@ -137,6 +129,7 @@ pub struct System {
 //     equations: Vec<Equation>,
 // }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CompiledSystem {
     blocks: Vec<Vec<Equation>>,
 }
@@ -155,9 +148,10 @@ pub struct VariableBuilder<'s> {
 }
 
 #[derive(Clone)]
-pub struct InterfaceBuilder<'s> {
+pub struct InterfaceBuilder<'s, I: Interface> {
     id: InterfaceId,
     system: &'s System,
+    phantom: PhantomData<I>,
 }
 
 /* ---------------------------------- ENUMS --------------------------------- */
@@ -171,26 +165,27 @@ pub enum Condition {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-// impl<I> ErasedInterface for I
-// where
-//     I: Interface + 'static,
-// {
-//     fn connectors(&self) -> Vec<Connector> {
-//         self.connectors()
-//     }
+impl VariableId {
+    pub fn new(path: ModelPath, idx: usize) -> Self {
+        Self { path, idx }
+    }
+}
 
-//     fn as_any(&self) -> &dyn Any {
-//         self
-//     }
+impl InterfaceId {
+    pub fn new(path: ModelPath, idx: usize) -> Self {
+        Self { path, idx }
+    }
+}
 
-//     fn as_any_mut(&mut self) -> &mut dyn Any {
-//         self
-//     }
+impl<M: Model> Relations for M {
+    default fn constraints(&self) -> Vec<Constraint> {
+        vec![]
+    }
 
-//     fn into_any(self: Box<Self>) -> Box<dyn Any> {
-//         self
-//     }
-// }
+    default fn equations(&self) -> Vec<Equation> {
+        vec![]
+    }
+}
 
 impl Connector {
     pub fn new(variable: Variable, condition: Condition) -> Self {
@@ -206,55 +201,48 @@ impl Connector {
     }
 }
 
-// impl Connection {
-//     fn new(a: InterfaceId, b: InterfaceId) -> Self {
-//         Self { a, b }
-//     }
-
-//     fn transpose(&self) -> Self {
-//         Self { a: self.b, b: self.a }
-//     }
-// }
-
 impl<'s> VariableBuilder<'s> {
     pub fn variable(&self) -> Variable {
-        self.system.variables[self.id.0]
+        self.system.assembled(&self.id.path).variables[self.id.idx]
     }
 
     pub fn bind(&self, expr: impl Into<Expr>) {
         let expr = expr.into();
         let system = self.system;
+        let var = self.variable();
         assert_eq!(
             expr.unit().expect("Tried to bind expr with invalid dimension"),
-            system.variables[self.id.0].symbol().unit(),
+            var.symbol().unit(),
             "Tried to bind an expression with different units to a variable"
         );
-        system.bindings.borrow_mut().insert(self.id, expr);
+        system.bindings.borrow_mut().insert(self.id.clone(), expr);
     }
 }
 
-impl<'s> InterfaceBuilder<'s> {
-    pub fn connect(&self, other: &InterfaceBuilder) {
+impl<'s, I: Interface> InterfaceBuilder<'s, I> {
+    pub fn connect(&self, other: &InterfaceBuilder<I>) {
         let system = self.system;
 
         system
             .connections
             .borrow_mut()
-            .entry(self.id)
+            .entry(self.id.clone())
             .or_default()
-            .insert(other.id);
+            .insert(other.id.clone());
 
         system
             .connections
             .borrow_mut()
-            .entry(other.id)
+            .entry(other.id.clone())
             .or_default()
-            .insert(self.id);
+            .insert(self.id.clone());
     }
 }
 
-impl<'s, const N: usize> InterfaceArrayExt for [&InterfaceBuilder<'s>; N] {
-    fn connect(self, other: &InterfaceBuilder) {
+impl<'s, I: Interface, const N: usize> InterfaceArrayExt<I>
+    for [&InterfaceBuilder<'s, I>; N]
+{
+    fn connect(self, other: &InterfaceBuilder<I>) {
         for interface in self {
             interface.connect(other);
         }
@@ -271,120 +259,121 @@ impl Variable {
     }
 }
 
+impl ModelPath {
+    fn with(&self, components: &[usize]) -> Self {
+        let mut buf = Vec::new();
+        buf.extend(&self.0);
+        buf.extend(components);
+        ModelPath(buf)
+    }
+}
+
 impl System {
     pub fn new() -> Self {
         Self::default()
     }
 
-    pub fn add<'s, M: Model>(
-        &'s mut self,
-        model: M,
-    ) -> <M::Registration as ModelRegistration>::Builder<'s>
+    pub fn add<'s, M: Model>(&'s self, model: M) -> M::Builder<'s>
     where
         Self: 's, {
-        model.register(self).builder(&*self)
+        let assembled = model.assemble();
+        let assembled_path = {
+            let mut models = self.models.borrow_mut();
+            models.push(assembled);
+            ModelPath(vec![models.len() - 1])
+        };
+
+        M::builder(assembled_path, &*self)
     }
 
-    pub fn assemble(self) -> AssembledSystem {
+    pub fn assembled<'s>(
+        &'s self,
+        path: &ModelPath,
+    ) -> std::cell::Ref<'s, AssembledModel> {
+        let mut current = self.models.borrow();
+        let mut iter = path.0.iter();
+
+        for component in iter.by_ref().take(path.0.len() - 1) {
+            current = Ref::map(current, |c| &c[*component].submodels);
+        }
+
+        Ref::map(current, |c| &c[*iter.next().unwrap()])
+    }
+
+    pub fn compile(self) -> CompiledSystem {
         let mut equations = Vec::new();
 
-        let connections = self.connections.into_inner();
-        let bindings = self.bindings.into_inner();
+        let connections = self.connections.borrow();
+        let bindings = self.bindings.borrow();
 
         /* -------------------------------------------------------------------------- */
-
-        for model in &self.models {
-            equations.extend(model.equations());
-        }
-
-        /* -------------------------------------------------------------------------- */
-
         let mut visited = HashSet::new();
 
-        fn ordered_pair(
-            a: InterfaceId,
-            b: InterfaceId,
-        ) -> (InterfaceId, InterfaceId) {
-            if a.0 < b.0 { (a, b) } else { (b, a) }
-        }
-
-        for start_id in 0..self.interfaces.len() {
-            let start = InterfaceId(start_id);
-
-            if !visited.insert(start) {
+        for start_id in connections.keys() {
+            if !visited.insert(start_id.clone()) {
                 continue;
             }
 
-            let mut stack = vec![start];
-            let mut component = Vec::new();
+            let mut component = vec![start_id.clone()];
+            let mut stack = vec![start_id.clone()];
 
-            while let Some(id) = stack.pop() {
-                component.push(id);
-
-                if let Some(adjacent) = connections.get(&id) {
-                    for &next in adjacent {
-                        if visited.insert(next) {
-                            stack.push(next);
+            while let Some(curr) = stack.pop() {
+                if let Some(adjacent) = connections.get(&curr) {
+                    for neighbor in adjacent {
+                        if visited.insert(neighbor.clone()) {
+                            component.push(neighbor.clone());
+                            stack.push(neighbor.clone());
                         }
                     }
                 }
             }
 
-            /* -------------------------------------------------------------------------- */
+            let first_id = &component[0];
+            let first_interface =
+                &self.assembled(&first_id.path).interfaces[first_id.idx];
 
-            let mut explored_edges = HashSet::new();
-
-            for &a_id in &component {
-                let a = &self.interfaces[a_id.0];
-
-                let Some(adjacent) = connections.get(&a_id) else {
-                    continue;
-                };
-
-                for &b_id in adjacent {
-                    if !explored_edges.insert(ordered_pair(a_id, b_id)) {
-                        continue;
-                    }
-
-                    let b = &self.interfaces[b_id.0];
-
-                    for (a_conn, b_conn) in
-                        a.connectors().iter().zip(b.connectors())
-                    {
-                        if a_conn.condition() == Condition::Equal {
-                            equations.push(relation! {
-                                a_conn.variable() = b_conn.variable()
-                            });
+            for (i, first_conn) in first_interface.connectors.iter().enumerate()
+            {
+                match first_conn.condition {
+                    Condition::Equal => {
+                        for other_id in &component[1..] {
+                            let other_interface = &self
+                                .assembled(&other_id.path)
+                                .interfaces[other_id.idx];
+                            let other_conn = &other_interface.connectors[i];
+                            equations.push(relation! { first_conn.variable = other_conn.variable });
                         }
                     }
-                }
-            }
+                    Condition::Conserved => {
+                        let terms = component
+                            .iter()
+                            .map(|id| {
+                                let interface = &self
+                                    .assembled(&id.path)
+                                    .interfaces[id.idx];
+                                Expr::from(interface.connectors[i].variable)
+                            })
+                            .collect_vec();
 
-            /* -------------------------------------------------------------------------- */
-
-            let mut conserved_terms: HashMap<usize, Vec<Expr>> = HashMap::new();
-
-            for &id in &component {
-                let interface = &self.interfaces[id.0];
-
-                for (i, connector) in interface.connectors().iter().enumerate()
-                {
-                    if connector.condition() == Condition::Conserved {
-                        conserved_terms
-                            .entry(i)
-                            .or_default()
-                            .push(connector.variable().into());
+                        equations.push(relation!(Variadic::Add(terms) = 0));
                     }
                 }
             }
+        }
 
-            for terms in conserved_terms.into_values() {
-                if terms.len() > 1 {
-                    equations.push(relation! {
-                        Variadic::Add(terms) = 0.0
-                    });
-                }
+        fn collect_equations(
+            model: &mut AssembledModel,
+            equations: &mut Vec<Equation>,
+        ) {
+            equations.append(&mut model.equations);
+
+            for submodel in &mut model.submodels {
+                collect_equations(submodel, equations);
             }
+        }
+
+        for model in &mut *self.models.borrow_mut() {
+            collect_equations(model, &mut equations);
         }
 
         for eq in &mut equations {
@@ -394,29 +383,17 @@ impl System {
             }
         }
 
-        let knowns: HashMap<Variable, Expr> = bindings
+        let bindings = bindings
             .iter()
             .map(|(var_id, expr)| {
-                (
-                    self.variables[var_id.0],
+                Binding::new(
+                    self.assembled(&var_id.path).variables[var_id.idx].symbol(),
                     expr.simplify(&mut SimplifyContext::new()),
                 )
             })
-            .collect();
-
-        AssembledSystem { knowns, equations }
-    }
-}
-
-impl AssembledSystem {
-    pub fn analyze(self) -> AnalyzedSystem {
-        let bindings = &self
-            .knowns
-            .iter()
-            .map(|(var, val)| expr::Binding::new(var.symbol(), val.into()))
             .collect_vec();
 
-        let eqs = self.equations.iter().filter_map(|eq| {
+        let eqs = equations.iter().filter_map(|eq| {
             let mut lhs = eq.lhs().clone();
 
             loop {
@@ -486,7 +463,7 @@ impl AssembledSystem {
             }
         }
 
-        AnalyzedSystem { blocks: dependency_graph.sccs() }
+        CompiledSystem { blocks: dependency_graph.sccs() }
     }
 }
 
@@ -496,15 +473,16 @@ impl<'s> VariableBuilder<'s> {
     }
 }
 
-impl<'s> InterfaceBuilder<'s> {
+impl<'s, I: Interface> InterfaceBuilder<'s, I> {
     pub fn new(system: &'s System, id: InterfaceId) -> Self {
-        Self { id, system }
+        Self { id, system, phantom: PhantomData }
     }
 }
 
 /* -------------------------------------------------------------------------- */
 
-mod model_based_large_signal_bjt {
+#[cfg(test)]
+mod test {
     use engi_macros::{Interface, Model, relations};
 
     use crate as engi;
@@ -769,8 +747,8 @@ mod model_based_large_signal_bjt {
         bjt_thermal.rθ_ca.bind(20 * K / W);
         bjt_thermal.t_a.bind(300 * K);
 
-        let solution = system.assemble().analyze();
-        panic!()
+        let compiled = system.compile();
+        panic!("{:#?}", compiled)
         // println!("{}", solution.get(bjt))
     }
 }

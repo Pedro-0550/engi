@@ -17,7 +17,6 @@ use dashmap::{
         one::{Ref, RefMut},
     },
 };
-use linkme::distributed_slice;
 
 /* --------------------------------- STRUCTS -------------------------------- */
 

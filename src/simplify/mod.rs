@@ -5,8 +5,7 @@ use std::{
 
 use ahash::{AHashMap, AHashSet};
 use itertools::Itertools;
-use num::{One, Zero, complex::ComplexFloat};
-use ordered_float::OrderedFloat;
+use num::{One, Zero, complex::ComplexFloat, pow::Pow as _};
 
 use crate::{
     core::{
@@ -15,7 +14,7 @@ use crate::{
     },
     expr::{
         Expr, Node,
-        ops::{Binary, Pow, Unary, Variadic, cos, pow, sin, tan},
+        ops::{Binary, Pow, Unary, Variadic, cos, sin, tan},
     },
     simplify::normal::Normalize,
     symbol::Symbol,
@@ -188,7 +187,7 @@ impl Simplify for Binary {
                     && exp.value().is_scalar_integer()
                     && inner_exp.value().is_scalar_integer()
                 {
-                    pow(inner_base, exp * inner_exp).simplify_inner(ctx)
+                    inner_base.pow(exp * inner_exp).simplify_inner(ctx)
                 } else if let Node::Quantity(qty) = exp.node()
                     && qty.value() == 0.0
                 {
@@ -275,7 +274,7 @@ impl Simplify for Variadic {
                     } else if exp == 0.0 {
                         1.0.into()
                     } else {
-                        pow(base, exp)
+                        base.pow(exp)
                     }
                     .normalize(false)
                 })
