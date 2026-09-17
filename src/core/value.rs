@@ -21,10 +21,10 @@ use ordered_float::OrderedFloat;
 
 use crate::{
     core::util::{ArcExt, impl_as_variant, impl_op_permutations},
-    expr::{Shape, Shaped, ops::Matrix},
+    expr::{Domain, Shape, Shaped, ops::Matrix},
 };
 
-pub const EQ_ABS_TOL: f64 = 1e-18;
+pub const EQ_ABS_TOL: f64 = 1e-14;
 
 /* --------------------------------- TRAITS --------------------------------- */
 
@@ -39,6 +39,7 @@ where
     fn as_integer(&self) -> Option<i64>;
     fn as_real(&self) -> Option<f64>;
     fn as_imag(&self) -> Option<f64>;
+    fn eq_approx(&self, other: impl Into<Complex64>) -> bool;
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
@@ -68,6 +69,12 @@ impl_as_variant!(Value, [Set => Arc<Set>, Matrix => Arc<Mat<Complex64>>, Scalar 
 //         Self::Scalar(value.into())
 //     }
 // }
+
+impl Default for Value {
+    fn default() -> Self {
+        Complex64::new(0.0, 0.0).into()
+    }
+}
 
 impl Shaped for Value {
     fn shape(&self) -> crate::expr::Shape {
@@ -116,6 +123,30 @@ impl Value {
     pub const ZERO: Value = Value::Scalar(Complex64::ZERO);
     pub const ONE: Value = Value::Scalar(Complex64::ONE);
     pub const I: Value = Value::Scalar(Complex64::I);
+
+    pub fn domain(&self) -> Domain {
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => todo!(),
+            Value::Scalar(complex) => {
+                if complex.re == 0.0 || complex.im == 0.0 {
+                    Domain::Real
+                } else if complex.re == 0.0 && complex.im != 0.0 {
+                    Domain::Imag
+                } else {
+                    Domain::Complex
+                }
+            }
+        }
+    }
+
+    pub fn realize(&self) -> [Value; 2] {
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => todo!(),
+            Value::Scalar(complex) => [complex.re.into(), complex.im.into()],
+        }
+    }
 
     pub fn precedence(&self) -> u32 {
         match self {
@@ -168,55 +199,95 @@ impl Value {
     }
 
     pub fn norm(&self) -> Self {
-        todo!();
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => mat.norm_l2().into(),
+            Value::Scalar(complex) => complex.norm().into(),
+        }
     }
 
     pub fn sin(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.sin().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn cos(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.cos().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn tan(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.tan().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn asin(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.asin().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn acos(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.acos().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn atan(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.atan().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn sinh(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.sinh().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn cosh(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.cosh().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn tanh(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.tanh().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn asinh(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.asinh().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn acosh(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.acosh().into(),
+            _ => todo!(),
+        }
     }
 
     pub fn atanh(&self) -> Self {
-        todo!();
+        match self {
+            Value::Scalar(complex) => complex.atanh().into(),
+            _ => todo!(),
+        }
     }
 }
 
@@ -245,6 +316,12 @@ impl ComplexExt for Complex64 {
 
     fn as_imag(&self) -> Option<f64> {
         if self.is_imag() { Some(self.im) } else { None }
+    }
+
+    fn eq_approx(&self, other: impl Into<Complex64>) -> bool {
+        let other = other.into();
+        float_eq!(self.re, other.re, abs <= EQ_ABS_TOL)
+            && float_eq!(self.im, other.im, abs <= EQ_ABS_TOL)
     }
 }
 
@@ -406,8 +483,12 @@ impl Display for Value {
             Value::Scalar(complex) => {
                 complex.re.fmt(f)?;
 
-                if complex.re != 0.0 && complex.im != 0.0 {
-                    f.write_str(" + ")?;
+                if complex.re != 0.0 {
+                    if complex.im > 0.0 {
+                        f.write_str(" + ")?;
+                    } else if complex.im < 0.0 {
+                        f.write_str(" - ")?;
+                    }
                 }
 
                 if complex.im != 0.0 {

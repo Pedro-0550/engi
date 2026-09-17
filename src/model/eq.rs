@@ -1,6 +1,15 @@
 use std::fmt::Display;
 
-use crate::{expr::Expr, symbol::Symbol};
+use engi_macros::relation;
+
+use crate as engi;
+use crate::{
+    expr::{
+        Expr,
+        ops::{imag, real},
+    },
+    symbol::Symbol,
+};
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
@@ -40,6 +49,10 @@ impl Constraint {
 impl Equation {
     pub fn new(lhs: impl Into<Expr>, rhs: impl Into<Expr>) -> Self {
         Self { lhs: lhs.into(), rhs: rhs.into() }
+    }
+
+    pub fn residual(&self) -> Expr {
+        self.rhs.clone() - self.lhs.clone()
     }
 
     pub fn symbols(&self) -> Vec<Symbol> {

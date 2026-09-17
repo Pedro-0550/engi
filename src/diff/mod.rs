@@ -3,7 +3,7 @@ use ordered_float::Pow as _;
 
 use crate::{
     expr::{
-        Expr, Node,
+        Domain, Expr, Node,
         ops::{
             Atan2, Binary, Log, Pow, Unary, Variadic, cos, cosh, ln, sin, sinh,
             sqrt,
@@ -18,15 +18,12 @@ use crate::{
 #[cfg(test)]
 mod test;
 
-/* --------------------------------- STRUCTS -------------------------------- */
-
-/// Todo: Explain
-pub struct Dual {
-    pub z: Complex64,
-    pub grad: Vec<Complex64>,
-}
-
 /* --------------------------------- TRAITS --------------------------------- */
+
+// enum Derivative {
+//     Conventional { dz: Expr },
+//     Wirtinger { dz: Expr, dz_conj: Expr },
+// }
 
 pub trait Differentiable {
     fn diff(&self, symbol: Symbol) -> Expr;
@@ -39,13 +36,14 @@ impl Differentiable for Expr {
         let mut ctx = SimplifyContext::new();
         match self.normalize(true).into_node() {
             Node::Quantity(_) => 0.into(),
+            Node::Constant(_) => 0.into(),
             Node::Symbol(sym) => if sym == s { 1 } else { 0 }.into(),
             Node::Variadic(op) => op.diff(s),
             Node::Unary(op) => op.arg().diff(s) * op.diff(s),
             Node::Binary(op) => op.diff(s),
             _ => todo!(),
         }
-        .simplify_inner(&mut ctx)
+        .normalize(true)
     }
 }
 
@@ -65,12 +63,24 @@ impl Differentiable for Unary {
             Unary::Acosh(u) => 1 / sqrt(u.pow(2) - 1),
             Unary::Atanh(u) => 1 / (1 - u.pow(2)),
             Unary::Transpose(u) => Unary::Transpose(u.diff(s)).into(),
-            Unary::Conj(_u) => todo!(),
+            Unary::Conj(u) => match u.domain() {
+                Domain::Real => u.diff(s),
+                Domain::Imag => -u.diff(s),
+                Domain::Complex => todo!("We're still developing the funny"),
+            },
             Unary::Arg(_u) => todo!(),
             Unary::Det(_u) => todo!(),
             Unary::Norm(_u) => todo!(),
-            Unary::Real(_u) => todo!(),
-            Unary::Imag(_u) => todo!(),
+            Unary::Real(u) => match u.domain() {
+                Domain::Real => u.diff(s),
+                Domain::Imag => 0.into(),
+                Domain::Complex => todo!("We're still developing the funny"),
+            },
+            Unary::Imag(u) => match u.domain() {
+                Domain::Real => 0.into(),
+                Domain::Imag => u.diff(s),
+                Domain::Complex => todo!("We're still developing the funny"),
+            },
         }
     }
 }
@@ -105,8 +115,12 @@ impl Differentiable for Binary {
     fn diff(&self, s: Symbol) -> Expr {
         match self {
             Binary::Pow(Pow { base, exp }) => {
-                base.pow(exp)
-                    * (base.diff(s) * exp / base + exp.diff(s) * ln(base))
+                if exp.diff(s) == 0 {
+                    exp * base.pow(exp - 1) * base.diff(s)
+                } else {
+                    base.pow(exp)
+                        * (base.diff(s) * exp / base + exp.diff(s) * ln(base))
+                }
             }
             Binary::Log(Log { base, arg }) => {
                 if *base == e {
@@ -119,7 +133,9 @@ impl Differentiable for Binary {
                         / ln(base).pow(2)
                 }
             }
-            Self::Atan2(Atan2 { a: _, b: _ }) => todo!(),
+            Self::Atan2(Atan2 { a, b }) => {
+                (b * a.diff(s) - a * b.diff(s)) / (a.pow(2) + b.pow(2))
+            }
         }
     }
 }

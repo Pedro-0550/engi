@@ -10,8 +10,7 @@
 #![feature(macro_derive)]
 #![feature(min_specialization)]
 #![feature(iterator_try_reduce)]
-
-use num::Complex;
+#![feature(iter_array_chunks)]
 
 pub mod core {
     pub mod graph;

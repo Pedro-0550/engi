@@ -125,60 +125,49 @@ pub fn model(input: TokenStream) -> TokenStream {
         }
     }
 
-    let variable_idents: Vec<Ident> =
-        vars.iter().map(|(field, ..)| field.ident.clone().unwrap()).collect();
+    /* -------------------------------------------------------------------------- */
 
-    let variable_idxs: Vec<usize> = vars
-        .iter()
-        .map(|(field, ..)| field.ident.clone().unwrap())
-        .enumerate()
-        .map(|(i, _)| i)
-        .collect();
+    let mut variable_idents = Vec::new();
+    let mut variable_idxs = Vec::new();
+    let mut variable_vis = Vec::new();
 
-    let submodel_idents: Vec<Ident> =
-        submodels.iter().map(|field| field.ident.clone().unwrap()).collect();
+    for (i, (var, ..)) in vars.iter().enumerate() {
+        variable_idents.push(var.ident.clone().unwrap());
+        variable_vis.push(var.vis.clone());
+        variable_idxs.push(i);
+    }
 
-    let submodel_idxs: Vec<usize> = submodels
-        .iter()
-        .map(|field| field.ident.clone().unwrap())
-        .enumerate()
-        .map(|(i, _)| i)
-        .collect();
+    /* -------------------------------------------------------------------------- */
 
-    let submodel_tys: Vec<Type> =
-        submodels.iter().map(|field| field.ty.clone()).collect();
+    let mut submodel_idents = Vec::new();
+    let mut submodel_idxs = Vec::new();
+    let mut submodel_vis = Vec::new();
+    let mut submodel_tys = Vec::new();
 
-    let interface_idents: Vec<Ident> =
-        interfaces.iter().map(|field| field.ident.clone().unwrap()).collect();
+    for (i, submodel) in submodels.iter().enumerate() {
+        submodel_idents.push(submodel.ident.clone().unwrap());
+        submodel_vis.push(submodel.vis.clone());
+        submodel_tys.push(submodel.ty.clone());
 
-    let interface_tys: Vec<Type> =
-        interfaces.iter().map(|field| field.ty.clone()).collect();
+        submodel_idxs.push(i);
+    }
 
-    let interface_idxs: Vec<usize> = interfaces
-        .iter()
-        .map(|field| field.ident.clone().unwrap())
-        .enumerate()
-        .map(|(i, _)| i)
-        .collect();
+    /* -------------------------------------------------------------------------- */
 
-    let builder_fields = vars
-        .iter()
-        .map(|(Field { vis, ident, .. }, ..)| {
-            quote! {
-                #vis #ident: engi::model::VariableBuilder<'s>
-            }
-        })
-        .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
-            quote! {
-                #vis #ident: <#ty as engi::model::Model>::Builder<'s>
-            }
-        }))
-        .chain(interfaces.iter().map(|Field { vis, ident, ty, .. }| {
-            quote! {
-                #vis #ident: engi::model::InterfaceBuilder<'s, #ty>
-            }
-        }))
-        .collect::<Vec<_>>();
+    let mut interface_idents = Vec::new();
+    let mut interface_idxs = Vec::new();
+    let mut interface_vis = Vec::new();
+    let mut interface_tys = Vec::new();
+
+    for (i, interface) in interfaces.iter().enumerate() {
+        interface_idents.push(interface.ident.clone().unwrap());
+        interface_vis.push(interface.vis.clone());
+        interface_tys.push(interface.ty.clone());
+
+        interface_idxs.push(i);
+    }
+
+    /* -------------------------------------------------------------------------- */
 
     let constructor = vars
         .iter()
@@ -232,53 +221,69 @@ pub fn model(input: TokenStream) -> TokenStream {
         }))
         .collect::<Vec<_>>();
 
-    let solution_fields = vars
-        .iter()
-        .map(|(Field { vis, ident, .. }, ..)| {
-            quote! {
-                #vis #ident: engi::model::Value
-            }
-        })
-        .chain(submodels.iter().map(|Field { vis, ident, ty, .. }| {
-            quote! {
-                #vis #ident: <#ty as engi::model::Model>::Solution
-            }
-        }))
-        .collect::<Vec<_>>();
-
     let solution_ident = format_ident!("{}Solution", ident);
     let builder_ident = format_ident!("{}Builder", ident);
 
     quote! {
         #vis struct #builder_ident<'s> {
-            system: &'s engi::model::System,
-            path: engi::model::ModelPath,
-            #(#builder_fields,)*
+            #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Builder<'s>,)*
+            #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Builder<'s>,)*
+            #(#variable_vis #variable_idents: engi::model::VariableBuilder<'s>,)*
         }
+
+        impl<'s> engi::model::ModelBuilder for #builder_ident<'s> {}
+
+        /* -------------------------------------------------------------------------- */
 
         #vis struct #solution_ident {
-            #(#solution_fields,)*
+            #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Solution,)*
+            #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Solution,)*
+            #(#variable_vis #variable_idents: engi::units::Quantity,)*
         }
 
-        impl engi::model::Solution for #solution_ident {
-            fn disassemble(mut assembled: engi::model::AssembledSolution) -> Self {
+        impl engi::model::ModelSolution for #solution_ident {
+            fn disassemble(assembled: engi::model::AssembledModelSolution) -> Self {
                 use engi::model::*;
+                let mut submodel_iter = assembled.submodels.into_iter();
+                let mut interface_iter = assembled.interfaces.into_iter();
+                let mut variable_iter = assembled.variables.into_iter();
 
                 Self {
-                    #(#variable_idents: assembled.values.pop().unwrap(),)*
-                    #(#submodel_idents: <<#submodel_tys as Model>::Solution as Solution>::disassemble(assembled.subsolutions.pop().unwrap()),)*
+                    #(#submodel_idents: <#submodel_tys as Model>::Solution::disassemble(submodel_iter.next().unwrap()),)*
+                    #(#interface_idents: <#interface_tys as Interface>::Solution::disassemble(interface_iter.next().unwrap()),)*
+                    #(#variable_idents: variable_iter.next().unwrap(),)*
                 }
             }
-
         }
+
+        /* -------------------------------------------------------------------------- */
 
         impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
             type Solution = #solution_ident;
             type Builder<'s> = #builder_ident<'s>;
 
-            fn new(name: &str) -> #ident {
-                #ident {
+            fn new(name: &str) -> Self {
+                Self {
                     #(#constructor,)*
+                }
+            }
+
+            fn builder<'s>(path: engi::model::ModelPath, system: &'s engi::model::System) -> Self::Builder<'s> {
+                use engi::model::*;
+
+                #builder_ident {
+                    #(#variable_idents: VariableBuilder::new(
+                        VariableId::new(path.clone(), #variable_idxs),
+                        system
+                    ),)*
+                    #(#interface_idents: <#interface_tys as Interface>::builder(
+                        InterfaceId::new(path.clone(), #interface_idxs),
+                        system
+                    ),)*
+                    #(#submodel_idents: <#submodel_tys as Model>::builder(
+                        path.with(&[#submodel_idxs]),
+                        system
+                    ),)*
                 }
             }
 
@@ -292,16 +297,6 @@ pub fn model(input: TokenStream) -> TokenStream {
                     variables: vec![#(self.#variable_idents,)*],
                     interfaces: vec![#(self.#interface_idents.assemble(),)*],
                     submodels: vec![#(self.#submodel_idents.assemble(),)*]
-                }
-            }
-
-            fn builder<'s>(path: engi::model::ModelPath, system: &'s engi::model::System) -> Self::Builder<'s> {
-                use engi::model::*;
-                #builder_ident {
-                    #(#variable_idents: VariableBuilder::new(system, VariableId::new(path.clone(), #variable_idxs)),)*
-                    #(#interface_idents: InterfaceBuilder::<'s, #interface_tys>::new(system, InterfaceId::new(path.clone(), #interface_idxs)),)*
-                    #(#submodel_idents: <#submodel_tys as Model>::builder(path.with(&[#submodel_idxs]), system),)*
-                    system, path,
                 }
             }
         }
@@ -388,9 +383,16 @@ pub fn interface(input: TokenStream) -> TokenStream {
         (f, attr)
     });
 
-    let connector_exprs = fields.clone().map(|(field, _)| field.ident.clone());
+    let connector_idents =
+        fields.clone().map(|(field, _)| field.ident.clone()).collect_vec();
+    let connector_vis =
+        fields.clone().map(|(field, _)| field.vis.clone()).collect_vec();
+    let connector_idxs =
+        fields.clone().enumerate().map(|(i, _)| i).collect_vec();
+    let builder_ident = format_ident!("{}Builder", ident);
+    let solution_ident = format_ident!("{}Solution", ident);
 
-    let constructor = fields.map(|(field, attr)| {
+    let constructor_fields = fields.clone().map(|(field, attr)| {
         let ConnectAttr { condition, unit, desc, shape } = attr;
         let field_ident = field.ident.clone().unwrap();
         quote! {
@@ -404,18 +406,63 @@ pub fn interface(input: TokenStream) -> TokenStream {
     });
 
     quote! {
+        #vis struct #builder_ident<'s> {
+            system: &'s engi::model::System,
+            id: engi::model::InterfaceId,
+            #(#connector_vis #connector_idents: engi::model::ConnectorBuilder<'s>,)*
+        }
+
+        impl<'s> engi::model::InterfaceBuilder for #builder_ident<'s> {
+            fn id(&self) -> &engi::model::InterfaceId {
+                &self.id
+            }
+
+            fn system(&self) -> &engi::model::System {
+                self.system
+            }
+        }
+
+        /* -------------------------------------------------------------------------- */
+
+        #vis struct #solution_ident {
+            #(#connector_vis #connector_idents: engi::units::Quantity,)*
+        }
+
+        impl engi::model::InterfaceSolution for #solution_ident {
+            fn disassemble(assembled: engi::model::AssembledInterfaceSolution) -> Self {
+                let mut iter = assembled.connectors.into_iter();
+                Self {
+                    #(#connector_idents: iter.next().unwrap(),)*
+                }
+            }
+        }
+
+        /* -------------------------------------------------------------------------- */
+
         impl #impl_generics engi::model::Interface for #ident #ty_generics #where_clause {
+            type Solution = #solution_ident;
+            type Builder<'s> = #builder_ident<'s>;
+
             fn new(name: &str) -> Self {
-                #ident {
-                    #(#constructor,)*
+                Self {
+                    #(#constructor_fields,)*
+                }
+            }
+
+            fn builder<'s>(id: engi::model::InterfaceId, system: &'s engi::model::System) -> Self::Builder<'s> {
+                use engi::model::*;
+                #builder_ident {
+                    #(#connector_idents: ConnectorBuilder::new(
+                        ConnectorId::new(id.clone(), #connector_idxs),
+                        system
+                    ),)*
+                    id, system,
                 }
             }
 
             fn assemble(self) -> engi::model::AssembledInterface {
                 engi::model::AssembledInterface {
-                    connectors: vec![
-                        #(self.#connector_exprs,)*
-                    ]
+                    connectors: vec![#(self.#connector_idents,)*]
                 }
             }
         }

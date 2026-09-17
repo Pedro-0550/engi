@@ -3,7 +3,7 @@ use std::{
     fmt::{self, Display, Pointer, Write},
     iter::once,
     num::NonZero,
-    ops::Index,
+    ops::{Index, IndexMut},
     rc::Rc,
 };
 
@@ -14,8 +14,8 @@ use ordered_float::Pow as _;
 
 use crate::{
     core::util::{impl_as_variant, to_superscript},
-    expr::{Expr, Node, Shape, Shaped},
-    simplify::separate_consts,
+    expr::{Domain, Expr, Node, Shape, Shaped},
+    simplify::{normal::Normalize, separate_consts},
     symbol::constants::e,
     units::{Quantity, Unit},
 };
@@ -98,6 +98,22 @@ impl_as_variant!(
 );
 
 impl Matrix {
+    // pub fn from_fn(
+    //     rows: impl Into<usize>,
+    //     cols: impl Into<usize>,
+    //     f: FnMut(usize, usize) -> Expr,
+    // ) -> Matrix {
+    // }
+
+    pub fn zeros(rows: impl Into<usize>, cols: impl Into<usize>) -> Self {
+        let rows = rows.into();
+        let cols = cols.into();
+        Self {
+            shape: Shape::rect(rows, cols),
+            elements: vec![0.into(); rows * cols],
+        }
+    }
+
     /// Returns (rows, cols) for this matrix
     pub fn shape(&self) -> Shape {
         self.shape
@@ -115,10 +131,21 @@ impl Matrix {
         &self.elements
     }
 
+    pub fn into_elements(self) -> Vec<Expr> {
+        self.elements
+    }
+
     pub fn map(&self, f: impl FnMut(&Expr) -> Expr) -> Matrix {
         Matrix {
             shape: self.shape,
             elements: self.elements.iter().map(f).collect(),
+        }
+    }
+
+    pub fn into_map(self, f: impl FnMut(Expr) -> Expr) -> Matrix {
+        Matrix {
+            shape: self.shape,
+            elements: self.elements.into_iter().map(f).collect(),
         }
     }
 }
@@ -130,6 +157,14 @@ impl Index<usize> for Matrix {
         let start = row * self.shape.cols.get();
         let end = start + self.shape.cols.get();
         &self.elements[start..end]
+    }
+}
+
+impl IndexMut<usize> for Matrix {
+    fn index_mut(&mut self, row: usize) -> &mut Self::Output {
+        let start = row * self.shape.cols.get();
+        let end = start + self.shape.cols.get();
+        &mut self.elements[start..end]
     }
 }
 
@@ -180,6 +215,24 @@ impl Shaped for Variadic {
                 })
             }
         }
+    }
+}
+
+impl Ord for Expr {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.precedence().cmp(&other.precedence()).then_with(|| {
+            // We already have a hash... so might as well
+            // This is actually faster than writing out every case, like i actually benched it, its up to 15% faster
+            ahash::RandomState::with_seeds(0, 0, 0, 0).hash_one(self).cmp(
+                &ahash::RandomState::with_seeds(0, 0, 0, 0).hash_one(other),
+            )
+        })
+    }
+}
+
+impl PartialOrd for Expr {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -433,7 +486,7 @@ impl Display for Variadic {
                     if let Node::Variadic(Variadic::Mul(terms)) = term.node()
                         && let (mut consts, exprs) =
                             separate_consts(terms.iter().cloned())
-                        && let Ok(coef) = consts.by_ref().exactly_one()
+                        && let Ok(coef) = consts.iter().by_ref().exactly_one()
                         && let Some(real) = coef.value().as_scalar_real()
                         && real < 0.0
                     {
@@ -660,6 +713,18 @@ impl_single_fn!(real, Real, "real component of z");
 impl_single_fn!(imag, Imag, "imaginary component of z");
 
 /* -------------------------------------------------------------------------- */
+
+pub fn atan2(a: impl Into<Expr>, b: impl Into<Expr>) -> Expr {
+    let a = a.into();
+    let b = b.into();
+
+    assert!(
+        a.shape().is_scalar() && b.shape().is_scalar(),
+        "atan2 is only defined for scalars"
+    );
+
+    Binary::Atan2(Atan2 { a, b }).into()
+}
 
 pub fn log(base: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
     let base = base.into();

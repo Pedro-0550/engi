@@ -58,7 +58,7 @@ pub trait Dimensioned {
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(PartialEq, Clone, Debug, Hash)]
+#[derive(PartialEq, Clone, Debug, Hash, Default)]
 pub struct Quantity(Value, Unit);
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -90,7 +90,7 @@ pub struct Dimension {
 ///
 /// Order is preserved during compositions, and different orders of the same compositions are not Eq,
 /// but order is ignored during checking, and only the equivalence is taken into account.
-#[derive(PartialEq, Clone, Copy, Debug, Hash, Eq)]
+#[derive(PartialEq, Clone, Copy, Debug, Hash, Eq, Default)]
 #[allow(non_snake_case)]
 pub enum Unit {
     Base {
@@ -118,6 +118,7 @@ pub enum Unit {
     //     reference: (OrderedFloat<f64>, &'static Unit),
     //     base: OrderedFloat<f64>,
     // },
+    #[default]
     Unitless,
 }
 

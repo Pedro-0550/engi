@@ -12,7 +12,7 @@ use num::pow::Pow;
 use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{Binary, Expr, Node, Shaped, Variadic, ops::*},
-    model::{Connector, Variable, VariableBuilder},
+    model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     symbol::{Symbol, constants::Constant},
     units::{Quantity, Unit},
 };
@@ -61,7 +61,13 @@ impl From<i64> for Expr {
 
 impl From<VariableBuilder<'_>> for Node {
     fn from(v: VariableBuilder) -> Self {
-        v.variable().into()
+        v.variable().symbol().into()
+    }
+}
+
+impl From<ConnectorBuilder<'_>> for Node {
+    fn from(v: ConnectorBuilder) -> Self {
+        v.connector().variable().symbol().into()
     }
 }
 
@@ -92,7 +98,8 @@ impl From<&Connector> for Node {
 impl_op_permutations! {
     types = [
         i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, Expr,
-        &Expr, Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>
+        &Expr, Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>,
+        ConnectorBuilder<'_>, &ConnectorBuilder<'_>
     ],
     exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant],
     exclude_specific = [],

@@ -600,15 +600,19 @@ impl Simplify for Variadic {
 }
 
 pub fn separate_consts(
-    terms: impl Iterator<Item = Expr> + Clone,
-) -> (impl Iterator<Item = Quantity>, impl Iterator<Item = Expr>) {
-    (
-        terms.clone().into_iter().filter_map(|expr| match expr.node() {
-            Node::Quantity(qty) => Some(qty.clone()),
-            _ => None,
-        }),
-        terms.into_iter().filter(|expr| !expr.node().is_quantity()),
-    )
+    terms: impl IntoIterator<Item = Expr>,
+) -> (Vec<Quantity>, Vec<Expr>) {
+    let mut consts = Vec::new();
+    let mut exprs = Vec::new();
+
+    for expr in terms {
+        match expr.node() {
+            Node::Quantity(qty) => consts.push(qty.clone()),
+            _ => exprs.push(expr),
+        }
+    }
+
+    (consts, exprs)
 }
 
 pub fn extract_const(

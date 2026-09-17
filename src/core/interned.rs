@@ -47,9 +47,9 @@ where
     }
 
     pub fn insert(&self, val: T) -> Handle<T> {
-        // if let Some(existing) = self.element_to_handle.get(&val) {
-        //     return *existing;
-        // }
+        if let Some(existing) = self.element_to_handle.get(&val) {
+            return *existing;
+        }
 
         let id =
             Handle(self.next_id.fetch_add(1, Ordering::Relaxed), PhantomData);

@@ -14,7 +14,8 @@ dashmap = "6"
 ahash = "0.8"
 crabtime = "1.1.4"
 faer = "0.24"
-# ipopt = "0.6"
+rust-nlopt = "0.8"
+cobyla = "1.0.4"
 
 engi-macros = { path = "./macros" }
 

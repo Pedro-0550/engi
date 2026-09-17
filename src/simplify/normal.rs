@@ -11,6 +11,7 @@ use num::complex::ComplexFloat;
 
 use super::separate_consts;
 use crate::{
+    core::value::ComplexExt,
     expr::{
         Expr, Node,
         ops::{Atan2, Binary, Log, Unary, Variadic},
@@ -51,15 +52,14 @@ impl Normalize for Variadic {
             _ => vec![expr],
         });
 
-        let (consts, exprs) = separate_consts(flattened);
+        let (consts, mut exprs) = separate_consts(flattened);
 
         let mut result = match self {
             Variadic::Add(_) => {
-                let mut exprs = exprs.collect_vec();
-
-                let folded_const = consts.fold(0.into(), |acc: Quantity, x| {
-                    (acc.value() + x.value()) * x.unit()
-                });
+                let folded_const =
+                    consts.into_iter().fold(0.into(), |acc: Quantity, x| {
+                        (acc.value() + x.value()) * x.unit()
+                    });
 
                 if *folded_const.value() != 0.0 || exprs.len() == 0 {
                     exprs.push(folded_const.into());
@@ -68,14 +68,18 @@ impl Normalize for Variadic {
                 exprs
             }
             Variadic::Mul(_) => {
-                let folded_const =
-                    consts.fold(1.into(), |acc: Quantity, x| acc * x);
+                let folded_const = consts
+                    .into_iter()
+                    .fold(1.into(), |acc: Quantity, x| acc * x);
 
-                if *folded_const.value() == 0.0 {
+                if folded_const
+                    .value()
+                    .as_scalar()
+                    .map(|x| x.eq_approx(0.0))
+                    .is_some_and(|x| x)
+                {
                     return 0.0.into();
                 }
-
-                let mut exprs = exprs.collect_vec();
 
                 if *folded_const.value() != 1.0 || exprs.len() == 0 {
                     exprs.push(folded_const.into());
@@ -175,36 +179,6 @@ impl Normalize for Expr {
             Node::Variadic(_) => 5,
             Node::Matrix(_) => 6,
         }
-    }
-}
-
-impl Ord for Expr {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.precedence().cmp(&other.precedence()).then_with(|| {
-            // We already have a hash... so might as well
-            // This is actually faster than writing out every case, like i actually benched it, its up to 15% faster lmao
-            ahash::RandomState::with_seeds(0, 0, 0, 0).hash_one(self).cmp(
-                &ahash::RandomState::with_seeds(0, 0, 0, 0).hash_one(other),
-            )
-        })
-    }
-}
-
-impl PartialOrd for Expr {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Symbol {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name().cmp(&other.name()).then_with(|| self.0.0.cmp(&other.0.0))
-    }
-}
-
-impl PartialOrd for Symbol {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
     }
 }
 
