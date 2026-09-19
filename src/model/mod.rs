@@ -642,6 +642,29 @@ impl System {
             }
         }
 
+        for (id, assoc) in self.conn_association.borrow().iter() {
+            let conn = self.model(&id.interface.path).interfaces
+                [id.interface.idx]
+                .connectors[id.idx];
+
+            match assoc {
+                Associated::Guess(quantity) => {
+                    guesses.insert(conn.variable, quantity.value().clone());
+                }
+                Associated::Binding(expr) => {
+                    if let Some(c) = expr.node().as_constant() {
+                        knowns.insert(
+                            conn.variable,
+                            c.quantity().value().clone(),
+                        );
+                    } else if let Some(qty) = expr.node().as_quantity() {
+                        knowns.insert(conn.variable, qty.value().clone());
+                    }
+                }
+                _ => (),
+            }
+        }
+
         let compiled = self.compile();
 
         for block in compiled.blocks.iter().rev() {
@@ -662,7 +685,7 @@ impl System {
 
             println!(
                 "solving [{}]",
-                block.iter().map(|x| x.to_string()).join(",\n")
+                block.iter().map(|x| x.to_string()).join(",\n   ")
             );
 
             let solution = solver.solve(block, &guesses).unwrap();
@@ -689,7 +712,7 @@ mod test {
             Condition, Connector, InterfaceArrayExt, InterfaceBuilder, Model,
             Relations, System, Variable,
             eq::{Constraint, Equation},
-            solve::IpoptSolver,
+            solve::NloptSolver,
         },
         symbol::constants::{kB, q},
         units::si::*,
@@ -919,19 +942,20 @@ mod test {
 
         r_b.port.p.connect(&v_b.out.p);
         r_b.port.n.connect(&q1.b);
-        r_b.z.guess(50e3 * Ω);
+        r_b.z.guess(1e6 * Ω);
         r_b.port.i.guess(20e-6 * A);
 
         [&v_c.out.n, &v_b.out.n, &q1.e].connect(&gnd.pin);
 
         q1.thermal.connect(&q1_thermal.port);
 
-        v_b.v.bind(2 * V);
+        v_b.v.bind(5 * V);
         v_c.v.bind(12 * V);
 
-        r_c.z.bind(1e3 * Ω);
+        r_c.z.bind(10e3 * Ω);
         q1.v_ce.bind(v_c.v / 2);
         q1.v_be.guess(0.5 * V);
+        q1.v_t.guess(25e-3 * V);
         q1.β_f.bind(100);
         q1.β_r.bind(10);
         q1.i_s.bind(100e-9 * A);
@@ -943,7 +967,8 @@ mod test {
         q1_thermal.t_c.guess(350 * K);
         q1.thermal.t.guess(360 * K);
 
-        let solution = system.solve(IpoptSolver::default());
+        let solution =
+            system.solve(NloptSolver::new(nlopt::Algorithm::TNewtonPrecond));
         // panic!("{:#?}", compiled)
         // println!("{}", solution.get(bjt))
     }

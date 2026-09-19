@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use num::pow::Pow;
+use num::{complex::Complex64, pow::Pow};
 
 use crate::{
     core::{util::impl_op_permutations, value::Value},
@@ -83,6 +83,12 @@ impl From<Value> for Node {
     }
 }
 
+impl From<Complex64> for Node {
+    fn from(v: Complex64) -> Self {
+        Self::Quantity(v * Unit::Unitless)
+    }
+}
+
 impl From<Connector> for Node {
     fn from(v: Connector) -> Self {
         Self::Symbol(v.variable().symbol())
@@ -97,11 +103,11 @@ impl From<&Connector> for Node {
 
 impl_op_permutations! {
     types = [
-        i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, Expr,
+        i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, &Symbol, Expr,
         &Expr, Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>,
         ConnectorBuilder<'_>, &ConnectorBuilder<'_>
     ],
-    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant],
+    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Complex64, &Complex64],
     exclude_specific = [],
     out = Expr,
 

@@ -119,6 +119,26 @@ where
     }
 }
 
+macro_rules! impl_scalar_func {
+    ($name: ident) => {
+        pub fn $name(&self) -> Self {
+            match self {
+                Value::Scalar(complex) => {
+                    let result = complex.$name();
+                    // assert!(
+                    //     !result.is_nan(),
+                    //     "Trying to apply {} to {} resulted in NaN",
+                    //     stringify!($name),
+                    //     self
+                    // );
+                    result.into()
+                }
+                _ => todo!(),
+            }
+        }
+    };
+}
+
 impl Value {
     pub const ZERO: Value = Value::Scalar(Complex64::ZERO);
     pub const ONE: Value = Value::Scalar(Complex64::ONE);
@@ -206,89 +226,18 @@ impl Value {
         }
     }
 
-    pub fn sin(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.sin().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn cos(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.cos().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn tan(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.tan().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn asin(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.asin().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn acos(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.acos().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn atan(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.atan().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn sinh(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.sinh().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn cosh(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.cosh().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn tanh(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.tanh().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn asinh(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.asinh().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn acosh(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.acosh().into(),
-            _ => todo!(),
-        }
-    }
-
-    pub fn atanh(&self) -> Self {
-        match self {
-            Value::Scalar(complex) => complex.atanh().into(),
-            _ => todo!(),
-        }
-    }
+    impl_scalar_func!(cos);
+    impl_scalar_func!(sin);
+    impl_scalar_func!(tan);
+    impl_scalar_func!(acos);
+    impl_scalar_func!(asin);
+    impl_scalar_func!(atan);
+    impl_scalar_func!(cosh);
+    impl_scalar_func!(sinh);
+    impl_scalar_func!(tanh);
+    impl_scalar_func!(acosh);
+    impl_scalar_func!(asinh);
+    impl_scalar_func!(atanh);
 }
 
 impl ComplexExt for Complex64 {
