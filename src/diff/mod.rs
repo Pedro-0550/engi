@@ -81,6 +81,7 @@ impl Differentiable for Unary {
                 Domain::Imag => u.diff(s),
                 Domain::Complex => todo!("We're still developing the funny"),
             },
+            Unary::Sign(_) => 0.0.into(),
         }
     }
 }

@@ -59,7 +59,7 @@ impl Solver for NloptSolver {
         let mut symbols = eqs
             .iter()
             .flat_map(|eq| eq.symbols())
-            .flat_map(|s| [s.real(), s.imag()])
+            .flat_map(|s| [s.real().unwrap(), s.imag().unwrap()])
             .collect_vec();
 
         symbols.sort();
@@ -94,7 +94,9 @@ impl Solver for NloptSolver {
             .fold(Expr::from(0.0), |acc, resid| acc + resid.pow(2))
             .normalize(true);
 
-        let gradient = symbols.iter().map(|s| objective.diff(*s)).collect_vec();
+        let gradient =
+            symbols.iter().map(|s| objective.diff(*s).compile()).collect_vec();
+        let objective = objective.compile();
 
         let mut optimizer = Nlopt::new(
             self.algo,
@@ -103,32 +105,18 @@ impl Solver for NloptSolver {
                 let bindings = symbols
                     .iter()
                     .enumerate()
-                    .map(|(i, s)| Binding::new(*s, x[i].into()))
-                    .collect_vec();
+                    .map(|(i, s)| (*s, x[i]))
+                    .collect();
 
                 if let Some(grad) = grad {
                     for (i, g) in gradient.iter().enumerate() {
-                        grad[i] = g
-                            .eval(&bindings)
-                            .node()
-                            .as_quantity()
-                            .unwrap()
-                            .value()
-                            .as_scalar()
-                            .unwrap()
-                            .re;
+                        grad[i] =
+                            g.eval_realized(&bindings).as_scalar().unwrap().re;
                     }
                 }
 
-                let f = objective
-                    .eval(&bindings)
-                    .node()
-                    .as_quantity()
-                    .unwrap()
-                    .value()
-                    .as_scalar()
-                    .unwrap()
-                    .re;
+                let f =
+                    objective.eval_realized(&bindings).as_scalar().unwrap().re;
 
                 println!("iter f = {}", f);
 
@@ -143,7 +131,12 @@ impl Solver for NloptSolver {
 
         let mut x = vec![1.0; symbols.len()];
 
-        optimizer.optimize(&mut x).unwrap();
+        match optimizer.optimize(&mut x) {
+            Ok((_, resid)) | Err((_, resid)) if resid > 1e-6 => {
+                panic!("Could not converge")
+            }
+            _ => (),
+        }
 
         Ok(x.into_iter()
             .enumerate()

@@ -1,5 +1,6 @@
 use std::{
     array,
+    collections::HashMap,
     fmt::{Debug, Display, Pointer},
     hash::Hash,
     mem::{discriminant, take},
@@ -8,10 +9,24 @@ use std::{
     sync::Arc,
 };
 
+use cranelift::{
+    codegen::{
+        entity::EntityRef,
+        ir::{
+            AbiParam, FuncRef, InstBuilder, MemFlags, MemFlagsData,
+            UserFuncName,
+            types::{self, F64},
+        },
+        settings::{self, Configurable, Flags},
+    },
+    frontend::{FunctionBuilder, FunctionBuilderContext},
+    jit::{JITBuilder, JITModule},
+    module::{Linkage, Module, default_libcall_names},
+};
 use dashmap::mapref::one::Ref;
 use derive_more::{Deref, DerefMut, From, IsVariant};
 use itertools::Itertools;
-use num::complex::ComplexFloat;
+use num::complex::{Complex64, ComplexFloat};
 use ordered_float::Pow;
 
 use crate::{
@@ -22,10 +37,13 @@ use crate::{
     },
     expr::ops::{
         Atan2, Binary, Log, Matrix, Unary, Variadic, acos, acosh, asin, atan2,
-        cos, cosh, exp, ln, sin, sinh, sqrt,
+        cos, cosh, exp, ln, norm, sign, sin, sinh, sqrt,
     },
     simplify::{Simplify, normal::Normalize},
-    symbol::{Symbol, constants::Constant},
+    symbol::{
+        Symbol,
+        constants::{Constant, π},
+    },
     units::Quantity,
 };
 
@@ -36,6 +54,7 @@ use crate::{
 /* --------------------------------- MODULES -------------------------------- */
 
 pub mod impls;
+pub mod jit;
 pub mod ops;
 
 /* ---------------------------------- ENUMS --------------------------------- */
@@ -63,6 +82,8 @@ pub enum Domain {
 pub struct Expr {
     node: Arc<Node>,
     hash: u64,
+    /// This is the equivalent of having a huge leak, and fixing it with masking tape
+    domain_override: Option<Domain>,
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
@@ -183,18 +204,29 @@ impl Expr {
 
     /// Splits this expression `x` into `(a, b)` real and imaginary parts, such that `x = a + bi`
     pub fn realize(&self) -> [Self; 2] {
-        match self.node() {
-            Node::Symbol(symbol) => {
-                [symbol.real().into(), symbol.imag().into()]
-            }
+        let [re, im] = match self.node() {
+            Node::Symbol(symbol) => [
+                symbol.real().map(Expr::from).unwrap_or(0.0.into()),
+                symbol.imag().map(Expr::from).unwrap_or(0.0.into()),
+            ],
             Node::Constant(constant) => {
-                let [re, im] = constant.quantity().value().realize();
-                [re.into(), im.into()]
+                match constant.quantity().value().domain() {
+                    Domain::Real => [self.clone(), 0.0.into()],
+                    Domain::Imag => [0.0.into(), self.clone()],
+                    Domain::Complex => {
+                        let [re, im] = constant.quantity().value().realize();
+                        [re.into(), im.into()]
+                    }
+                }
             }
-            Node::Quantity(quantity) => {
-                let [re, im] = quantity.value().realize();
-                [re.into(), im.into()]
-            }
+            Node::Quantity(quantity) => match quantity.value().domain() {
+                Domain::Real => [self.clone(), 0.0.into()],
+                Domain::Imag => [0.0.into(), self.clone()],
+                Domain::Complex => {
+                    let [re, im] = quantity.value().realize();
+                    [re.into(), im.into()]
+                }
+            },
             Node::Variadic(variadic) => match variadic {
                 Variadic::Mul(operands) => operands.iter().fold(
                     [1.into(), 0.into()],
@@ -278,20 +310,47 @@ impl Expr {
                     Unary::Real(_) => [re, 0.into()],
                     Unary::Imag(_) => [0.into(), im],
                     Unary::Det(_) => todo!(),
+                    Unary::Sign(_) => [sign(re), sign(im)],
                 }
             }
             Node::Binary(binary) => match binary {
                 Binary::Pow(ops::Pow { base, exp: exponent }) => {
-                    let [base_re, base_im] = base.realize();
-                    let [exp_re, exp_im] = exponent.realize();
+                    match (base.domain(), exponent.domain()) {
+                        (Domain::Real, Domain::Real) => {
+                            [base.pow(exponent), 0.0.into()]
+                        }
+                        (Domain::Real, Domain::Imag) => {
+                            [cos(exponent * ln(base)), sin(exponent * ln(base))]
+                        }
+                        (Domain::Imag, Domain::Real) => {
+                            let common = norm(base).pow(exponent);
+                            [
+                                &common * cos(π * exponent * sign(base) / 2),
+                                &common * sin(π * exponent * sign(base) / 2),
+                            ]
+                        }
+                        (Domain::Imag, Domain::Imag) => {
+                            let common = exp(-exponent * π / 2 * sign(base));
 
-                    let u1 = ln((&base_re).pow(2) + (&base_im).pow(2)) / 2;
-                    let v1 = atan2(&base_im, &base_re);
+                            [
+                                &common * cos(exponent * ln(norm(base))),
+                                &common * sin(exponent * ln(norm(base))),
+                            ]
+                        }
+                        (Domain::Complex, _) | (_, Domain::Complex) => {
+                            let [base_re, base_im] = base.realize();
+                            let [exp_re, exp_im] = exponent.realize();
 
-                    let r = &exp_re * &u1 - &exp_im * &v1;
-                    let i = &exp_re * &v1 + &exp_im * &u1;
+                            let u1 =
+                                ln((&base_re).pow(2) + (&base_im).pow(2)) / 2;
+                            let v1 = atan2(&base_im, &base_re);
 
-                    [exp(&r) * cos(&i), exp(&r) * sin(&i)]
+                            let r = &exp_re * &u1 - &exp_im * &v1;
+                            let i = &exp_re * &v1 + &exp_im * &u1;
+
+                            [exp(&r) * cos(&i), exp(&r) * sin(&i)]
+                        }
+                    }
                 }
                 Binary::Log(Log { base, arg }) => {
                     let [base_re, base_im] = base.realize();
@@ -340,10 +399,20 @@ impl Expr {
 
                 [re.into(), im.into()]
             }
-        }
+        };
+        let [mut re_normalized, mut im_normalized] =
+            [re.normalize(true), im.normalize(true)];
+        re_normalized.domain_override = Some(Domain::Real);
+        im_normalized.domain_override = Some(Domain::Imag);
+
+        [re_normalized, im_normalized]
     }
 
     pub fn domain(&self) -> Domain {
+        if let Some(domain) = self.domain_override.clone() {
+            return domain;
+        }
+
         match self.node() {
             Node::Symbol(symbol) => symbol.domain(),
             Node::Constant(constant) => constant.quantity().value().domain(),
@@ -410,7 +479,9 @@ impl Expr {
                     Domain::Real => Domain::Real,
                     _ => Domain::Complex,
                 },
-                Unary::Transpose(expr) | Unary::Conj(expr) => expr.domain(),
+                Unary::Transpose(expr)
+                | Unary::Conj(expr)
+                | Unary::Sign(expr) => expr.domain(),
                 Unary::Arg(_)
                 | Unary::Det(_)
                 | Unary::Norm(_)
@@ -421,10 +492,14 @@ impl Expr {
                 Binary::Pow(pow) => match (pow.base.domain(), pow.exp.domain())
                 {
                     (Domain::Real, Domain::Real) => {
-                        if let Node::Constant(c) = pow.exp.node() {
-                            if c.quantity().value().is_scalar_integer() {
-                                return Domain::Real;
-                            }
+                        if let Node::Constant(c) = pow.exp.node()
+                            && c.quantity().value().is_scalar_integer()
+                        {
+                            return Domain::Real;
+                        } else if let Node::Quantity(c) = pow.exp.node()
+                            && c.value().is_scalar_integer()
+                        {
+                            return Domain::Real;
                         }
                         Domain::Complex
                     }
@@ -511,6 +586,8 @@ impl Expr {
 
         let mut vec = Vec::new();
         symbols_inner(self, &mut vec);
+        vec.sort();
+        vec.dedup();
         vec
     }
 
@@ -646,6 +723,7 @@ impl Expr {
                         let [_, im] = qty.value().realize();
                         im.into()
                     }
+                    Unary::Sign(_) => qty.value().sign().into(),
                 }
             }
             Node::Binary(binary) => {
@@ -684,10 +762,6 @@ impl Expr {
                             .unwrap()
                             .atan2(r_qty.value().as_scalar_real().unwrap())
                             .into(),
-
-                        _ => binary
-                            .with_args([evaled_lhs, evaled_rhs])
-                            .normalize(true),
                     }
                 } else {
                     binary.with_args([evaled_lhs, evaled_rhs]).normalize(true)

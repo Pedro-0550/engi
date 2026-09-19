@@ -134,6 +134,7 @@ impl Normalize for Unary {
             Unary::Norm(_) => 17,
             Unary::Real(_) => 18,
             Unary::Imag(_) => 19,
+            Unary::Sign(_) => 20,
         }
     }
 }

@@ -27,7 +27,11 @@ where
         let node: Node = value.into();
         let mut hasher = DefaultHasher::new();
         node.hash(&mut hasher);
-        Self { node: Arc::new(node), hash: hasher.finish() }
+        Self {
+            node: Arc::new(node),
+            hash: hasher.finish(),
+            domain_override: None,
+        }
     }
 }
 
@@ -46,7 +50,11 @@ impl From<f64> for Expr {
         let node = Node::Quantity(v.into());
         let mut hasher = DefaultHasher::new();
         node.hash(&mut hasher);
-        Self { node: Arc::new(node), hash: hasher.finish() }
+        Self {
+            node: Arc::new(node),
+            hash: hasher.finish(),
+            domain_override: None,
+        }
     }
 }
 
@@ -55,7 +63,11 @@ impl From<i64> for Expr {
         let node = Node::Quantity(v.into());
         let mut hasher = DefaultHasher::new();
         node.hash(&mut hasher);
-        Self { node: Arc::new(node), hash: hasher.finish() }
+        Self {
+            node: Arc::new(node),
+            hash: hasher.finish(),
+            domain_override: None,
+        }
     }
 }
 
@@ -175,7 +187,23 @@ impl Neg for Expr {
     }
 }
 
+impl Neg for &Expr {
+    type Output = Expr;
+
+    fn neg(self) -> Self::Output {
+        -1 * self
+    }
+}
+
 impl Neg for Symbol {
+    type Output = Expr;
+
+    fn neg(self) -> Self::Output {
+        -1 * self
+    }
+}
+
+impl Neg for &Symbol {
     type Output = Expr;
 
     fn neg(self) -> Self::Output {

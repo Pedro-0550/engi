@@ -81,31 +81,43 @@ impl Symbol {
     }
 
     /// Splits off an imaginary part from this symbol
-    pub fn imag(self) -> Self {
-        let handle = SYMBOLS.insert(SymbolInfo {
-            name: format!("Im{{{}}}", self.name()).leak(),
-            desc: format!("{} (imag part)", self.desc()).leak(),
-            unit: self.unit(),
-            shape: self.shape(),
-            domain: Domain::Imag,
-            realization: Realization::Imag(self),
-        });
+    pub fn imag(self) -> Option<Self> {
+        match self.realization() {
+            Realization::Primary => {
+                let handle = SYMBOLS.insert(SymbolInfo {
+                    name: format!("Im{{{}}}", self.name()).leak(),
+                    desc: format!("{} (imag part)", self.desc()).leak(),
+                    unit: self.unit(),
+                    shape: self.shape(),
+                    domain: Domain::Imag,
+                    realization: Realization::Imag(self),
+                });
 
-        Symbol(handle)
+                Some(Symbol(handle))
+            }
+            Realization::Real(symbol) => None,
+            Realization::Imag(symbol) => Some(self),
+        }
     }
 
     /// Splits off a real part from this symbol
-    pub fn real(self) -> Self {
-        let handle = SYMBOLS.insert(SymbolInfo {
-            name: format!("Re{{{}}}", self.name()).leak(),
-            desc: format!("{} (real part)", self.desc()).leak(),
-            unit: self.unit(),
-            shape: self.shape(),
-            domain: Domain::Real,
-            realization: Realization::Real(self),
-        });
+    pub fn real(self) -> Option<Self> {
+        match self.realization() {
+            Realization::Primary => {
+                let handle = SYMBOLS.insert(SymbolInfo {
+                    name: format!("Re{{{}}}", self.name()).leak(),
+                    desc: format!("{} (real part)", self.desc()).leak(),
+                    unit: self.unit(),
+                    shape: self.shape(),
+                    domain: Domain::Real,
+                    realization: Realization::Real(self),
+                });
 
-        Symbol(handle)
+                Some(Symbol(handle))
+            }
+            Realization::Real(symbol) => Some(self),
+            Realization::Imag(symbol) => None,
+        }
     }
 
     /// If this symbol is a realization of another symbol, return that, otherwise None.

@@ -693,7 +693,7 @@ impl System {
         }
 
         for (Variable(sym), val) in knowns {
-            println!("{sym} -> {val}");
+            println!("{sym} -> {:.3e}", val.as_scalar().unwrap());
         }
         todo!()
     }
@@ -938,12 +938,15 @@ mod test {
 
         r_c.port.p.connect(&v_c.out.p);
         r_c.port.n.connect(&q1.c);
-        r_c.port.i.guess(1e-3 * A);
+        r_c.port.i.guess(6e-3 * A);
+        q1.c.i.guess(6e-3 * A);
 
         r_b.port.p.connect(&v_b.out.p);
         r_b.port.n.connect(&q1.b);
-        r_b.z.guess(1e6 * Ω);
-        r_b.port.i.guess(20e-6 * A);
+        r_b.z.guess(600e3 * Ω);
+
+        r_b.port.i.guess(60e-6 * A);
+        q1.b.i.guess(60e-6 * A);
 
         [&v_c.out.n, &v_b.out.n, &q1.e].connect(&gnd.pin);
 
@@ -954,7 +957,7 @@ mod test {
 
         r_c.z.bind(10e3 * Ω);
         q1.v_ce.bind(v_c.v / 2);
-        q1.v_be.guess(0.5 * V);
+        q1.v_be.guess(0.4 * V);
         q1.v_t.guess(25e-3 * V);
         q1.β_f.bind(100);
         q1.β_r.bind(10);

@@ -226,6 +226,16 @@ impl Value {
         }
     }
 
+    pub fn sign(&self) -> Self {
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => todo!(),
+            Value::Scalar(c) => {
+                Complex::new(c.re.signum(), c.im.signum()).into()
+            }
+        }
+    }
+
     impl_scalar_func!(cos);
     impl_scalar_func!(sin);
     impl_scalar_func!(tan);

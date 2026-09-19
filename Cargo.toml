@@ -15,7 +15,7 @@ ahash = "0.8"
 crabtime = "1.1.4"
 faer = "0.24"
 nlopt = "0.8"
-cobyla = "1.0.4"
+cranelift = {version = "0.135", features = ["jit", "module", "native"]}
 
 engi-macros = { path = "./macros" }
 

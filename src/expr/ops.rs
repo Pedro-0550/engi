@@ -49,6 +49,7 @@ pub enum Unary {
     Arg(Expr),
     Det(Expr),
     Norm(Expr),
+    Sign(Expr),
 
     Real(Expr),
     Imag(Expr),
@@ -258,6 +259,7 @@ impl Unary {
             Unary::Norm(_) => Unary::Norm(arg),
             Unary::Real(_) => Unary::Real(arg),
             Unary::Imag(_) => Unary::Imag(arg),
+            Unary::Sign(_) => Unary::Sign(arg),
         }
     }
 
@@ -282,6 +284,7 @@ impl Unary {
             Unary::Norm(arg) => arg,
             Unary::Real(arg) => arg,
             Unary::Imag(arg) => arg,
+            Unary::Sign(arg) => arg,
         }
     }
 
@@ -306,6 +309,7 @@ impl Unary {
             Unary::Norm(arg) => arg,
             Unary::Real(arg) => arg,
             Unary::Imag(arg) => arg,
+            Unary::Sign(arg) => arg,
         }
     }
 
@@ -330,6 +334,7 @@ impl Unary {
             Unary::Norm(arg) => arg,
             Unary::Real(arg) => arg,
             Unary::Imag(arg) => arg,
+            Unary::Sign(arg) => arg,
         }
     }
 
@@ -354,6 +359,7 @@ impl Unary {
             Unary::Norm(_) => "norm",
             Unary::Real(arg) => "real",
             Unary::Imag(arg) => "imag",
+            Unary::Sign(arg) => "sign",
         }
     }
 }
@@ -763,6 +769,14 @@ pub fn cbrt(x: impl Into<Expr>) -> Expr {
 
 pub fn qtrt(x: impl Into<Expr>) -> Expr {
     x.into().pow(1 / 4)
+}
+
+pub fn sign(x: impl Into<Expr>) -> Expr {
+    Unary::Sign(x.into()).into()
+}
+
+pub fn norm(x: impl Into<Expr>) -> Expr {
+    Unary::Norm(x.into()).into()
 }
 
 // pub fn pow(base: impl Into<Expr>, exp: impl Into<Expr>) -> Expr {
