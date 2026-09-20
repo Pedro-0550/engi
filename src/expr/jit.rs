@@ -22,10 +22,7 @@ use num::complex::Complex64;
 
 use crate::{
     core::value,
-    expr::{
-        Binding, Domain, Expr, Node,
-        ops::{Binary, Unary, Variadic},
-    },
+    expr::{Binding, Expr, Node, domain::Domain},
     simplify::normal::Normalize,
     symbol::{
         Realization::{self, Imag, Primary, Real},

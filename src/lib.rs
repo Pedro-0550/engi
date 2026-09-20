@@ -11,7 +11,8 @@
 #![feature(min_specialization)]
 #![feature(iterator_try_reduce)]
 #![feature(iter_array_chunks)]
-
+#![feature(derive_const)]
+#![feature(const_default)]
 pub mod core {
     pub mod graph;
     pub mod interned;

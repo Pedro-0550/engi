@@ -17,16 +17,16 @@ use crate::{
         ops::{Binary, Pow, Unary, Variadic, cos, sin, tan},
     },
     simplify::normal::Normalize,
-    symbol::Symbol,
+    symbol::{Symbol, constants::Constant},
     units::Quantity,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
 
+pub mod normal;
+pub mod pattern;
 #[cfg(test)]
 mod test;
-
-pub mod normal;
 
 /* --------------------------------- TRAITS --------------------------------- */
 
@@ -48,6 +48,82 @@ pub trait Simplify {
 // });
 
 /* --------------------------------- STRUCTS -------------------------------- */
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub struct ClassId(usize);
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub struct NodeId(usize);
+
+#[derive(Clone, Eq)]
+pub struct EquivalencyNodeEntry {
+    node: Node,
+    class: ClassId,
+    hash: [u8; 32],
+}
+
+#[derive_const(Default)]
+pub struct EquivalencyGraph {
+    nodes: Vec<EquivalencyNodeEntry>,
+    classes: Vec<EquivalencyClass>,
+}
+
+pub struct EquivalencyClass {
+    nodes: Vec<NodeId>,
+    parent: ClassId,
+}
+
+#[derive(PartialEq, Clone, Hash, Eq)]
+pub enum EquivalencyNode {
+    Symbol(Symbol),
+    Constant(Constant),
+    Quantity(Quantity),
+
+    Add(Vec<ClassId>),
+    Mul(Vec<ClassId>),
+    Min(Vec<ClassId>),
+    Max(Vec<ClassId>),
+
+    Sin(ClassId),
+    Cos(ClassId),
+    Tan(ClassId),
+
+    Asin(ClassId),
+    Acos(ClassId),
+    Atan(ClassId),
+
+    Sinh(ClassId),
+    Cosh(ClassId),
+    Tanh(ClassId),
+
+    Asinh(ClassId),
+    Acosh(ClassId),
+    Atanh(ClassId),
+
+    Arg(ClassId),
+    Conj(ClassId),
+    Norm(ClassId),
+    Sign(ClassId),
+
+    Real(ClassId),
+    Imag(ClassId),
+
+    Pow { base: ClassId, exp: ClassId },
+    Log { base: ClassId, arg: ClassId },
+    Atan2 { a: ClassId, b: ClassId },
+}
+
+impl PartialEq for EquivalencyNodeEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+    }
+}
+
+impl Hash for EquivalencyNodeEntry {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write(&self.hash);
+    }
+}
 
 enum SimplificationStep {
     GroupTerms {},
