@@ -12,10 +12,7 @@ use crate::{
         interned::Interned,
         value::{ComplexExt, Value, gcd_f64},
     },
-    expr::{
-        Expr, Node,
-        ops::{Binary, Pow, Unary, Variadic, cos, sin, tan},
-    },
+    expr::{Expr, Node},
     simplify::normal::Normalize,
     symbol::{Symbol, constants::Constant},
     units::Quantity,

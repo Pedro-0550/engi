@@ -1,8 +1,9 @@
 use std::{
     array,
+    cell::{LazyCell, OnceCell},
     collections::HashMap,
     fmt::{Debug, Display, Pointer},
-    hash::Hash,
+    hash::{BuildHasher, Hash, Hasher},
     mem::{discriminant, take},
     num::NonZero,
     rc::Rc,
@@ -39,7 +40,7 @@ use crate::{
     simplify::{Simplify, normal::Normalize},
     symbol::{
         Symbol,
-        constants::{Constant, π},
+        constants::{Constant, e, π},
     },
     units::Quantity,
 };
@@ -53,60 +54,85 @@ pub mod mat;
 pub mod ops;
 pub mod shape;
 
+/* --------------------------------- ALIASES -------------------------------- */
+
+type Bindings = HashMap<Symbol, Expr>;
+
 /* ---------------------------------- ENUMS --------------------------------- */
 
-#[derive(Eq, Clone, PartialEq, Hash)]
+#[derive(Eq, Clone, PartialEq, Hash, Debug, From, IsVariant)]
 pub enum Node {
+    #[from]
     Symbol(Symbol),
+    #[from]
     Constant(Constant),
+    #[from]
     Quantity(Quantity),
 
-    Add(Box<[Node]>),
-    Mul(Box<[Node]>),
-    Min(Box<[Node]>),
-    Max(Box<[Node]>),
+    Add(Box<[Expr]>),
+    Mul(Box<[Expr]>),
+    Min(Box<[Expr]>),
+    Max(Box<[Expr]>),
 
-    Sin(Box<Node>),
-    Cos(Box<Node>),
-    Tan(Box<Node>),
+    Sin(Box<Expr>),
+    Cos(Box<Expr>),
+    Tan(Box<Expr>),
 
-    Asin(Box<Node>),
-    Acos(Box<Node>),
-    Atan(Box<Node>),
+    Asin(Box<Expr>),
+    Acos(Box<Expr>),
+    Atan(Box<Expr>),
 
-    Sinh(Box<Node>),
-    Cosh(Box<Node>),
-    Tanh(Box<Node>),
+    Sinh(Box<Expr>),
+    Cosh(Box<Expr>),
+    Tanh(Box<Expr>),
 
-    Asinh(Box<Node>),
-    Acosh(Box<Node>),
-    Atanh(Box<Node>),
+    Asinh(Box<Expr>),
+    Acosh(Box<Expr>),
+    Atanh(Box<Expr>),
 
-    Arg(Box<Node>),
-    Conj(Box<Node>),
-    Norm(Box<Node>),
-    Sign(Box<Node>),
+    Arg(Box<Expr>),
+    Conj(Box<Expr>),
+    Norm(Box<Expr>),
+    Sign(Box<Expr>),
 
-    Real(Box<Node>),
-    Imag(Box<Node>),
+    Real(Box<Expr>),
+    Imag(Box<Expr>),
 
-    Pow { base: Box<Node>, exp: Box<Node> },
-    Log { base: Box<Node>, arg: Box<Node> },
-    Atan2 { a: Box<Node>, b: Box<Node> },
+    Pow {
+        base: Box<Expr>,
+        exp: Box<Expr>,
+    },
+    Log {
+        base: Box<Expr>,
+        arg: Box<Expr>,
+    },
+    Atan2 {
+        a: Box<Expr>,
+        b: Box<Expr>,
+    },
 
+    #[from]
     Matrix(Matrix),
+    Transpose(Box<Expr>),
+    Det(Box<Expr>),
+    Rank(Box<Expr>),
+    Trace(Box<Expr>),
 
-    Piecewise { cond: Box<Condition>, pass: Box<Node>, fail: Box<Node> },
+    Piecewise {
+        cond: Box<Condition>,
+        pass: Box<Expr>,
+        fail: Box<Expr>,
+    },
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub enum Condition {
-    Eq(Node, Node),
-    Ne(Node, Node),
-    Lt(Node, Node),
-    Le(Node, Node),
-    Gt(Node, Node),
-    Ge(Node, Node),
+    Eq(Expr, Expr),
+    Ne(Expr, Expr),
+    Lt(Expr, Expr),
+    Le(Expr, Expr),
+    Gt(Expr, Expr),
+    Ge(Expr, Expr),
 
     And(Box<[Condition]>),
     Or(Box<[Condition]>),
@@ -115,8 +141,8 @@ pub enum Condition {
 
 #[derive(Clone, Eq)]
 pub struct Expr {
-    node: Rc<Node>,
-    hash: [u8; 32],
+    node: Node,
+    hash: OnceCell<u64>,
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
@@ -124,37 +150,33 @@ pub struct Expr {
 // #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 // pub struct Expr(Handle<Node>);
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Binding {
-    pub from: Symbol,
-    pub to: Expr,
-}
-
-impl Binding {
-    pub fn new(from: Symbol, to: Expr) -> Self {
-        Self { from, to }
-    }
-}
-
 /* ---------------------------------- IMPLS --------------------------------- */
+
+impl_as_variant!(Node, [Quantity => Quantity, Constant => Constant, Symbol => Symbol]);
 
 impl Hash for Expr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write(&self.hash);
+        let hash = self.hash.get_or_init(|| {
+            let mut hasher = ahash::RandomState::with_seed(1).build_hasher();
+            self.node.hash(&mut hasher);
+            hasher.finish()
+        });
+
+        state.write_u64(*hash);
     }
 }
 
-impl Node {
-    /// Returns the immediate subnodes of this node.
-    fn children(&self) -> Box<[&Node]> {
-        match self {
+impl Expr {
+    /// Returns an iterator over the immediate children of this expr node.
+    pub fn iter_children<'s>(&'s self) -> Box<dyn Iterator<Item = &Expr> + 's> {
+        match &self.node {
             Node::Symbol(_) | Node::Constant(_) | Node::Quantity(_) => {
-                Box::new([]).into()
+                Box::new(std::iter::empty())
             }
             Node::Add(nodes)
             | Node::Mul(nodes)
             | Node::Min(nodes)
-            | Node::Max(nodes) => nodes.into(),
+            | Node::Max(nodes) => Box::new(nodes.iter()),
             Node::Sin(node)
             | Node::Cos(node)
             | Node::Tan(node)
@@ -172,13 +194,135 @@ impl Node {
             | Node::Norm(node)
             | Node::Sign(node)
             | Node::Real(node)
-            | Node::Imag(node) => node.into(),
-            Node::Pow { base, exp } => Box::new([&*base, &*exp]),
-            Node::Log { base, arg } => Box::new([&*base, &*arg]),
-            Node::Atan2 { a, b } => Box::new([&*a, &*b]),
-            Node::Matrix(matrix) => matrix.elements().iter().collect(),
+            | Node::Imag(node)
+            | Node::Det(node)
+            | Node::Transpose(node)
+            | Node::Rank(node)
+            | Node::Trace(node) => Box::new(std::iter::once(node.as_ref())),
+            Node::Pow { base, exp } => {
+                Box::new([base.as_ref(), exp.as_ref()].into_iter())
+            }
+            Node::Log { base, arg } => {
+                Box::new([base.as_ref(), arg.as_ref()].into_iter())
+            }
+            Node::Atan2 { a, b } => {
+                Box::new([a.as_ref(), b.as_ref()].into_iter())
+            }
+            Node::Matrix(matrix) => Box::new(matrix.elements().iter()),
             Node::Piecewise { cond, pass, fail } => todo!(),
         }
+    }
+
+    /// Returns an iterator over the immediate children of this expr node.
+    pub fn into_iter_children(self) -> Box<dyn Iterator<Item = Expr>> {
+        match self.node {
+            Node::Symbol(_) | Node::Constant(_) | Node::Quantity(_) => {
+                Box::new(std::iter::empty())
+            }
+            Node::Add(nodes)
+            | Node::Mul(nodes)
+            | Node::Min(nodes)
+            | Node::Max(nodes) => Box::new(nodes.into_iter()),
+            Node::Sin(node)
+            | Node::Cos(node)
+            | Node::Tan(node)
+            | Node::Asin(node)
+            | Node::Acos(node)
+            | Node::Atan(node)
+            | Node::Sinh(node)
+            | Node::Cosh(node)
+            | Node::Tanh(node)
+            | Node::Asinh(node)
+            | Node::Acosh(node)
+            | Node::Atanh(node)
+            | Node::Arg(node)
+            | Node::Conj(node)
+            | Node::Norm(node)
+            | Node::Sign(node)
+            | Node::Real(node)
+            | Node::Imag(node)
+            | Node::Det(node)
+            | Node::Transpose(node)
+            | Node::Rank(node)
+            | Node::Trace(node) => Box::new(std::iter::once(*node)),
+            Node::Pow { base, exp } => Box::new([*base, *exp].into_iter()),
+            Node::Log { base, arg } => Box::new([*base, *arg].into_iter()),
+            Node::Atan2 { a, b } => Box::new([*a, *b].into_iter()),
+            Node::Matrix(matrix) => {
+                Box::new(matrix.into_elements().into_iter())
+            }
+            Node::Piecewise { cond, pass, fail } => todo!(),
+        }
+    }
+
+    /// Applys a function to every child of this node, and returns the same node kind with the new children.
+    pub fn map_children(&self, f: impl FnMut(Expr) -> Expr) -> Expr {
+        let shape = self.shape();
+        let mut mapped = self.iter_children().cloned().map(f);
+
+        let node = match self.node {
+            Node::Symbol(_) => self.node.clone(),
+            Node::Constant(_) => self.node.clone(),
+            Node::Quantity(_) => self.node.clone(),
+
+            Node::Add(_) => Node::Add(mapped.collect()),
+            Node::Mul(_) => Node::Mul(mapped.collect()),
+            Node::Min(_) => Node::Min(mapped.collect()),
+            Node::Max(_) => Node::Max(mapped.collect()),
+
+            Node::Sin(_) => Node::Sin(Box::new(mapped.next().unwrap())),
+            Node::Cos(_) => Node::Cos(Box::new(mapped.next().unwrap())),
+            Node::Tan(_) => Node::Tan(Box::new(mapped.next().unwrap())),
+
+            Node::Asin(_) => Node::Asin(Box::new(mapped.next().unwrap())),
+            Node::Acos(_) => Node::Acos(Box::new(mapped.next().unwrap())),
+            Node::Atan(_) => Node::Atan(Box::new(mapped.next().unwrap())),
+
+            Node::Sinh(_) => Node::Sinh(Box::new(mapped.next().unwrap())),
+            Node::Cosh(_) => Node::Cosh(Box::new(mapped.next().unwrap())),
+            Node::Tanh(_) => Node::Tanh(Box::new(mapped.next().unwrap())),
+
+            Node::Asinh(_) => Node::Asinh(Box::new(mapped.next().unwrap())),
+            Node::Acosh(_) => Node::Acosh(Box::new(mapped.next().unwrap())),
+            Node::Atanh(_) => Node::Atanh(Box::new(mapped.next().unwrap())),
+
+            Node::Arg(_) => Node::Arg(Box::new(mapped.next().unwrap())),
+            Node::Conj(_) => Node::Conj(Box::new(mapped.next().unwrap())),
+            Node::Norm(_) => Node::Norm(Box::new(mapped.next().unwrap())),
+            Node::Sign(_) => Node::Sign(Box::new(mapped.next().unwrap())),
+
+            Node::Real(_) => Node::Real(Box::new(mapped.next().unwrap())),
+            Node::Imag(_) => Node::Imag(Box::new(mapped.next().unwrap())),
+
+            Node::Pow { .. } => Node::Pow {
+                base: Box::new(mapped.next().unwrap()),
+                exp: Box::new(mapped.next().unwrap()),
+            },
+
+            Node::Log { .. } => Node::Log {
+                base: Box::new(mapped.next().unwrap()),
+                arg: Box::new(mapped.next().unwrap()),
+            },
+
+            Node::Atan2 { .. } => Node::Atan2 {
+                a: Box::new(mapped.next().unwrap()),
+                b: Box::new(mapped.next().unwrap()),
+            },
+
+            Node::Transpose(_) => {
+                Node::Transpose(Box::new(mapped.next().unwrap()))
+            }
+            Node::Det(_) => Node::Det(Box::new(mapped.next().unwrap())),
+            Node::Rank(_) => Node::Rank(Box::new(mapped.next().unwrap())),
+            Node::Trace(_) => Node::Trace(Box::new(mapped.next().unwrap())),
+
+            Node::Matrix(_) => {
+                Node::Matrix(Matrix::from_elements(shape, mapped.collect()))
+            }
+            Node::Piecewise { .. } => todo!(),
+        };
+
+        node.into()
     }
 }
 
@@ -188,594 +332,157 @@ impl Expr {
     }
 
     pub fn into_node(self) -> Node {
-        let Expr { node, .. } = self;
-
-        match Rc::try_unwrap(node) {
-            Ok(node) => node,
-            Err(node) => (*node).clone(),
-        }
+        self.node
     }
-
-    // /// Splits this expression `x` into `(a, b)` real and imaginary parts, such that `x = a + bi`
-    // pub fn realize(&self) -> [Self; 2] {
-    //     let [re, im] = match self.node() {
-    //         Node::Symbol(symbol) => [
-    //             symbol.real().map(Expr::from).unwrap_or(0.0.into()),
-    //             symbol.imag().map(Expr::from).unwrap_or(0.0.into()),
-    //         ],
-    //         Node::Constant(constant) => {
-    //             match constant.quantity().value().domain() {
-    //                 Domain::Real => [self.clone(), 0.0.into()],
-    //                 Domain::Imag => [0.0.into(), self.clone()],
-    //                 Domain::Complex => {
-    //                     let [re, im] = constant.quantity().value().realize();
-    //                     [re.into(), im.into()]
-    //                 }
-    //             }
-    //         }
-    //         Node::Quantity(quantity) => match quantity.value().domain() {
-    //             Domain::Real => [self.clone(), 0.0.into()],
-    //             Domain::Imag => [0.0.into(), self.clone()],
-    //             Domain::Complex => {
-    //                 let [re, im] = quantity.value().realize();
-    //                 [re.into(), im.into()]
-    //             }
-    //         },
-    //         Node::Variadic(variadic) => match variadic {
-    //             Variadic::Mul(operands) => operands.iter().fold(
-    //                 [1.into(), 0.into()],
-    //                 |[a_re, a_im], b| {
-    //                     let [b_re, b_im] = b.realize();
-
-    //                     [
-    //                         &a_re * &b_re - &a_im * &b_im,
-    //                         a_re * b_im + a_im * b_re,
-    //                     ]
-    //                 },
-    //             ),
-    //             Variadic::Add(operands) => operands.iter().fold(
-    //                 [0.into(), 0.into()],
-    //                 |[a_re, a_im], b| {
-    //                     let [b_re, b_im] = b.realize();
-
-    //                     [a_re + b_re, a_im + b_im]
-    //                 },
-    //             ),
-    //         },
-    //         Node::Unary(unary) => {
-    //             let [re, im] = unary.arg().realize();
-    //             match unary {
-    //                 Unary::Sin(_) => {
-    //                     [sin(&re) * cosh(&im), cos(&re) * sinh(&im)]
-    //                 }
-    //                 Unary::Cos(_) => {
-    //                     [cos(&re) * cosh(&im), -sin(&re) * sinh(&im)]
-    //                 }
-    //                 Unary::Tan(_) => {
-    //                     let denom = cos(2 * &re) + cosh(2 * &im);
-    //                     [sin(2 * &re) / &denom, sinh(2 * &im) / &denom]
-    //                 }
-    //                 Unary::Sinh(_) => {
-    //                     [sinh(&re) * cos(&im), cosh(&re) * sin(&im)]
-    //                 }
-    //                 Unary::Cosh(_) => {
-    //                     [cosh(&re) * cos(&im), sinh(&re) * sin(&im)]
-    //                 }
-    //                 Unary::Tanh(_) => {
-    //                     let denom = cosh(2 * &re) + cos(2 * &im);
-    //                     [sinh(2 * &re) / &denom, sin(2 * &im) / &denom]
-    //                 }
-    //                 Unary::Asin(_) => {
-    //                     let a = sqrt((&re + 1).pow(2) + (&im).pow(2));
-    //                     let b = sqrt((&re - 1).pow(2) + (&im).pow(2));
-    //                     [asin((&a - &b) / 2), acosh((&a + &b) / 2)]
-    //                 }
-    //                 Unary::Acos(_) => {
-    //                     let a = sqrt((&re + 1).pow(2) + (&im).pow(2));
-    //                     let b = sqrt((&re - 1).pow(2) + (&im).pow(2));
-    //                     [acos((&a - &b) / 2), -acosh((&a + &b) / 2)]
-    //                 }
-    //                 Unary::Atan(_) => [
-    //                     atan2(2 * &re, 1 - (&re).pow(2) - (&im).pow(2)) / 2,
-    //                     ln(((&re).pow(2) + (&im + 1).pow(2))
-    //                         / ((&re).pow(2) + (&im - 1).pow(2)))
-    //                         / 4,
-    //                 ],
-    //                 Unary::Asinh(_) => {
-    //                     let ah = sqrt((&re).pow(2) + (&im + 1).pow(2));
-    //                     let bh = sqrt((&re).pow(2) + (&im - 1).pow(2));
-    //                     [acosh((&ah + &bh) / 2), asin((&ah - &bh) / 2)]
-    //                 }
-    //                 Unary::Acosh(_) => {
-    //                     let a = sqrt((&re + 1).pow(2) + (&im).pow(2));
-    //                     let b = sqrt((&re - 1).pow(2) + (&im).pow(2));
-    //                     [acosh((&a + &b) / 2), acos((&a - &b) / 2)]
-    //                 }
-    //                 Unary::Atanh(_) => [
-    //                     ln(((1 + &re).pow(2) + (&im).pow(2))
-    //                         / ((1 - &re).pow(2) + (&im).pow(2)))
-    //                         / 4,
-    //                     atan2(2 * &im, 1 - (&re).pow(2) - (&im).pow(2)) / 2,
-    //                 ],
-    //                 Unary::Transpose(_) => todo!(),
-    //                 Unary::Conj(_) => [re, -im],
-    //                 Unary::Arg(_) => [atan2(im, re), 0.into()],
-    //                 Unary::Norm(_) => [sqrt(re.pow(2) + im.pow(2)), 0.into()],
-    //                 Unary::Real(_) => [re, 0.into()],
-    //                 Unary::Imag(_) => [0.into(), im],
-    //                 Unary::Det(_) => todo!(),
-    //                 Unary::Sign(_) => [sign(re), sign(im)],
-    //             }
-    //         }
-    //         Node::Binary(binary) => match binary {
-    //             Binary::Pow(ops::Pow { base, exp: exponent }) => {
-    //                 match (base.domain(), exponent.domain()) {
-    //                     (Domain::Real, Domain::Real) => {
-    //                         [base.pow(exponent), 0.0.into()]
-    //                     }
-    //                     (Domain::Real, Domain::Imag) => {
-    //                         [cos(exponent * ln(base)), sin(exponent * ln(base))]
-    //                     }
-    //                     (Domain::Imag, Domain::Real) => {
-    //                         let common = norm(base).pow(exponent);
-    //                         [
-    //                             &common * cos(π * exponent * sign(base) / 2),
-    //                             &common * sin(π * exponent * sign(base) / 2),
-    //                         ]
-    //                     }
-    //                     (Domain::Imag, Domain::Imag) => {
-    //                         let common = exp(-exponent * π / 2 * sign(base));
-
-    //                         [
-    //                             &common * cos(exponent * ln(norm(base))),
-    //                             &common * sin(exponent * ln(norm(base))),
-    //                         ]
-    //                     }
-    //                     (Domain::Complex, _) | (_, Domain::Complex) => {
-    //                         let [base_re, base_im] = base.realize();
-    //                         let [exp_re, exp_im] = exponent.realize();
-
-    //                         let u1 =
-    //                             ln((&base_re).pow(2) + (&base_im).pow(2)) / 2;
-    //                         let v1 = atan2(&base_im, &base_re);
-
-    //                         let r = &exp_re * &u1 - &exp_im * &v1;
-    //                         let i = &exp_re * &v1 + &exp_im * &u1;
-
-    //                         [exp(&r) * cos(&i), exp(&r) * sin(&i)]
-    //                     }
-    //                 }
-    //             }
-    //             Binary::Log(Log { base, arg }) => {
-    //                 let [base_re, base_im] = base.realize();
-    //                 let [arg_re, arg_im] = arg.realize();
-
-    //                 let u1 = ln((&base_re).pow(2) + (&base_im).pow(2)) / 2;
-    //                 let v1 = atan2(&base_im, &base_re);
-
-    //                 let u2 = ln((&arg_re).pow(2) + (&arg_im).pow(2)) / 2;
-    //                 let v2 = atan2(&arg_im, &arg_re);
-
-    //                 let denom = (&u1).pow(2) + (&v1).pow(2);
-
-    //                 [
-    //                     (&u1 * &u2 + &v1 * &v2) / &denom,
-    //                     (&u1 * &v2 - &u2 * &v1) / &denom,
-    //                 ]
-    //             }
-    //             Binary::Atan2(Atan2 { a, b }) => {
-    //                 let [a_re, a_im] = a.realize();
-    //                 let [b_re, b_im] = b.realize();
-
-    //                 let denom = (&b_re).pow(2) + (&b_im).pow(2);
-    //                 let u = (&a_re * &b_re + &a_im * &b_im) / &denom;
-    //                 let v = (&a_im * &b_re - &a_re * &b_im) / &denom;
-
-    //                 [
-    //                     atan2(2 * &u, 1 - (&u).pow(2) - (&v).pow(2)) / 2,
-    //                     ln(((&u).pow(2) + (&v + 1).pow(2))
-    //                         / ((&u).pow(2) + (&v - 1).pow(2)))
-    //                         / 4,
-    //                 ]
-    //             }
-    //         },
-    //         Node::Matrix(matrix) => {
-    //             let mut re = Matrix::zeros(matrix.rows(), matrix.cols());
-    //             let mut im = Matrix::zeros(matrix.rows(), matrix.cols());
-
-    //             for i in 0..matrix.rows().into() {
-    //                 for j in 0..matrix.cols().into() {
-    //                     let [re_el, im_el] = matrix[i][j].realize();
-    //                     re[i][j] = re_el;
-    //                     im[i][j] = im_el;
-    //                 }
-    //             }
-
-    //             [re.into(), im.into()]
-    //         }
-    //     };
-    //     let [mut re_normalized, mut im_normalized] =
-    //         [re.normalize(true), im.normalize(true)];
-    //     re_normalized.domain_override = Some(Domain::Real);
-    //     im_normalized.domain_override = Some(Domain::Imag);
-
-    //     [re_normalized, im_normalized]
-    // }
-
-    // pub fn domain(&self) -> Domain {
-    //     if let Some(domain) = self.domain_override.clone() {
-    //         return domain;
-    //     }
-
-    //     match self.node() {
-    //         Node::Symbol(symbol) => symbol.domain(),
-    //         Node::Constant(constant) => constant.quantity().value().domain(),
-    //         Node::Quantity(quantity) => quantity.value().domain(),
-    //         Node::Variadic(variadic) => match variadic {
-    //             Variadic::Add(operands) => {
-    //                 let mut iter = operands.iter();
-    //                 if let Some(first) = iter.next() {
-    //                     iter.fold(first.domain(), |acc, op| {
-    //                         match (acc, op.domain()) {
-    //                             (Domain::Complex, _) | (_, Domain::Complex) => {
-    //                                 Domain::Complex
-    //                             }
-    //                             (Domain::Real, Domain::Imag)
-    //                             | (Domain::Imag, Domain::Real) => {
-    //                                 Domain::Complex
-    //                             }
-    //                             (Domain::Real, Domain::Real) => Domain::Real,
-    //                             (Domain::Imag, Domain::Imag) => Domain::Imag,
-    //                         }
-    //                     })
-    //                 } else {
-    //                     Domain::Real
-    //                 }
-    //             }
-    //             Variadic::Mul(operands) => {
-    //                 let mut iter = operands.iter();
-    //                 if let Some(first) = iter.next() {
-    //                     iter.fold(first.domain(), |acc, op| {
-    //                         match (acc, op.domain()) {
-    //                             (Domain::Complex, _) | (_, Domain::Complex) => {
-    //                                 Domain::Complex
-    //                             }
-    //                             (Domain::Real, Domain::Real) => Domain::Real,
-    //                             (Domain::Imag, Domain::Imag) => Domain::Real,
-    //                             (Domain::Real, Domain::Imag)
-    //                             | (Domain::Imag, Domain::Real) => Domain::Imag,
-    //                         }
-    //                     })
-    //                 } else {
-    //                     Domain::Real
-    //                 }
-    //             }
-    //         },
-    //         Node::Unary(unary) => match unary {
-    //             Unary::Sin(expr)
-    //             | Unary::Tan(expr)
-    //             | Unary::Sinh(expr)
-    //             | Unary::Tanh(expr)
-    //             | Unary::Asinh(expr)
-    //             | Unary::Atanh(expr) => match expr.domain() {
-    //                 Domain::Real => Domain::Real,
-    //                 Domain::Imag => Domain::Imag,
-    //                 Domain::Complex => Domain::Complex,
-    //             },
-    //             Unary::Cos(expr) | Unary::Cosh(expr) => match expr.domain() {
-    //                 Domain::Real | Domain::Imag => Domain::Real,
-    //                 Domain::Complex => Domain::Complex,
-    //             },
-    //             Unary::Asin(_) | Unary::Acos(_) | Unary::Acosh(_) => {
-    //                 Domain::Complex
-    //             }
-    //             Unary::Atan(expr) => match expr.domain() {
-    //                 Domain::Real => Domain::Real,
-    //                 _ => Domain::Complex,
-    //             },
-    //             Unary::Transpose(expr)
-    //             | Unary::Conj(expr)
-    //             | Unary::Sign(expr) => expr.domain(),
-    //             Unary::Arg(_)
-    //             | Unary::Det(_)
-    //             | Unary::Norm(_)
-    //             | Unary::Real(_)
-    //             | Unary::Imag(_) => Domain::Real,
-    //         },
-    //         Node::Binary(binary) => match binary {
-    //             Binary::Pow(pow) => match (pow.base.domain(), pow.exp.domain())
-    //             {
-    //                 (Domain::Real, Domain::Real) => {
-    //                     if let Node::Constant(c) = pow.exp.node()
-    //                         && c.quantity().value().is_scalar_integer()
-    //                     {
-    //                         return Domain::Real;
-    //                     } else if let Node::Quantity(c) = pow.exp.node()
-    //                         && c.value().is_scalar_integer()
-    //                     {
-    //                         return Domain::Real;
-    //                     }
-    //                     Domain::Complex
-    //                 }
-    //                 (Domain::Imag, Domain::Real) => {
-    //                     if let Node::Constant(c) = pow.exp.node() {
-    //                         if let Some(n) =
-    //                             c.quantity().value().as_scalar_integer()
-    //                         {
-    //                             return if n % 2 == 0 {
-    //                                 Domain::Real
-    //                             } else {
-    //                                 Domain::Imag
-    //                             };
-    //                         }
-    //                     }
-    //                     Domain::Complex
-    //                 }
-    //                 _ => Domain::Complex,
-    //             },
-    //             Binary::Log(_) => Domain::Complex,
-    //             Binary::Atan2(_) => Domain::Real,
-    //         },
-    //         Node::Matrix(matrix) => {
-    //             let mut iter = matrix.elements().iter();
-    //             if let Some(first) = iter.next() {
-    //                 iter.fold(first.domain(), |a, b| match (a, b.domain()) {
-    //                     (Domain::Real, Domain::Real) => Domain::Real,
-    //                     (Domain::Real, Domain::Imag)
-    //                     | (Domain::Imag, Domain::Real) => Domain::Complex,
-    //                     (Domain::Imag, Domain::Imag) => Domain::Imag,
-    //                     (_, Domain::Complex) | (Domain::Complex, _) => {
-    //                         Domain::Complex
-    //                     }
-    //                 })
-    //             } else {
-    //                 Domain::Real
-    //             }
-    //         }
-    //     }
-    // }
 
     /// Returns the total number of nodes in this expression
     pub fn size(&self) -> usize {
-        match self.node() {
-            Node::Symbol(_) => 1,
-            Node::Constant(_) => 1,
-            Node::Quantity(_) => 1,
-            Node::Variadic(variadic) => {
-                variadic.operands().iter().map(|x| x.size()).sum::<usize>() + 1
-            }
-            Node::Unary(single) => single.arg().size() + 1,
-            Node::Binary(double) => {
-                double.args()[0].size() + double.args()[1].size() + 1
-            }
-            Node::Matrix(matrix) => {
-                matrix.elements().iter().map(|x| x.size()).sum::<usize>() + 1
-            }
-        }
+        1 + self.iter_children().map(Expr::size).sum::<usize>()
     }
 
     pub fn symbols(&self) -> Vec<Symbol> {
-        fn symbols_inner(node: &Node, vec: &mut Vec<Symbol>) {
-            match node {
+        fn symbols_inner(expr: &Expr, vec: &mut Vec<Symbol>) {
+            match expr.node() {
                 Node::Symbol(symbol) => vec.push(*symbol),
                 Node::Quantity(quantity) => (),
                 Node::Constant(_) => (),
-                Node::Variadic(variadic) => {
-                    for op in variadic.operands() {
-                        symbols_inner(op, vec);
-                    }
-                }
-                Node::Unary(unary) => symbols_inner(unary.arg(), vec),
-                Node::Binary(binary) => {
-                    symbols_inner(binary.args()[0], vec);
-                    symbols_inner(binary.args()[1], vec);
-                }
-                Node::Matrix(matrix) => {
-                    for element in matrix.elements() {
-                        symbols_inner(element, vec);
-                    }
-                }
+                _ => expr.iter_children().for_each(|s| symbols_inner(s, vec)),
             }
         }
 
         let mut vec = Vec::new();
-        symbols_inner(self.node(), &mut vec);
+        symbols_inner(self, &mut vec);
         vec.sort();
         vec.dedup();
         vec
     }
 
-    pub fn substitute(&self, bindings: &[Binding]) -> Self {
+    pub fn substitute(&self, bindings: &Bindings) -> Self {
         match self.node() {
-            Node::Variadic(op) => op
-                .with_operands(
-                    op.operands()
-                        .iter()
-                        .map(|x| x.substitute(bindings))
-                        .collect(),
-                )
-                .into(),
             Node::Constant(c) => c.into(),
-
-            Node::Unary(op) => {
-                op.with_arg(op.arg().substitute(bindings)).into()
-            }
             Node::Quantity(qty) => qty.into(),
 
-            Node::Binary(op) => op
-                .with_args(array::from_fn(|i| {
-                    op.args()[i].substitute(bindings)
-                }))
-                .into(),
-
             Node::Symbol(sym) => {
-                if let Some(binding) = bindings.iter().find(|b| b.from == *sym)
-                {
-                    binding.to.clone()
+                if let Some(binding) = bindings.get(&sym) {
+                    binding.clone()
                 } else {
                     self.clone()
                 }
             }
 
-            Node::Matrix(m) => {
-                Node::Matrix(m.map(|el| el.substitute(bindings))).into()
-            }
+            _ => self.map_children(|c| c.substitute(bindings)),
         }
     }
-
-    // pub fn eval(&self, bindings: &[Binding]) -> Expr {
-    //     match self.node() {
-    //         Node::Constant(constant) => constant.quantity().into(),
-    //         Node::Variadic(v) => {
-    //             let evaled_ops: Vec<Expr> =
-    //                 v.operands().iter().map(|op| op.eval(bindings)).collect();
-
-    //             let extract_value = |expr: &Expr| {
-    //                 let node = expr.node();
-    //                 node.as_constant()
-    //                     .map(|x| x.quantity().value().clone())
-    //                     .or_else(|| {
-    //                         node.as_quantity().map(|q| q.value().clone())
-    //                     })
-    //             };
-
-    //             let mut const_values = Vec::new();
-    //             let mut symbolic_ops = Vec::new();
-
-    //             for op in evaled_ops {
-    //                 if let Some(val) = extract_value(&op) {
-    //                     const_values.push(val);
-    //                 } else {
-    //                     symbolic_ops.push(op);
-    //                 }
-    //             }
-
-    //             match v {
-    //                 Variadic::Add(_) => {
-    //                     if let Some(folded_val) =
-    //                         const_values.into_iter().reduce(|acc, x| acc + x)
-    //                     {
-    //                         if symbolic_ops.is_empty() {
-    //                             return folded_val.into();
-    //                         }
-    //                         symbolic_ops.push(folded_val.into());
-    //                     }
-    //                     v.with_operands(symbolic_ops).normalize(true)
-    //                 }
-    //                 Variadic::Mul(_) => {
-    //                     if let Some(folded_val) =
-    //                         const_values.into_iter().reduce(|acc, x| acc * x)
-    //                     {
-    //                         if symbolic_ops.is_empty() {
-    //                             return folded_val.into();
-    //                         }
-    //                         symbolic_ops.push(folded_val.into());
-    //                     }
-    //                     v.with_operands(symbolic_ops).normalize(true)
-    //                 }
-    //                 _ => {
-    //                     if let Some(folded_val) =
-    //                         const_values.into_iter().reduce(|acc, _| acc)
-    //                     {
-    //                         symbolic_ops.push(folded_val.into());
-    //                     }
-    //                     v.with_operands(symbolic_ops).normalize(true)
-    //                 }
-    //             }
-    //         }
-    //         Node::Unary(unary)
-    //             if let arg = unary.arg().eval(bindings).node()
-    //                 && let Some(qty) = arg
-    //                     .as_constant()
-    //                     .map(|x| x.quantity())
-    //                     .or(arg.as_quantity().cloned()) =>
-    //         {
-    //             match unary {
-    //                 // TODO: Should trying to evaluate dimensioned values in transcedental functions error?
-    //                 Unary::Sin(_) => qty.value().sin().into(),
-    //                 Unary::Cos(_) => qty.value().cos().into(),
-    //                 Unary::Tan(_) => qty.value().tan().into(),
-    //                 Unary::Asin(_) => qty.value().asin().into(),
-    //                 Unary::Acos(_) => qty.value().acos().into(),
-    //                 Unary::Atan(_) => qty.value().atan().into(),
-    //                 Unary::Sinh(_) => qty.value().sinh().into(),
-    //                 Unary::Cosh(_) => qty.value().cosh().into(),
-    //                 Unary::Tanh(_) => qty.value().tanh().into(),
-    //                 Unary::Asinh(_) => qty.value().asinh().into(),
-    //                 Unary::Acosh(_) => qty.value().acosh().into(),
-    //                 Unary::Atanh(_) => qty.value().atanh().into(),
-    //                 Unary::Transpose(expr) => todo!(),
-    //                 Unary::Conj(expr) => todo!(),
-    //                 Unary::Arg(expr) => todo!(),
-    //                 Unary::Det(expr) => todo!(),
-    //                 Unary::Norm(expr) => qty.value().norm().into(),
-    //                 Unary::Real(_) => {
-    //                     let [re, _] = qty.value().realize();
-    //                     re.into()
-    //                 }
-    //                 Unary::Imag(_) => {
-    //                     let [_, im] = qty.value().realize();
-    //                     im.into()
-    //                 }
-    //                 Unary::Sign(_) => qty.value().sign().into(),
-    //             }
-    //         }
-    //         Node::Binary(binary) => {
-    //             let evaled_lhs = binary.args()[0].eval(bindings);
-    //             let evaled_rhs = binary.args()[1].eval(bindings);
-
-    //             let lhs_node = evaled_lhs.node();
-    //             let rhs_node = evaled_rhs.node();
-
-    //             let lhs_qty = lhs_node
-    //                 .as_constant()
-    //                 .map(|x| x.quantity())
-    //                 .or(lhs_node.as_quantity().cloned());
-
-    //             let rhs_qty = rhs_node
-    //                 .as_constant()
-    //                 .map(|x| x.quantity())
-    //                 .or(rhs_node.as_quantity().cloned());
-
-    //             if let (Some(l_qty), Some(r_qty)) = (lhs_qty, rhs_qty) {
-    //                 match binary {
-    //                     Binary::Pow(_) => {
-    //                         l_qty.value().pow(r_qty.value()).into()
-    //                     }
-    //                     Binary::Log(_) => {
-    //                         Value::from(
-    //                             r_qty.value().as_scalar().unwrap().log(
-    //                                 l_qty.value().as_scalar_real().unwrap(),
-    //                             ),
-    //                         )
-    //                         .into()
-    //                     }
-    //                     Binary::Atan2(_) => l_qty
-    //                         .value()
-    //                         .as_scalar_real()
-    //                         .unwrap()
-    //                         .atan2(r_qty.value().as_scalar_real().unwrap())
-    //                         .into(),
-    //                 }
-    //             } else {
-    //                 binary.with_args([evaled_lhs, evaled_rhs]).normalize(true)
-    //             }
-    //         }
-    //         Node::Matrix(matrix) => matrix.map(|x| x.eval(bindings)).into(),
-    //         Node::Symbol(s) => {
-    //             if let Some(bind) = bindings.iter().find(|x| x.from == *s) {
-    //                 bind.to.clone()
-    //             } else {
-    //                 s.into()
-    //             }
-    //         }
-    //         other => other.into(),
-    //     }
-    // }
 }
 
 impl PartialEq for Expr {
     fn eq(&self, other: &Self) -> bool {
         self.hash == other.hash
     }
+}
+
+/* -------------------------------- FUNCTIONS ------------------------------- */
+
+macro_rules! impl_unary_fn {
+    ($fn:ident, $variant:ident, $name:literal) => {
+        pub fn $fn(x: impl Into<Expr>) -> Expr {
+            let expr = x.into();
+
+            Node::$variant(Box::new(expr)).into()
+        }
+    };
+
+    ($fn:ident, $variant:ident, $name:literal, square) => {
+        pub fn $fn(x: impl Into<Expr>) -> Expr {
+            let expr = x.into();
+            let shape = expr.shape();
+
+            assert!(
+                shape.is_square_mat() || shape.is_scalar(),
+                "Matrix-valued {} is only defined for square matrices",
+                $name
+            );
+
+            Node::$variant(Box::new(expr)).into()
+        }
+    };
+}
+
+impl_unary_fn!(sin, Sin, "sine", square);
+impl_unary_fn!(cos, Cos, "cosine", square);
+impl_unary_fn!(tan, Tan, "tangent", square);
+
+impl_unary_fn!(asin, Asin, "inverse sine", square);
+impl_unary_fn!(acos, Acos, "inverse cosine", square);
+impl_unary_fn!(atan, Atan, "inverse tangent", square);
+
+impl_unary_fn!(sinh, Sinh, "hyperbolic sine", square);
+impl_unary_fn!(cosh, Cosh, "hyperbolic cosine", square);
+impl_unary_fn!(tanh, Tanh, "hyperbolic tangent", square);
+
+impl_unary_fn!(asinh, Asinh, "inverse hyperbolic sine", square);
+impl_unary_fn!(acosh, Acosh, "inverse hyperbolic cosine", square);
+impl_unary_fn!(atanh, Atanh, "inverse hyperbolic tangent", square);
+
+impl_unary_fn!(real, Real, "real component of z");
+impl_unary_fn!(imag, Imag, "imaginary component of z");
+impl_unary_fn!(
+    sign,
+    Sign,
+    "sign(z) = sign(real(z)) + i * sign(imag(z)), for a complex number z"
+);
+
+impl_unary_fn!(
+    norm,
+    Norm,
+    "Norm of the given number, or Frobenius norm for matrices"
+);
+
+pub fn atan2(a: impl Into<Expr>, b: impl Into<Expr>) -> Expr {
+    let a = Box::new(a.into());
+    let b = Box::new(b.into());
+
+    assert!(
+        a.shape().is_scalar() && b.shape().is_scalar(),
+        "atan2 is only defined for scalars"
+    );
+
+    Node::Atan2 { a, b }.into()
+}
+
+pub fn log(base: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
+    let base = Box::new(base.into());
+    let x = Box::new(x.into());
+
+    assert!(
+        base.shape().is_scalar(),
+        "Logarithm is only defined for scalar bases"
+    );
+
+    assert!(
+        x.shape().is_square_mat() || x.shape().is_scalar(),
+        "Matrix-valued logarithm is only defined for square matrices"
+    );
+
+    Node::Log { base, arg: x }.into()
+}
+
+pub fn ln(x: impl Into<Expr>) -> Expr {
+    log(e, x)
+}
+
+pub fn exp(x: impl Into<Expr>) -> Expr {
+    e.pow(x.into())
+}
+
+pub fn sqrt(x: impl Into<Expr>) -> Expr {
+    x.into().pow(1 / 2)
+}
+
+pub fn cbrt(x: impl Into<Expr>) -> Expr {
+    x.into().pow(1 / 3)
+}
+
+pub fn qtrt(x: impl Into<Expr>) -> Expr {
+    x.into().pow(1 / 4)
 }

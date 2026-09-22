@@ -109,7 +109,7 @@ pub fn model(input: TokenStream) -> TokenStream {
 
                 let shape = var.shape.unwrap_or(
                     Expr::parse
-                        .parse(quote! {engi::expr::Shape::SCALAR}.into())
+                        .parse(quote! {engi::expr::shape::Shape::SCALAR}.into())
                         .unwrap(),
                 );
 
@@ -321,7 +321,7 @@ impl Default for ConnectAttr {
                 .unwrap(),
 
             shape: Expr::parse
-                .parse(quote! {engi::expr::Shape::SCALAR}.into())
+                .parse(quote! {engi::expr::shape::Shape::SCALAR}.into())
                 .unwrap(),
             condition: Expr::parse
                 .parse(quote! {engi::model::Condition::Equal}.into())

@@ -11,7 +11,7 @@ use faer::{
     Mat, MatRef, Scale, Side, linalg::solvers::DenseSolveCore,
     traits::ComplexField,
 };
-use float_eq::float_eq;
+use float_eq::{FloatEq, float_eq};
 use num::{
     Complex, Float, Zero,
     complex::{Complex32, Complex64, ComplexFloat},
@@ -21,7 +21,10 @@ use ordered_float::OrderedFloat;
 
 use crate::{
     core::util::{ArcExt, impl_as_variant, impl_op_permutations},
-    expr::{Domain, Shape, Shaped, ops::Matrix},
+    expr::{
+        domain::{Domain, Interval},
+        shape::Shape,
+    },
 };
 
 pub const EQ_ABS_TOL: f64 = 1e-14;
@@ -76,8 +79,8 @@ impl Default for Value {
     }
 }
 
-impl Shaped for Value {
-    fn shape(&self) -> crate::expr::Shape {
+impl Value {
+    pub fn shape(&self) -> Shape {
         match self {
             Value::Set(set) => todo!(),
             Value::Matrix(mat) => Shape::rect(mat.nrows(), mat.ncols()),
@@ -148,15 +151,20 @@ impl Value {
         match self {
             Value::Set(set) => todo!(),
             Value::Matrix(mat) => todo!(),
-            Value::Scalar(complex) => {
-                if complex.re == 0.0 || complex.im == 0.0 {
-                    Domain::Real
-                } else if complex.re == 0.0 && complex.im != 0.0 {
-                    Domain::Imag
-                } else {
-                    Domain::Complex
-                }
-            }
+            Value::Scalar(complex) => Domain::new(
+                match complex.re {
+                    re if re < -EQ_ABS_TOL => Interval::Negative,
+                    re if re.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::Zero,
+                    re if re > EQ_ABS_TOL => Interval::Positive,
+                    _ => unreachable!(),
+                },
+                match complex.im {
+                    im if im < -EQ_ABS_TOL => Interval::Negative,
+                    im if im.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::Zero,
+                    im if im > EQ_ABS_TOL => Interval::Positive,
+                    _ => unreachable!(),
+                },
+            ),
         }
     }
 
@@ -252,9 +260,9 @@ impl Value {
 
 impl ComplexExt for Complex64 {
     fn is_integer(&self) -> bool {
-        self.im.abs() > EQ_ABS_TOL
+        self.im.abs() <= EQ_ABS_TOL
             && self.re.is_finite()
-            && float_eq!(self.re, self.re.round(), abs <= EQ_ABS_TOL)
+            && self.re.eq_abs(&self.re.round(), &EQ_ABS_TOL)
     }
 
     fn is_real(&self) -> bool {

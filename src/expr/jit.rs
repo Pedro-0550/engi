@@ -18,11 +18,11 @@ use cranelift::{
     prelude::{self, Value},
 };
 use itertools::Itertools;
-use num::complex::Complex64;
+use num::{Complex, complex::Complex64};
 
 use crate::{
     core::value,
-    expr::{Binding, Expr, Node, domain::Domain},
+    expr::{Expr, Node, domain::Domain},
     simplify::normal::Normalize,
     symbol::{
         Realization::{self, Imag, Primary, Real},
@@ -154,11 +154,7 @@ impl Expr {
 
         println!("Compiling base expr: {}", self);
 
-        let [re_expr, im_expr] = match self.domain() {
-            Domain::Real => [self.clone(), 0.0.into()],
-            Domain::Imag => [0.0.into(), self.clone()],
-            Domain::Complex => self.realize(),
-        };
+        let Complex { re: re_expr, im: im_expr } = self.clone().realize();
 
         println!("Compiling ({}) + i * ({})", re_expr, im_expr);
 
@@ -192,108 +188,109 @@ impl Expr {
             })
             .collect();
 
-        fn compile_realized_node(
-            node: &Node,
+        fn compile_realized_expr(
+            expr: &Expr,
             symbols: &HashMap<Symbol, Value>,
             bcx: &mut FunctionBuilder<'_>,
             fns: &MathFns,
         ) -> Value {
-            match node {
+            let compiled_children = expr
+                .iter_children()
+                .map(|x| compile_realized_expr(x, symbols, bcx, fns))
+                .collect_vec();
+
+            match &expr.node {
                 Node::Symbol(symbol) => symbols.get(symbol).copied().unwrap(),
                 Node::Constant(constant) => {
-                    let qty =
-                        constant.quantity().into_value().into_scalar().unwrap();
+                    let qty = constant
+                        .quantity()
+                        .value()
+                        .clone()
+                        .into_scalar()
+                        .unwrap();
 
                     bcx.ins().f64const(qty.re)
                 }
                 Node::Quantity(quantity) => {
                     let qty =
-                        quantity.clone().into_value().into_scalar().unwrap();
+                        quantity.clone().value().clone().into_scalar().unwrap();
                     bcx.ins().f64const(qty.re)
                 }
-                Node::Variadic(variadic) => variadic
-                    .operands()
-                    .iter()
-                    .map(|x| compile_realized_node(x.node(), symbols, bcx, fns))
-                    .collect_vec()
+                Node::Add(exprs) => compiled_children
                     .into_iter()
-                    .reduce(|a, b| match variadic {
-                        Variadic::Add(_) => bcx.ins().fadd(a, b),
-                        Variadic::Mul(_) => bcx.ins().fmul(a, b),
-                    })
+                    .reduce(|a, b| bcx.ins().fadd(a, b))
+                    .unwrap(),
+                Node::Mul(exprs) => compiled_children
+                    .into_iter()
+                    .reduce(|a, b| bcx.ins().fmul(a, b))
                     .unwrap(),
 
-                Node::Unary(unary) => {
-                    let val = compile_realized_node(
-                        unary.arg().node(),
-                        symbols,
-                        bcx,
-                        fns,
-                    );
-                    match unary {
-                        Unary::Sin(expr) => fns.sin(bcx, val),
-                        Unary::Cos(expr) => fns.cos(bcx, val),
-                        Unary::Tan(expr) => fns.tan(bcx, val),
-                        Unary::Asin(expr) => fns.asin(bcx, val),
-                        Unary::Acos(expr) => fns.acos(bcx, val),
-                        Unary::Atan(expr) => fns.atan(bcx, val),
-                        Unary::Sinh(expr) => fns.sinh(bcx, val),
-                        Unary::Cosh(expr) => fns.cosh(bcx, val),
-                        Unary::Tanh(expr) => fns.tanh(bcx, val),
-                        Unary::Asinh(expr) => fns.asinh(bcx, val),
-                        Unary::Acosh(expr) => fns.acosh(bcx, val),
-                        Unary::Atanh(expr) => fns.atanh(bcx, val),
-                        Unary::Transpose(expr) => todo!(),
-                        Unary::Conj(expr) => todo!(),
-                        Unary::Arg(expr) => todo!(),
-                        Unary::Det(expr) => todo!(),
-                        Unary::Norm(expr) => fns.abs(bcx, val),
-                        Unary::Real(expr) => val,
-                        Unary::Imag(expr) => bcx.ins().f64const(0.0),
-                        Unary::Sign(expr) => fns.signum(bcx, val),
-                    }
-                }
-                Node::Binary(binary) => {
-                    let a = compile_realized_node(
-                        binary.args()[0].node(),
-                        symbols,
-                        bcx,
-                        fns,
-                    );
-                    let b = compile_realized_node(
-                        binary.args()[1].node(),
-                        symbols,
-                        bcx,
-                        fns,
-                    );
+                Node::Min(exprs) => compiled_children
+                    .into_iter()
+                    .reduce(|a, b| bcx.ins().fmin(a, b))
+                    .unwrap(),
+                Node::Max(exprs) => compiled_children
+                    .into_iter()
+                    .reduce(|a, b| bcx.ins().fmax(a, b))
+                    .unwrap(),
 
-                    match binary {
-                        Binary::Pow(pow) => {
-                            if pow.base == e {
-                                fns.exp(bcx, b)
-                            } else {
-                                fns.powf(bcx, a, b)
-                            }
-                        }
-                        Binary::Log(log) => {
-                            if log.base == e {
-                                fns.ln(bcx, b)
-                            } else {
-                                let num = fns.ln(bcx, b);
-                                let denom = fns.ln(bcx, a);
-                                bcx.ins().fdiv(num, denom)
-                            }
-                        }
-                        Binary::Atan2(_) => fns.atan2(bcx, a, b),
+                Node::Sin(expr) => fns.sin(bcx, compiled_children[0]),
+                Node::Cos(expr) => fns.cos(bcx, compiled_children[0]),
+                Node::Tan(expr) => fns.tan(bcx, compiled_children[0]),
+                Node::Asin(expr) => fns.asin(bcx, compiled_children[0]),
+                Node::Acos(expr) => fns.acos(bcx, compiled_children[0]),
+                Node::Atan(expr) => fns.atan(bcx, compiled_children[0]),
+                Node::Sinh(expr) => fns.sinh(bcx, compiled_children[0]),
+                Node::Cosh(expr) => fns.cosh(bcx, compiled_children[0]),
+                Node::Tanh(expr) => fns.tanh(bcx, compiled_children[0]),
+                Node::Asinh(expr) => fns.asinh(bcx, compiled_children[0]),
+                Node::Acosh(expr) => fns.acosh(bcx, compiled_children[0]),
+                Node::Atanh(expr) => fns.atanh(bcx, compiled_children[0]),
+                Node::Transpose(expr) => todo!(),
+                Node::Conj(expr) => todo!(),
+                Node::Arg(expr) => todo!(),
+                Node::Det(expr) => todo!(),
+                Node::Norm(expr) => fns.abs(bcx, compiled_children[0]),
+                Node::Real(expr) => compiled_children[0],
+                Node::Sign(expr) => fns.signum(bcx, compiled_children[0]),
+                Node::Imag(expr) => bcx.ins().f64const(0.0),
+
+                Node::Pow { base, .. } => {
+                    if **base == e {
+                        fns.exp(bcx, compiled_children[1])
+                    } else {
+                        fns.powf(
+                            bcx,
+                            compiled_children[0],
+                            compiled_children[1],
+                        )
                     }
                 }
+                Node::Log { base, .. } => {
+                    if **base == e {
+                        fns.ln(bcx, compiled_children[1])
+                    } else {
+                        let num = fns.ln(bcx, compiled_children[1]);
+                        let denom = fns.ln(bcx, compiled_children[0]);
+                        bcx.ins().fdiv(num, denom)
+                    }
+                }
+                Node::Atan2 { .. } => {
+                    fns.atan2(bcx, compiled_children[0], compiled_children[1])
+                }
+
                 Node::Matrix(matrix) => todo!(),
+                Node::Rank(expr) => todo!(),
+                Node::Trace(expr) => todo!(),
+                Node::Piecewise { cond, pass, fail } => {
+                    todo!()
+                }
             }
         }
 
         let (re, im) = (
-            compile_realized_node(re_expr.node(), &symbols, &mut bcx, &fns),
-            compile_realized_node(im_expr.node(), &symbols, &mut bcx, &fns),
+            compile_realized_expr(&re_expr, &symbols, &mut bcx, &fns),
+            compile_realized_expr(&im_expr, &symbols, &mut bcx, &fns),
         );
 
         bcx.ins().store(MemFlagsData::trusted(), re, output_ptr, 0);

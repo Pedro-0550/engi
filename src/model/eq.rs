@@ -3,13 +3,7 @@ use std::fmt::Display;
 use engi_macros::relation;
 
 use crate as engi;
-use crate::{
-    expr::{
-        Expr,
-        ops::{imag, real},
-    },
-    symbol::Symbol,
-};
+use crate::{expr::Expr, symbol::Symbol};
 
 /* --------------------------------- STRUCTS -------------------------------- */
 

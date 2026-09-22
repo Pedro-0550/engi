@@ -9,7 +9,7 @@ use crate::expr::{Expr, Node, shape::Shape};
 #[derive(PartialEq, Clone, Debug, Hash, Eq)]
 pub struct Matrix {
     shape: Shape,
-    elements: Box<[Node]>,
+    elements: Box<[Expr]>,
 }
 
 impl Matrix {
@@ -19,6 +19,11 @@ impl Matrix {
     //     f: FnMut(usize, usize) -> Expr,
     // ) -> Matrix {
     // }
+
+    pub fn from_elements(shape: Shape, elements: Box<[Expr]>) -> Matrix {
+        assert_eq!(shape.cols.get() * shape.rows.get(), elements.len());
+        Self { shape, elements }
+    }
 
     pub fn zeros(rows: impl Into<usize>, cols: impl Into<usize>) -> Self {
         let rows = rows.into();
@@ -42,22 +47,22 @@ impl Matrix {
         self.shape.cols
     }
 
-    pub fn elements(&self) -> &[Node] {
+    pub fn elements(&self) -> &[Expr] {
         &self.elements
     }
 
-    pub fn into_elements(self) -> Box<[Node]> {
+    pub fn into_elements(self) -> Box<[Expr]> {
         self.elements
     }
 
-    pub fn map(&self, f: impl FnMut(&Node) -> Node) -> Matrix {
+    pub fn map(&self, f: impl FnMut(&Expr) -> Expr) -> Matrix {
         Matrix {
             shape: self.shape,
             elements: self.elements.iter().map(f).collect(),
         }
     }
 
-    pub fn into_map(self, f: impl FnMut(Node) -> Node) -> Matrix {
+    pub fn into_map(self, f: impl FnMut(Expr) -> Expr) -> Matrix {
         Matrix {
             shape: self.shape,
             elements: self.elements.into_iter().map(f).collect(),
@@ -66,7 +71,7 @@ impl Matrix {
 }
 
 impl Index<usize> for Matrix {
-    type Output = [Node];
+    type Output = [Expr];
 
     fn index(&self, row: usize) -> &Self::Output {
         let start = row * self.shape.cols.get();

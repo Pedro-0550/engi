@@ -11,10 +11,7 @@ use ordered_float::Pow;
 use crate::{
     core::value::{EQ_ABS_TOL, Value},
     diff::Differentiable,
-    expr::{
-        Binding, Expr,
-        ops::{imag, real},
-    },
+    expr::Expr,
     model::{
         Variable,
         eq::{Constraint, Equation},
@@ -28,7 +25,7 @@ pub trait Solver {
 
     fn solve(
         &self,
-        eqs: Vec<Equation>,
+        residuals: Vec<Expr>,
         guesses: &HashMap<Variable, Value>,
     ) -> Result<Vec<(Variable, Value)>, Self::Error>;
 }
@@ -52,11 +49,11 @@ impl Solver for NloptSolver {
 
     fn solve(
         &self,
-        eqs: Vec<Equation>,
+        residuals: Vec<Expr>,
         // constraints: Vec<Constraint>,
         guesses: &HashMap<Variable, Value>,
     ) -> Result<Vec<(Variable, Value)>, Self::Error> {
-        let mut symbols = eqs
+        let mut symbols = residuals
             .iter()
             .flat_map(|eq| eq.symbols())
             .flat_map(|s| [s.real().unwrap(), s.imag().unwrap()])
@@ -72,7 +69,7 @@ impl Solver for NloptSolver {
                     .get(&Variable(*s))
                     .and_then(|x| x.as_scalar().copied())
                     .unwrap_or(Complex::ONE);
-                Binding::new(
+                (
                     *s,
                     match s.realization() {
                         Realization::Primary => unreachable!(),
@@ -81,12 +78,14 @@ impl Solver for NloptSolver {
                     },
                 )
             })
-            .collect_vec();
+            .collect();
 
-        let residuals = eqs
+        let residuals = residuals
             .into_iter()
-            .flat_map(|eq| eq.residual().realize())
-            .map(|resid| resid.substitute(&scale_bindings).normalize(true))
+            .flat_map(|eq| eq.realize().into())
+            .map(|resid: Expr| {
+                resid.substitute(&scale_bindings).normalize(true)
+            })
             .collect_vec();
 
         let objective = residuals

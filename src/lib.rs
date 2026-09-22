@@ -13,6 +13,8 @@
 #![feature(iter_array_chunks)]
 #![feature(derive_const)]
 #![feature(const_default)]
+#![feature(box_patterns)]
+
 pub mod core {
     pub mod graph;
     pub mod interned;
@@ -23,6 +25,7 @@ pub mod core {
 pub mod diff;
 pub mod expr;
 pub mod model;
-pub mod simplify;
+// pub mod simplify;
+pub mod normal;
 pub mod symbol;
 pub mod units;

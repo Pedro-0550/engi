@@ -1,15 +1,11 @@
 use std::num::NonZero;
 
+use crate::expr::{Expr, mat::Matrix};
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Shape {
     pub rows: NonZero<usize>,
     pub cols: NonZero<usize>,
-}
-
-/* --------------------------------- TRAITS --------------------------------- */
-
-pub trait Shaped {
-    fn shape(&self) -> Shape;
 }
 
 impl From<(usize, usize)> for Shape {
@@ -63,5 +59,14 @@ impl Shape {
 
     pub fn is_square_mat(&self) -> bool {
         self.rows.get() > 1 && self.rows == self.rows
+    }
+}
+
+impl Expr {
+    pub fn shape(&self) -> Shape {
+        todo!()
+    }
+    pub fn scalarize(self) -> Matrix {
+        todo!()
     }
 }

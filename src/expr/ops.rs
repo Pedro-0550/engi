@@ -1,6 +1,10 @@
-use std::{ops::Neg, rc::Rc};
+use std::{
+    cell::{LazyCell, OnceCell},
+    ops::Neg,
+    rc::Rc,
+};
 
-use num::complex::Complex64;
+use num::{complex::Complex64, pow::Pow};
 
 use crate::{
     core::{util::impl_op_permutations, value::Value},
@@ -14,11 +18,10 @@ impl<T> From<T> for Expr
 where
     Node: From<T>,
 {
-    fn from(value: T) -> Self {
+    default fn from(value: T) -> Self {
         let node: Node = value.into();
-        let mut hasher = ahash::RandomState::with_seed(1);
-        node.hash(&mut hasher);
-        Self { node: Rc::new(node), hash: hasher.finish() }
+
+        Self { node, hash: OnceCell::new() }
     }
 }
 
@@ -52,9 +55,21 @@ impl From<Variable> for Node {
     }
 }
 
+impl From<&Variable> for Node {
+    fn from(v: &Variable) -> Self {
+        Self::Symbol(v.symbol())
+    }
+}
+
 impl From<Value> for Node {
     fn from(v: Value) -> Self {
         Self::Quantity(v * Unit::Unitless)
+    }
+}
+
+impl From<&Value> for Node {
+    fn from(v: &Value) -> Self {
+        Self::Quantity(v.clone() * Unit::Unitless)
     }
 }
 
@@ -84,7 +99,7 @@ impl_op_permutations! {
         &Expr, Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>,
         ConnectorBuilder<'_>, &ConnectorBuilder<'_>
     ],
-    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Complex64, &Complex64],
+    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Complex64, &Complex64],
     exclude_specific = [],
     out = Expr,
 
@@ -95,7 +110,7 @@ impl_op_permutations! {
             "Tried to add two expressions of different shapes: {lhs}, {rhs}"
         );
 
-        Node::Add(Box::new([lhs.node().clone(), rhs.node().clone()])).into()
+        Node::Add(Box::new([lhs, rhs])).into()
     },
 
     mul = {
@@ -105,7 +120,7 @@ impl_op_permutations! {
             "Matrix multiplication requires compatible shapes"
         );
 
-        Node::Mul(Box::new([lhs.node().clone(), rhs.node().clone()])).into()
+        Node::Mul(Box::new([lhs, rhs])).into()
     },
 
     div = {
@@ -118,23 +133,23 @@ impl_op_permutations! {
 
     pow = {
         assert!(
-            lhs.shape().is_square() || lhs.shape().is_scalar(),
+            lhs.shape().is_square_mat() || lhs.shape().is_scalar(),
             "Only square matrices can be raised to a power"
         );
 
         assert!(
-            rhs.shape().is_square() || rhs.shape().is_scalar(),
+            rhs.shape().is_square_mat() || rhs.shape().is_scalar(),
             "Only square matrices can be an exponent"
         );
 
         assert!(
-            !(lhs.shape().is_square() && rhs.shape().is_square()),
+            !(lhs.shape().is_square_mat() && rhs.shape().is_square_mat()),
             "Cannot raise a matrix to the power of another matrix yet"
         );
 
         Node::Pow {
-            base: Box::new(lhs.node().clone()),
-            exp: Box::new(rhs.node().clone()),
+            base: Box::new(lhs),
+            exp: Box::new(rhs),
         }
         .into()
     },

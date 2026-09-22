@@ -11,7 +11,7 @@ use num::complex::Complex64;
 
 use crate::{
     core::interned::{Handle, Interned},
-    expr::{Domain, Shape},
+    expr::{domain::Domain, shape::Shape},
     units::{Quantity, Unit},
 };
 
@@ -73,7 +73,7 @@ impl Symbol {
             desc: "",
             unit: Unit::Unitless,
             shape: Shape::SCALAR,
-            domain: Domain::Complex,
+            domain: Domain::COMPLEX,
             realization: Realization::Primary,
         });
 
@@ -89,7 +89,7 @@ impl Symbol {
                     desc: format!("{} (imag part)", self.desc()).leak(),
                     unit: self.unit(),
                     shape: self.shape(),
-                    domain: Domain::Imag,
+                    domain: Domain::IMAG,
                     realization: Realization::Imag(self),
                 });
 
@@ -109,7 +109,7 @@ impl Symbol {
                     desc: format!("{} (real part)", self.desc()).leak(),
                     unit: self.unit(),
                     shape: self.shape(),
-                    domain: Domain::Real,
+                    domain: Domain::REAL,
                     realization: Realization::Real(self),
                 });
 

@@ -6,7 +6,7 @@ use std::{
 
 use itertools::Itertools;
 use num::Complex;
-use ordered_float::OrderedFloat;
+use ordered_float::{OrderedFloat, Pow};
 use thiserror::Error;
 
 use crate::{
@@ -15,10 +15,7 @@ use crate::{
         util::to_superscript,
         value::Value,
     },
-    expr::{
-        Expr, Node,
-        ops::{Binary, Unary, Variadic},
-    },
+    expr::{Expr, Node},
     model::Variable,
     units::{Unit::Unitless, isq::DIMENSIONLESS, si::rad},
 };
@@ -41,8 +38,14 @@ static COMPOSITIONS: Interned<Composition> = Interned::new();
 
 #[derive(Error, Debug, Clone)]
 pub enum DimensionalError {
+    #[error("Tried to compare dimensionally incompatible expressions: {expr}")]
+    IncompatibleComparison { expr: Expr },
     #[error("Tried to sum dimensionally incompatible expressions: {expr}")]
     IncompatibleSum { expr: Expr },
+    #[error(
+        "The pass and fail conditions of a piecewise have incompatible units: {expr}"
+    )]
+    IncompatibleConditional { expr: Expr },
     #[error(
         "Tried to apply a transcendental function to a dimensioned expression: {expr}"
     )]
@@ -330,50 +333,44 @@ impl Dimensioned for Expr {
             Node::Symbol(symbol) => Ok(symbol.unit()),
             Node::Constant(constant) => Ok(constant.quantity().unit()),
             Node::Quantity(quantity) => Ok(quantity.unit()),
-            Node::Variadic(variadic) => variadic.unit(),
-            Node::Unary(unary) => unary.unit(),
-            Node::Binary(binary) => binary.unit(),
-            Node::Matrix(matrix) => Ok(Unit::Unitless),
-        }
-    }
-}
-
-impl Dimensioned for Variadic {
-    fn dimension(&self) -> Result<Dimension, DimensionalError> {
-        self.unit().and_then(|u| u.dimension())
-    }
-
-    fn unit(&self) -> Result<Unit, DimensionalError> {
-        match self {
-            Variadic::Add(exprs) => {
+            Node::Add(exprs) | Node::Min(exprs) | Node::Max(exprs) => {
                 let first = exprs.first().unwrap().unit()?;
 
                 for expr in exprs.iter().skip(1) {
                     if expr.unit()? != first {
-                        return Err(DimensionalError::IncompatibleSum {
-                            expr: self.into(),
-                        });
+                        return Err(
+                            if self.node().is_max() | self.node().is_min() {
+                                DimensionalError::IncompatibleComparison {
+                                    expr: self.into(),
+                                }
+                            } else {
+                                DimensionalError::IncompatibleSum {
+                                    expr: self.into(),
+                                }
+                            },
+                        );
                     }
                 }
 
                 Ok(first)
             }
-            Variadic::Mul(exprs) => Ok(exprs
+
+            Node::Mul(exprs) => Ok(exprs
                 .iter()
                 .try_fold(Unit::Unitless, |acc, x| Ok(acc * x.unit()?))?),
-        }
-    }
-}
-
-impl Dimensioned for Binary {
-    fn dimension(&self) -> Result<Dimension, DimensionalError> {
-        self.unit().and_then(|u| u.dimension())
-    }
-
-    fn unit(&self) -> Result<Unit, DimensionalError> {
-        match self {
-            Binary::Pow(pow) => {
-                if pow.exp.dimension()? != DIMENSIONLESS {
+            Node::Sin(expr)
+            | Node::Cos(expr)
+            | Node::Tan(expr)
+            | Node::Asin(expr)
+            | Node::Acos(expr)
+            | Node::Atan(expr)
+            | Node::Sinh(expr)
+            | Node::Cosh(expr)
+            | Node::Tanh(expr)
+            | Node::Asinh(expr)
+            | Node::Acosh(expr)
+            | Node::Atanh(expr) => {
+                if expr.dimension()? != DIMENSIONLESS {
                     Err(DimensionalError::DimensionedTranscendental {
                         expr: self.into(),
                     })
@@ -381,8 +378,30 @@ impl Dimensioned for Binary {
                     Ok(Unit::Unitless)
                 }
             }
-            Binary::Log(log) => {
-                if log.arg.dimension()? != DIMENSIONLESS {
+            Node::Arg(expr) => Ok(rad),
+            Node::Conj(expr) => expr.unit(),
+            Node::Norm(expr) => expr.unit(),
+            Node::Sign(expr) => expr.unit(),
+            Node::Real(expr) => expr.unit(),
+            Node::Imag(expr) => expr.unit(),
+            Node::Pow { exp, base } => {
+                if exp.dimension()? != DIMENSIONLESS {
+                    Err(DimensionalError::DimensionedTranscendental {
+                        expr: self.into(),
+                    })
+                    // TODO: Fix
+                } else if let Some(qty) = exp
+                    .node()
+                    .as_quantity()
+                    .and_then(|qty| qty.value().as_scalar_integer())
+                {
+                    Ok(base.unit()?.pow(qty))
+                } else {
+                    Ok(Unit::Unitless)
+                }
+            }
+            Node::Log { base, arg } => {
+                if arg.dimension()? != DIMENSIONLESS {
                     Err(DimensionalError::DimensionedTranscendental {
                         expr: self.into(),
                     })
@@ -390,9 +409,9 @@ impl Dimensioned for Binary {
                     Ok(Unit::Unitless)
                 }
             }
-            Binary::Atan2(atan2) => {
-                if atan2.a.dimension()? != DIMENSIONLESS
-                    && atan2.b.dimension()? != DIMENSIONLESS
+            Node::Atan2 { a, b } => {
+                if a.dimension()? != DIMENSIONLESS
+                    && b.dimension()? != DIMENSIONLESS
                 {
                     Err(DimensionalError::DimensionedTranscendental {
                         expr: self.into(),
@@ -401,39 +420,12 @@ impl Dimensioned for Binary {
                     Ok(rad)
                 }
             }
-        }
-    }
-}
-
-impl Dimensioned for Unary {
-    fn dimension(&self) -> Result<Dimension, DimensionalError> {
-        self.unit().and_then(|u| u.dimension())
-    }
-
-    fn unit(&self) -> Result<Unit, DimensionalError> {
-        match self {
-            Unary::Sin(expr)
-            | Unary::Cos(expr)
-            | Unary::Tan(expr)
-            | Unary::Asin(expr)
-            | Unary::Acos(expr)
-            | Unary::Atan(expr)
-            | Unary::Sinh(expr)
-            | Unary::Cosh(expr)
-            | Unary::Tanh(expr)
-            | Unary::Asinh(expr)
-            | Unary::Acosh(expr)
-            | Unary::Atanh(expr) => expr.dimension().and_then(|x| {
-                if x != DIMENSIONLESS {
-                    Err(DimensionalError::DimensionedTranscendental {
-                        expr: self.into(),
-                    })
-                } else {
-                    Ok(Unit::Unitless)
-                }
-            }),
-            Unary::Arg(expr) => Ok(rad),
-            _ => self.arg().unit(),
+            Node::Matrix(matrix) => todo!(),
+            Node::Piecewise { cond, pass, fail } => todo!(),
+            Node::Transpose(expr) => expr.unit(),
+            Node::Det(expr) => todo!(),
+            Node::Rank(expr) => todo!(),
+            Node::Trace(expr) => todo!(),
         }
     }
 }

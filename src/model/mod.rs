@@ -24,10 +24,7 @@ use crate::{
         graph::{BipartiteGraph, DirectedGraph},
         value::Value,
     },
-    expr::{
-        self, Binding, Expr,
-        ops::{Variadic, sin},
-    },
+    expr::{self, Expr, Node},
     model::{
         eq::{Constraint, Equation},
         solve::Solver,
@@ -177,7 +174,7 @@ pub struct System {
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct CompiledSystem {
-    blocks: Vec<Vec<Equation>>,
+    blocks: Vec<Vec<Expr>>,
 }
 
 pub struct SolvedSystem {
@@ -443,9 +440,9 @@ impl System {
                                     &self.model(&id.path).interfaces[id.idx];
                                 Expr::from(interface.connectors[i].variable)
                             })
-                            .collect_vec();
+                            .collect();
 
-                        equations.push(relation!(Variadic::Add(terms) = 0));
+                        equations.push(relation!(Node::Add(terms) = 0));
                     }
                 }
             }
@@ -466,17 +463,10 @@ impl System {
             collect_equations(model, &mut equations);
         }
 
-        for eq in &mut equations {
-            let mut ctx = SimplifyContext::new();
-            *eq = relation! {
-                eq.lhs().simplify(&mut ctx) = eq.rhs().simplify(&mut ctx)
-            }
-        }
-
         let bindings = var_assoc
             .iter()
             .filter_map(|(var_id, assoc)| match assoc {
-                Associated::Binding(expr) => Some(Binding::new(
+                Associated::Binding(expr) => Some((
                     self.model(&var_id.path).variables[var_id.idx].symbol(),
                     expr.simplify(&mut SimplifyContext::new()),
                 )),
@@ -484,7 +474,7 @@ impl System {
             })
             .chain(conn_assoc.iter().filter_map(|(conn_id, assoc)| {
                 match assoc {
-                    Associated::Binding(expr) => Some(Binding::new(
+                    Associated::Binding(expr) => Some((
                         self.model(&conn_id.interface.path).interfaces
                             [conn_id.interface.idx]
                             .connectors[conn_id.idx]
@@ -495,35 +485,27 @@ impl System {
                     _ => None,
                 }
             }))
-            .collect_vec();
+            .collect();
 
-        let eqs = equations.iter().filter_map(|eq| {
-            let mut lhs = eq.lhs().clone();
-
-            loop {
-                let step = lhs.substitute(&bindings);
-                if step == lhs {
-                    break;
-                }
-                lhs = step
-            }
-
-            let mut rhs = eq.rhs().clone();
+        let residuals = equations.iter().filter_map(|eq| {
+            let resid = eq.residual();
 
             loop {
-                let step = rhs.substitute(&bindings);
-                if step == rhs {
+                let step = resid.substitute(&bindings);
+                if step == resid {
                     break;
                 }
-                rhs = step
+                resid = step
             }
 
-            if lhs == rhs { None } else { Some(Equation::new(lhs, rhs)) }
+            let resid = resid.simplify();
+
+            if resid == 0 { None } else { Some(resid) }
         });
 
         let mut incidence = BipartiteGraph::new();
 
-        for eq in eqs {
+        for eq in residuals {
             incidence.add_left(eq.clone());
 
             for symb in eq.symbols() {
@@ -670,17 +652,12 @@ impl System {
         for block in compiled.blocks.iter().rev() {
             let bindings = knowns
                 .iter()
-                .map(|(var, val)| Binding::new(var.0, val.into()))
-                .collect_vec();
+                .map(|(var, val)| (var.0, val.clone().into()))
+                .collect();
 
             let block = block
                 .into_iter()
-                .map(|eq| {
-                    relation!(
-                        eq.lhs().substitute(&bindings) =
-                            eq.rhs().substitute(&bindings)
-                    )
-                })
+                .map(|resid| resid.substitute(&bindings))
                 .collect_vec();
 
             println!(
@@ -707,7 +684,7 @@ mod test {
 
     use crate as engi;
     use crate::{
-        expr::ops::{exp, real},
+        expr::{exp, real},
         model::{
             Condition, Connector, InterfaceArrayExt, InterfaceBuilder, Model,
             Relations, System, Variable,
