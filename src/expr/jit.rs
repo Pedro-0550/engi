@@ -23,7 +23,7 @@ use num::{Complex, complex::Complex64};
 use crate::{
     core::value,
     expr::{Expr, Node, domain::Domain},
-    simplify::normal::Normalize,
+    normal::Normalize,
     symbol::{
         Realization::{self, Imag, Primary, Real},
         Symbol,

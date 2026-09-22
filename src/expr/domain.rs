@@ -84,16 +84,16 @@ impl Expr {
             Node::Imag(expr) => todo!(),
             Node::Pow { base, exp } => todo!(),
             Node::Log { base, arg } => todo!(),
-            Node::Atan2 { a, b } => todo!(),
+            Node::Atan2 { a, b } => Domain::REAL,
             Node::Matrix(matrix) => todo!(),
-            Node::Transpose(expr) => todo!(),
+            Node::Transpose(expr) => expr.domain(),
             Node::Det(expr) => todo!(),
             Node::Rank(expr) => todo!(),
             Node::Trace(expr) => todo!(),
             Node::Piecewise { cond, pass, fail } => todo!(),
         }
     }
-    pub fn realize(self) -> Complex<Expr> {
+    pub fn realize(self) -> [Expr; 2] {
         todo!()
     }
 }

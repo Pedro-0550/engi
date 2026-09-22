@@ -82,16 +82,14 @@ impl Solver for NloptSolver {
 
         let residuals = residuals
             .into_iter()
-            .flat_map(|eq| eq.realize().into())
-            .map(|resid: Expr| {
-                resid.substitute(&scale_bindings).normalize(true)
-            })
+            .flat_map(|resid| resid.realize())
+            .map(|resid: Expr| resid.substitute(&scale_bindings).normalize())
             .collect_vec();
 
         let objective = residuals
             .iter()
             .fold(Expr::from(0.0), |acc, resid| acc + resid.pow(2))
-            .normalize(true);
+            .normalize();
 
         let gradient =
             symbols.iter().map(|s| objective.diff(*s).compile()).collect_vec();

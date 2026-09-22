@@ -21,7 +21,7 @@ where
     default fn from(value: T) -> Self {
         let node: Node = value.into();
 
-        Self { node, hash: OnceCell::new() }
+        Self { node, key: OnceCell::new() }
     }
 }
 

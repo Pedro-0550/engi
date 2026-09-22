@@ -142,7 +142,7 @@ pub enum Condition {
 #[derive(Clone, Eq)]
 pub struct Expr {
     node: Node,
-    hash: OnceCell<u64>,
+    key: OnceCell<u64>,
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
@@ -156,13 +156,7 @@ impl_as_variant!(Node, [Quantity => Quantity, Constant => Constant, Symbol => Sy
 
 impl Hash for Expr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let hash = self.hash.get_or_init(|| {
-            let mut hasher = ahash::RandomState::with_seed(1).build_hasher();
-            self.node.hash(&mut hasher);
-            hasher.finish()
-        });
-
-        state.write_u64(*hash);
+        state.write_u64(self.key());
     }
 }
 
@@ -211,6 +205,14 @@ impl Expr {
             Node::Matrix(matrix) => Box::new(matrix.elements().iter()),
             Node::Piecewise { cond, pass, fail } => todo!(),
         }
+    }
+
+    pub fn key(&self) -> u64 {
+        *self.key.get_or_init(|| {
+            let mut hasher = ahash::RandomState::with_seed(1).build_hasher();
+            self.node.hash(&mut hasher);
+            hasher.finish()
+        })
     }
 
     /// Returns an iterator over the immediate children of this expr node.
@@ -377,7 +379,7 @@ impl Expr {
 
 impl PartialEq for Expr {
     fn eq(&self, other: &Self) -> bool {
-        self.hash == other.hash
+        self.key == other.key
     }
 }
 
