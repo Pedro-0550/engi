@@ -1,8 +1,7 @@
 /* --------------------------------- STRUCTS -------------------------------- */
 
-use std::mem;
+use std::{collections::HashMap, mem};
 
-use ahash::HashMap;
 use cranelift::{
     codegen::{
         ir::{
@@ -19,11 +18,11 @@ use cranelift::{
 };
 use itertools::Itertools;
 use num::{Complex, complex::Complex64};
+use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 
 use crate::{
     core::value,
     expr::{Expr, Node, domain::Domain},
-    normal::Normalize,
     symbol::{
         Realization::{self, Imag, Primary, Real},
         Symbol,
@@ -154,7 +153,7 @@ impl Expr {
 
         println!("Compiling base expr: {}", self);
 
-        let Complex { re: re_expr, im: im_expr } = self.clone().realize();
+        let [re_expr, im_expr] = self.clone().realize();
 
         println!("Compiling ({}) + i * ({})", re_expr, im_expr);
 

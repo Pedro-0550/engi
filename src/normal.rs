@@ -6,7 +6,6 @@ use std::{
     mem::discriminant,
 };
 
-use ahash::AHasher;
 use itertools::Itertools;
 use num::complex::ComplexFloat;
 

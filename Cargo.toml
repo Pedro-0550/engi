@@ -12,7 +12,7 @@ derive_more = { version = "2", features = ["from", "deref", "deref_mut", "is_var
 float_eq = "1.0"
 ordered-float = "5.3"
 dashmap = "6"
-ahash = "0.8"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 crabtime = "1.1.4"
 faer = "0.24"
 nlopt = "0.8"

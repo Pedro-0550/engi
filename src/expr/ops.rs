@@ -25,6 +25,21 @@ where
     }
 }
 
+impl<T> From<&T> for Node
+where
+    Node: From<T>,
+{
+    default fn from(value: &T) -> Self {
+        value.clone().into()
+    }
+}
+
+impl From<&Expr> for Expr {
+    fn from(expr: &Expr) -> Self {
+        expr.clone()
+    }
+}
+
 impl From<f64> for Node {
     fn from(v: f64) -> Self {
         Node::Quantity(v.into())
@@ -55,21 +70,9 @@ impl From<Variable> for Node {
     }
 }
 
-impl From<&Variable> for Node {
-    fn from(v: &Variable) -> Self {
-        Self::Symbol(v.symbol())
-    }
-}
-
 impl From<Value> for Node {
     fn from(v: Value) -> Self {
         Self::Quantity(v * Unit::Unitless)
-    }
-}
-
-impl From<&Value> for Node {
-    fn from(v: &Value) -> Self {
-        Self::Quantity(v.clone() * Unit::Unitless)
     }
 }
 
@@ -81,12 +84,6 @@ impl From<Complex64> for Node {
 
 impl From<Connector> for Node {
     fn from(v: Connector) -> Self {
-        Self::Symbol(v.variable().symbol())
-    }
-}
-
-impl From<&Connector> for Node {
-    fn from(v: &Connector) -> Self {
         Self::Symbol(v.variable().symbol())
     }
 }

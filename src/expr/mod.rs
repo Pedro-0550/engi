@@ -29,6 +29,7 @@ use derive_more::{Deref, DerefMut, From, IsVariant};
 use itertools::Itertools;
 use num::complex::{Complex64, ComplexFloat};
 use ordered_float::Pow;
+use xxhash_rust::xxh3::Xxh3Builder;
 
 use crate::{
     core::{
@@ -37,7 +38,7 @@ use crate::{
         value::Value,
     },
     expr::mat::Matrix,
-    simplify::{Simplify, normal::Normalize},
+    simplify::Simplify,
     symbol::{
         Symbol,
         constants::{Constant, e, π},
@@ -142,7 +143,7 @@ pub enum Condition {
 #[derive(Clone, Eq)]
 pub struct Expr {
     node: Node,
-    key: OnceCell<u64>,
+    key: OnceCell<u128>,
 }
 
 /* --------------------------------- STRUCTS -------------------------------- */
@@ -156,7 +157,7 @@ impl_as_variant!(Node, [Quantity => Quantity, Constant => Constant, Symbol => Sy
 
 impl Hash for Expr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.key());
+        state.write_u128(self.key());
     }
 }
 
@@ -207,11 +208,11 @@ impl Expr {
         }
     }
 
-    pub fn key(&self) -> u64 {
+    pub fn key(&self) -> u128 {
         *self.key.get_or_init(|| {
-            let mut hasher = ahash::RandomState::with_seed(1).build_hasher();
+            let mut hasher = Xxh3Builder::new().with_secret([0; 192]).build();
             self.node.hash(&mut hasher);
-            hasher.finish()
+            hasher.digest128()
         })
     }
 
