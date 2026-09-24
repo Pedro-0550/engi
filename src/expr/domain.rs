@@ -3,16 +3,18 @@ use num::{Complex, bigint::Sign};
 use super::Node;
 use crate::expr::Expr;
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
-pub enum Interval {
-    Zero,
-    /// An interval from 0 (inclusive) to positive infinity
-    Positive,
-    /// An interval from negative infinity to 0 (inclusive)
-    Negative,
-    /// An interval from negative infinity to positive infinity
-    Universe,
+pub enum Endpoint {
+    Neg,
+    Pos,
+    Zero 
 }
+
+pub enum Edge {
+    Closed(Endpoint), 
+    Open(Endpoint)
+}
+
+pub struct Interval(Edge, Edge);
 
 pub enum Numeric {
     Real,
@@ -26,15 +28,47 @@ pub struct Domain {
     im: Interval,
 }
 
+impl Interval {
+    const UNIVERSE: Self = Self(
+        Edge::Open(Endpoint::Negative), 
+        Edge::Open(Endpoint::Positive)
+    )
+
+    const ZERO: Self = Self(
+        Edge::Closed(Endpoint::Zero),
+        Edge::Open(Endpoint::Zero)
+    )
+        
+    const POSITIVE: Self = Self(
+        Edge::Open(Endpoint:Zero), 
+        Edge::Open(Endpoint::Positive)
+    )
+
+    const NON_NEGATIVE: Self = Self(
+        Edge::Closed(Endpoint:Zero), 
+        Edge::Open(Endpoint::Positive)
+    )
+    
+    const NEGATIVE: Self = Self(
+        Edge::Open(Endpoint::Negative), 
+        Edge::Open(Endpoint:Zero)
+    )
+
+    const NON_POSITIVE: Self = Self(
+        Edge::Open(Endpoint::Negative),
+        Edge::Closed(Endpoint:Zero), 
+    )
+}
+
 impl Domain {
     pub fn new(re: Interval, im: Interval) -> Self {
         Self { re, im }
     }
 
     pub fn numeric(&self) -> Numeric {
-        if self.im == Interval::Zero {
+        if self.im == Interval::ZERO {
             Numeric::Real
-        } else if self.re == Interval::Zero {
+        } else if self.re == Interval::ZERO {
             Numeric::Imag
         } else {
             Numeric::Complex
@@ -42,13 +76,13 @@ impl Domain {
     }
 
     pub const COMPLEX: Domain =
-        Domain { re: Interval::Universe, im: Interval::Universe };
+        Domain { re: Interval::UNIVERSE, im: Interval::UNIVERSE };
 
     pub const REAL: Domain =
-        Domain { re: Interval::Universe, im: Interval::Zero };
+        Domain { re: Interval::UNIVERSE, im: Interval::ZERO };
 
     pub const IMAG: Domain =
-        Domain { re: Interval::Zero, im: Interval::Universe };
+        Domain { re: Interval::ZERO, im: Interval:UNIVERSE };
 }
 
 impl Expr {
