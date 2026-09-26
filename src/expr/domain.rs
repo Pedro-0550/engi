@@ -3,17 +3,20 @@ use num::{Complex, bigint::Sign};
 use super::Node;
 use crate::expr::Expr;
 
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub enum Endpoint {
     Neg,
     Pos,
-    Zero 
+    Zero,
 }
 
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub enum Edge {
-    Closed(Endpoint), 
-    Open(Endpoint)
+    Closed(Endpoint),
+    Open(Endpoint),
 }
 
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct Interval(Edge, Edge);
 
 pub enum Numeric {
@@ -29,35 +32,23 @@ pub struct Domain {
 }
 
 impl Interval {
-    const UNIVERSE: Self = Self(
-        Edge::Open(Endpoint::Negative), 
-        Edge::Open(Endpoint::Positive)
-    )
+    const UNIVERSE: Self =
+        Self(Edge::Open(Endpoint::Neg), Edge::Open(Endpoint::Pos));
 
-    const ZERO: Self = Self(
-        Edge::Closed(Endpoint::Zero),
-        Edge::Open(Endpoint::Zero)
-    )
-        
-    const POSITIVE: Self = Self(
-        Edge::Open(Endpoint:Zero), 
-        Edge::Open(Endpoint::Positive)
-    )
+    const ZERO: Self =
+        Self(Edge::Closed(Endpoint::Zero), Edge::Open(Endpoint::Zero));
 
-    const NON_NEGATIVE: Self = Self(
-        Edge::Closed(Endpoint:Zero), 
-        Edge::Open(Endpoint::Positive)
-    )
-    
-    const NEGATIVE: Self = Self(
-        Edge::Open(Endpoint::Negative), 
-        Edge::Open(Endpoint:Zero)
-    )
+    const POSITIVE: Self =
+        Self(Edge::Open(Endpoint::Zero), Edge::Open(Endpoint::Pos));
 
-    const NON_POSITIVE: Self = Self(
-        Edge::Open(Endpoint::Negative),
-        Edge::Closed(Endpoint:Zero), 
-    )
+    const NON_NEGATIVE: Self =
+        Self(Edge::Closed(Endpoint::Zero), Edge::Open(Endpoint::Pos));
+
+    const NEGATIVE: Self =
+        Self(Edge::Open(Endpoint::Neg), Edge::Open(Endpoint::Zero));
+
+    const NON_POSITIVE: Self =
+        Self(Edge::Open(Endpoint::Neg), Edge::Closed(Endpoint::Zero));
 }
 
 impl Domain {
@@ -82,7 +73,7 @@ impl Domain {
         Domain { re: Interval::UNIVERSE, im: Interval::ZERO };
 
     pub const IMAG: Domain =
-        Domain { re: Interval::ZERO, im: Interval:UNIVERSE };
+        Domain { re: Interval::ZERO, im: Interval::UNIVERSE };
 }
 
 impl Expr {
@@ -124,7 +115,7 @@ impl Expr {
             Node::Det(expr) => todo!(),
             Node::Rank(expr) => todo!(),
             Node::Trace(expr) => todo!(),
-            Node::Piecewise { cond, pass, fail } => todo!(),
+            Node::Piecewise { arms, default } => todo!(),
         }
     }
     pub fn realize(self) -> [Expr; 2] {

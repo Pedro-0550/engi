@@ -80,7 +80,7 @@ impl Symbol {
         Symbol(handle)
     }
 
-    /// Splits off an imaginary part from this symbol
+    /// Splits off an imaginary part from this symbol. Returns itself if its already an imag part, or None if its a real part.
     pub fn imag(self) -> Option<Self> {
         match self.realization() {
             Realization::Primary => {
@@ -100,7 +100,7 @@ impl Symbol {
         }
     }
 
-    /// Splits off a real part from this symbol
+    /// Splits off a real part from this symbol. Returns itself if its already a real part, or None if its an imag part.
     pub fn real(self) -> Option<Self> {
         match self.realization() {
             Realization::Primary => {

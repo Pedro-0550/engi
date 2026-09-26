@@ -17,6 +17,7 @@ crabtime = "1.1.4"
 faer = "0.24"
 nlopt = "0.8"
 cranelift = {version = "0.135", features = ["jit", "module", "native"]}
+kinded = "*"
 
 engi-macros = { path = "./macros" }
 

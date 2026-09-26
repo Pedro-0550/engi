@@ -27,6 +27,7 @@ use cranelift::{
 use dashmap::mapref::one::Ref;
 use derive_more::{Deref, DerefMut, From, IsVariant};
 use itertools::Itertools;
+use kinded::Kinded;
 use num::complex::{Complex64, ComplexFloat};
 use ordered_float::Pow;
 use xxhash_rust::xxh3::Xxh3Builder;
@@ -38,7 +39,6 @@ use crate::{
         value::Value,
     },
     expr::mat::Matrix,
-    simplify::Simplify,
     symbol::{
         Symbol,
         constants::{Constant, e, π},
@@ -61,7 +61,8 @@ type Bindings = HashMap<Symbol, Expr>;
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
-#[derive(Eq, Clone, PartialEq, Hash, Debug, From, IsVariant)]
+#[derive(Eq, Clone, PartialEq, Hash, Debug, From, IsVariant, Kinded)]
+#[kinded(derive(Hash))]
 pub enum Node {
     #[from]
     Symbol(Symbol),
@@ -120,10 +121,15 @@ pub enum Node {
     Trace(Box<Expr>),
 
     Piecewise {
-        cond: Box<Condition>,
-        pass: Box<Expr>,
-        fail: Box<Expr>,
+        arms: Box<[Arm]>,
+        default: Box<Arm>,
     },
+}
+
+#[derive(Clone, Hash, PartialEq, Eq, Debug)]
+pub struct Arm {
+    cond: Condition,
+    expr: Expr,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
@@ -204,7 +210,7 @@ impl Expr {
                 Box::new([a.as_ref(), b.as_ref()].into_iter())
             }
             Node::Matrix(matrix) => Box::new(matrix.elements().iter()),
-            Node::Piecewise { cond, pass, fail } => todo!(),
+            Node::Piecewise { arms, default } => todo!(),
         }
     }
 
@@ -254,7 +260,7 @@ impl Expr {
             Node::Matrix(matrix) => {
                 Box::new(matrix.into_elements().into_iter())
             }
-            Node::Piecewise { cond, pass, fail } => todo!(),
+            Node::Piecewise { arms, default } => todo!(),
         }
     }
 
@@ -380,7 +386,7 @@ impl Expr {
 
 impl PartialEq for Expr {
     fn eq(&self, other: &Self) -> bool {
-        self.key == other.key
+        self.key() == other.key()
     }
 }
 

@@ -468,7 +468,7 @@ impl System {
             .filter_map(|(var_id, assoc)| match assoc {
                 Associated::Binding(expr) => Some((
                     self.model(&var_id.path).variables[var_id.idx].symbol(),
-                    expr.simplify(&mut SimplifyContext::new()),
+                    expr.simplify(),
                 )),
                 _ => None,
             })
@@ -480,7 +480,7 @@ impl System {
                             .connectors[conn_id.idx]
                             .variable()
                             .symbol(),
-                        expr.simplify(&mut SimplifyContext::new()),
+                        expr.simplify(),
                     )),
                     _ => None,
                 }

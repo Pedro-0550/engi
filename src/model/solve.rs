@@ -16,7 +16,6 @@ use crate::{
         Variable,
         eq::{Constraint, Equation},
     },
-    simplify::{Simplify, SimplifyContext, normal::Normalize},
     symbol::{Realization, Symbol},
 };
 
