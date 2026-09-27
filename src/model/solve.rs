@@ -77,12 +77,15 @@ impl Solver for NloptSolver {
                     },
                 )
             })
-            .collect();
+            .collect_vec();
 
         let residuals = residuals
             .into_iter()
             .flat_map(|resid| resid.realize())
-            .map(|resid: Expr| resid.substitute(&scale_bindings).normalize())
+            .map(|mut resid: Expr| {
+                resid.substitute(&scale_bindings);
+                resid.normalize()
+            })
             .collect_vec();
 
         let objective = residuals

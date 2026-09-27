@@ -20,7 +20,6 @@
 pub mod core {
     pub mod graph;
     pub mod interned;
-    pub mod tree;
     pub mod util;
     pub mod value;
 }
@@ -28,7 +27,6 @@ pub mod core {
 pub mod diff;
 pub mod expr;
 pub mod model;
-pub mod normal;
 pub mod simplify;
 pub mod symbol;
 pub mod units;

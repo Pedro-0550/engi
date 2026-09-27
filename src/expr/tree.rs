@@ -1,20 +1,20 @@
 use std::{
-    cell::OnceCell,
-    collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     iter::empty,
-    slice,
+    num::NonZero,
+    ops::{Index, IndexMut},
 };
 
 use derive_more::IsVariant;
-use itertools::Itertools;
 use kinded::Kinded;
-use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
+use num::complex::Complex64;
 
 use crate::{
+    core::{util::impl_as_variant, value::Value},
     expr::shape::Shape,
+    model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     symbol::{Symbol, constants::Constant},
-    units::Quantity,
+    units::{Quantity, Unit::Unitless},
 };
 
 #[derive(Eq, PartialEq, Clone, Hash, Kinded)]
@@ -102,164 +102,25 @@ pub enum NodeKind {
     Branch(BranchKind),
 }
 
-#[derive(PartialEq, Clone, Eq, Hash, Copy)]
-pub struct NodeId(usize);
+/* -------------------------------------------------------------------------- */
 
-#[derive(PartialEq, Clone, Eq, Hash, Copy)]
-pub struct NodeKey(u128);
-
-#[derive(PartialEq, Clone, Eq, Hash, Copy)]
-pub struct ExprKey(u128);
-
-#[derive(Eq, Clone)]
-pub struct Expr {
-    nodes: Vec<(NodeKey, Node<NodeId>)>,
-    cons: HashMap<NodeKey, NodeId>,
-    root: NodeId,
-}
-
-impl Expr {
-    fn root(&self) -> NodeId {
-        self.root
-    }
-
-    fn key_of(&self, node: &Node<NodeId>) -> NodeKey {
-        let mut hasher = Xxh3Builder::new().with_seed(0).build();
-        match node {
-            Node::Leaf(leaf) => {
-                leaf.hash(&mut hasher);
-            }
-            Node::Branch(branch) => {
-                branch.kind().hash(&mut hasher);
-
-                match branch {
-                    Branch::Matrix(matrix) => {
-                        matrix.shape.hash(&mut hasher);
-                    }
-                    Branch::Conditional { cond, .. } => {
-                        cond.hash_structure(&mut hasher);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        for child_id in node.children() {
-            let (child_key, _) = self.nodes[child_id.0];
-            child_key.hash(&mut hasher);
-        }
-
-        NodeKey(hasher.digest128())
-    }
-
-    fn add(&mut self, node: Node<NodeId>) -> NodeId {
-        self.add_with_key(self.key_of(&node), node)
-    }
-
-    fn add_with_key(&mut self, key: NodeKey, node: Node<NodeId>) -> NodeId {
-        if let Some(&id) = self.cons.get(&key) {
-            return id;
-        }
-
-        let id = NodeId(self.nodes.len());
-
-        self.nodes.push((key, node));
-        self.cons.insert(key, id);
-
-        id
-    }
-
-    pub fn substitute(&mut self, bindings: &[(Symbol, Expr)]) {
-        let symbol_to_expr = bindings
-            .iter()
-            .filter_map(|(symbol, expr)| {
-                let node_key = self.key_of(&Node::Leaf(Leaf::Symbol(*symbol)));
-                let symbol_node_id = *self.cons.get(&node_key)?;
-                let expr_node_id = self.append(expr.clone());
-
-                Some((symbol_node_id, expr_node_id))
-            })
-            .collect::<HashMap<_, _>>();
-
-        for (_, node) in &mut self.nodes {
-            for child_id in node.children_mut() {
-                if let Some(new_id) = symbol_to_expr.get(&*child_id) {
-                    *child_id = *new_id;
-                }
-            }
-        }
-    }
-
-    /// Appends the given expr to the current expr, moving all of its nodes, changing IDs.
-    /// Returns the new id of the other expr's root.
-    fn append(&mut self, other: Expr) -> NodeId {
-        let mut remapped = vec![None; other.nodes.len()];
-        let mut other_nodes = other.nodes.into_iter().map(Some).collect_vec();
-        let mut stack = vec![(other.root, false)];
-
-        while let Some((id, processed)) = stack.pop() {
-            if remapped[id.0].is_some() {
-                continue;
-            }
-
-            if processed {
-                let (key, mut node) = other_nodes[id.0].take().unwrap();
-
-                for child in node.children_mut() {
-                    *child = remapped[child.0].unwrap();
-                }
-
-                let new_id = self.add_with_key(key, node);
-                remapped[id.0] = Some(new_id);
-            } else {
-                stack.push((id, true));
-
-                if let Some((_, node)) = &other_nodes[id.0] {
-                    for child in node.children() {
-                        if remapped[child.0].is_none() {
-                            stack.push((*child, false));
-                        }
-                    }
-                }
-            }
-        }
-
-        remapped[other.root.0].unwrap()
-    }
-
-    fn reroot(&mut self, new_root: Node<NodeId>) -> NodeId {
-        let root = self.add(new_root);
-        self.root = root;
-        root
-    }
-
-    fn pre_dfs(&self) -> Vec<&Node<NodeId>> {
-        let mut visit = Vec::with_capacity(self.nodes.len());
-
-        fn pre_dfs_inner<'e>(
-            expr: &'e Expr,
-            current: NodeId,
-            into: &mut Vec<&'e Node<NodeId>>,
-        ) {
-            let node = &expr.nodes[current.0].1;
-            into.push(node);
-            for child in node.children() {
-                pre_dfs_inner(expr, *child, into);
-            }
-        }
-
-        pre_dfs_inner(self, self.root, &mut visit);
-        visit
-    }
-}
-
-impl PartialEq for Expr {
-    fn eq(&self, other: &Self) -> bool {
-        self.nodes[self.root.0].0 == other.nodes[other.root.0].0
-    }
-}
+impl_as_variant!(Leaf, [Symbol => Symbol, Quantity => Quantity, Constant => Constant]);
 
 impl<N> Node<N> {
+    pub fn as_leaf(&self) -> Option<&Leaf> {
+        match self {
+            Node::Leaf(leaf) => Some(leaf),
+            Node::Branch(branch) => None,
+        }
+    }
+
+    pub fn as_branch(&self) -> Option<&Branch<N>> {
+        match self {
+            Node::Branch(branch) => Some(branch),
+            Node::Leaf(leaf) => None,
+        }
+    }
+
     pub fn kind(&self) -> NodeKind {
         match self {
             Node::Leaf(leaf) => NodeKind::Leaf(leaf.kind()),
@@ -308,7 +169,7 @@ impl<N> Node<N> {
 
                 Branch::Atan2 { a, b } => Box::new([a, b].into_iter()),
 
-                Branch::Matrix(matrix) => Box::new(matrix.elements.iter()),
+                Branch::Matrix(matrix) => Box::new(matrix.elements().iter()),
 
                 Branch::Conditional { cond, pass, fail } => Box::new(
                     cond.children()
@@ -362,7 +223,9 @@ impl<N> Node<N> {
 
                 Branch::Atan2 { a, b } => Box::new([a, b].into_iter()),
 
-                Branch::Matrix(matrix) => Box::new(matrix.elements.iter_mut()),
+                Branch::Matrix(matrix) => {
+                    Box::new(matrix.elements_mut().iter_mut())
+                }
 
                 Branch::Conditional { cond, pass, fail } => Box::new(
                     cond.children_mut()
@@ -415,7 +278,7 @@ impl<N> Node<N> {
                 Branch::Atan2 { a, b } => Box::new([a, b].into_iter()),
 
                 Branch::Matrix(matrix) => {
-                    Box::new(matrix.elements.into_vec().into_iter())
+                    Box::new(matrix.into_elements().into_iter())
                 }
 
                 Branch::Conditional { cond, pass, fail } => Box::new(
@@ -426,9 +289,97 @@ impl<N> Node<N> {
             },
         }
     }
+
+    pub fn map<T>(self, mut f: impl FnMut(N) -> T) -> Node<T> {
+        match self {
+            Node::Leaf(l) => Node::Leaf(l),
+
+            Node::Branch(branch) => Node::Branch(match branch {
+                Branch::Add(ns) => Branch::Add(ns.map(&mut f)),
+                Branch::Mul(ns) => Branch::Mul(ns.map(&mut f)),
+                Branch::Min(ns) => Branch::Min(ns.map(&mut f)),
+                Branch::Max(ns) => Branch::Max(ns.map(&mut f)),
+
+                Branch::Sin(n) => Branch::Sin(f(n)),
+                Branch::Cos(n) => Branch::Cos(f(n)),
+                Branch::Tan(n) => Branch::Tan(f(n)),
+
+                Branch::Asin(n) => Branch::Asin(f(n)),
+                Branch::Acos(n) => Branch::Acos(f(n)),
+                Branch::Atan(n) => Branch::Atan(f(n)),
+
+                Branch::Sinh(n) => Branch::Sinh(f(n)),
+                Branch::Cosh(n) => Branch::Cosh(f(n)),
+                Branch::Tanh(n) => Branch::Tanh(f(n)),
+
+                Branch::Asinh(n) => Branch::Asinh(f(n)),
+                Branch::Acosh(n) => Branch::Acosh(f(n)),
+                Branch::Atanh(n) => Branch::Atanh(f(n)),
+
+                Branch::Arg(n) => Branch::Arg(f(n)),
+                Branch::Conj(n) => Branch::Conj(f(n)),
+                Branch::Norm(n) => Branch::Norm(f(n)),
+                Branch::Sign(n) => Branch::Sign(f(n)),
+
+                Branch::Real(n) => Branch::Real(f(n)),
+                Branch::Imag(n) => Branch::Imag(f(n)),
+
+                Branch::Pow { base, exp } => {
+                    Branch::Pow { base: f(base), exp: f(exp) }
+                }
+
+                Branch::Log { base, arg } => {
+                    Branch::Log { base: f(base), arg: f(arg) }
+                }
+
+                Branch::Atan2 { a, b } => Branch::Atan2 { a: f(a), b: f(b) },
+
+                Branch::Matrix(matrix) => Branch::Matrix(Matrix {
+                    shape: matrix.shape,
+                    elements: matrix.elements.into_iter().map(&mut f).collect(),
+                }),
+
+                Branch::Transpose(n) => Branch::Transpose(f(n)),
+                Branch::Det(n) => Branch::Det(f(n)),
+                Branch::Rank(n) => Branch::Rank(f(n)),
+                Branch::Trace(n) => Branch::Trace(f(n)),
+
+                Branch::Conditional { cond, pass, fail } => {
+                    Branch::Conditional {
+                        cond: cond.map(&mut f),
+                        pass: f(pass),
+                        fail: f(fail),
+                    }
+                }
+            }),
+        }
+    }
 }
 
 impl<N> Condition<N> {
+    pub fn map<T>(self, mut f: impl FnMut(N) -> T) -> Condition<T> {
+        match self {
+            Condition::Eq(a, b) => Condition::Eq(f(a), f(b)),
+            Condition::Ne(a, b) => Condition::Ne(f(a), f(b)),
+            Condition::Lt(a, b) => Condition::Lt(f(a), f(b)),
+            Condition::Le(a, b) => Condition::Le(f(a), f(b)),
+            Condition::Gt(a, b) => Condition::Gt(f(a), f(b)),
+            Condition::Ge(a, b) => Condition::Ge(f(a), f(b)),
+
+            Condition::And(conditions) => Condition::And(
+                conditions.into_iter().map(|c| c.map(&mut f)).collect(),
+            ),
+
+            Condition::Or(conditions) => Condition::Or(
+                conditions.into_iter().map(|c| c.map(&mut f)).collect(),
+            ),
+
+            Condition::Not(condition) => {
+                Condition::Not(Box::new(condition.map(&mut f)))
+            }
+        }
+    }
+
     pub fn children(&self) -> Box<dyn DoubleEndedIterator<Item = &N> + '_>
     where
         N: 'static, {
@@ -502,5 +453,187 @@ impl<N> Condition<N> {
             }
             _ => (),
         }
+    }
+}
+
+impl<N> Matrix<N> {
+    // pub fn from_fn(
+    //     rows: impl Into<usize>,
+    //     cols: impl Into<usize>,
+    //     f: FnMut(usize, usize) -> Expr,
+    // ) -> Matrix {
+    // }
+
+    pub fn from_elements(shape: Shape, elements: Box<[N]>) -> Matrix<N> {
+        assert_eq!(shape.cols.get() * shape.rows.get(), elements.len());
+        Self { shape, elements }
+    }
+
+    pub fn fill(rows: impl Into<usize>, cols: impl Into<usize>, el: N) -> Self
+    where
+        N: Clone, {
+        let rows = rows.into();
+        let cols = cols.into();
+        Self {
+            shape: Shape::rect(rows, cols),
+            elements: vec![el; rows * cols].into_boxed_slice(),
+        }
+    }
+
+    /// Returns (rows, cols) for this matrix
+    pub fn shape(&self) -> Shape {
+        self.shape
+    }
+
+    pub fn rows(&self) -> NonZero<usize> {
+        self.shape.rows
+    }
+
+    pub fn cols(&self) -> NonZero<usize> {
+        self.shape.cols
+    }
+
+    pub fn elements(&self) -> &[N] {
+        &self.elements
+    }
+
+    pub fn elements_mut(&mut self) -> &mut [N] {
+        &mut self.elements
+    }
+
+    pub fn into_elements(self) -> Box<[N]> {
+        self.elements
+    }
+
+    pub fn map<T>(self, f: impl FnMut(N) -> T) -> Matrix<T> {
+        Matrix {
+            shape: self.shape,
+            elements: self.elements.into_iter().map(f).collect(),
+        }
+    }
+
+    pub fn into_map(self, f: impl FnMut(N) -> N) -> Matrix<N> {
+        Matrix {
+            shape: self.shape,
+            elements: self.elements.into_iter().map(f).collect(),
+        }
+    }
+}
+
+impl Leaf {
+    pub fn shape(&self) -> Shape {
+        match self {
+            Leaf::Symbol(symbol) => symbol.shape(),
+            Leaf::Constant(constant) => constant.quantity().value().shape(),
+            Leaf::Quantity(quantity) => quantity.value().shape(),
+        }
+    }
+}
+
+impl<N> Index<usize> for Matrix<N> {
+    type Output = [N];
+
+    fn index(&self, row: usize) -> &Self::Output {
+        let start = row * self.shape.cols.get();
+        let end = start + self.shape.cols.get();
+        &self.elements[start..end]
+    }
+}
+
+impl<N> IndexMut<usize> for Matrix<N> {
+    fn index_mut(&mut self, row: usize) -> &mut Self::Output {
+        let start = row * self.shape.cols.get();
+        let end = start + self.shape.cols.get();
+        &mut self.elements[start..end]
+    }
+}
+
+impl From<f64> for Leaf {
+    fn from(value: f64) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<i64> for Leaf {
+    fn from(value: i64) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<Complex64> for Leaf {
+    fn from(value: Complex64) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<Value> for Leaf {
+    fn from(value: Value) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<Quantity> for Leaf {
+    fn from(value: Quantity) -> Self {
+        Leaf::Quantity(value)
+    }
+}
+
+impl From<Constant> for Leaf {
+    fn from(s: Constant) -> Self {
+        Leaf::Constant(s)
+    }
+}
+
+impl From<Symbol> for Leaf {
+    fn from(s: Symbol) -> Self {
+        Leaf::Symbol(s)
+    }
+}
+
+impl From<Variable> for Leaf {
+    fn from(s: Variable) -> Self {
+        Leaf::Symbol(s.symbol())
+    }
+}
+
+impl From<Connector> for Leaf {
+    fn from(s: Connector) -> Self {
+        Leaf::Symbol(s.variable().symbol())
+    }
+}
+
+impl From<VariableBuilder<'_>> for Leaf {
+    fn from(s: VariableBuilder<'_>) -> Self {
+        Leaf::Symbol(s.variable().symbol())
+    }
+}
+
+impl From<ConnectorBuilder<'_>> for Leaf {
+    fn from(s: ConnectorBuilder<'_>) -> Self {
+        Leaf::Symbol(s.connector().variable().symbol())
+    }
+}
+
+impl<T> From<&T> for Leaf
+where
+    Leaf: From<T>,
+{
+    fn from(s: &T) -> Self {
+        s.clone().into()
+    }
+}
+
+impl<N> From<Leaf> for Node<N> {
+    fn from(l: Leaf) -> Self {
+        Node::Leaf(l)
+    }
+}
+
+impl<N, T> From<T> for Node<N>
+where
+    Leaf: From<T>,
+{
+    default fn from(l: T) -> Self {
+        Node::Leaf(l.into())
     }
 }

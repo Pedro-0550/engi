@@ -305,6 +305,7 @@ impl_op_permutations! {
         f64, i64, Complex64, Set, &Set, Value, &Value
     ],
     exclude_permutations = [f64, i64, Complex64, Set, &Set],
+    into = Value,
     out = Value,
 
     add = {

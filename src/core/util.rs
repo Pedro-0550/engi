@@ -97,6 +97,7 @@ fn impl_op_permutations(input: TokenStream) {
         pub exclude_permutations: Vec<String>,
         pub exclude_specific: Vec<(String, String)>,
         pub op_exclusions: HashMap<String, (Vec<String>, Vec<String>)>,
+        pub convert_into: String,
         pub output: String,
         pub bodies: HashMap<String, String>,
     }
@@ -233,6 +234,13 @@ fn impl_op_permutations(input: TokenStream) {
                     value.parse::<Type>()?.to_token_stream().to_string();
 
                 Ok(())
+            } else if meta.path.is_ident("into") {
+                let value = meta.value()?;
+
+                self.convert_into =
+                    value.parse::<Type>()?.to_token_stream().to_string();
+
+                Ok(())
             } else {
                 let name = meta
                     .path
@@ -258,6 +266,7 @@ fn impl_op_permutations(input: TokenStream) {
         .parse2(input)
         .expect("failed to parse impl_op_permutations arguments");
 
+    let into = args.convert_into;
     let out = args.output;
 
     let is_excluded_specific = |a: &str, b: &str| {
@@ -294,7 +303,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::AddAssign<{{b}}> for {{a}} {
                         fn add_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() + {{out}}::from(rhs)
+                            *self = self.clone() + {{into}}::from(rhs)
                         }
                     }
                 }
@@ -305,7 +314,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::SubAssign<{{b}}> for {{a}} {
                         fn sub_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() - {{out}}::from(rhs)
+                            *self = self.clone() - {{into}}::from(rhs)
                         }
                     }
                 }
@@ -316,7 +325,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::MulAssign<{{b}}> for {{a}} {
                         fn mul_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() * {{out}}::from(rhs)
+                            *self = self.clone() * {{into}}::from(rhs)
                         }
                     }
                 }
@@ -327,7 +336,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::DivAssign<{{b}}> for {{a}} {
                         fn div_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() / {{out}}::from(rhs)
+                            *self = self.clone() / {{into}}::from(rhs)
                         }
                     }
                 }
@@ -344,8 +353,8 @@ fn impl_op_permutations(input: TokenStream) {
             crabtime::output! {
                 impl std::cmp::PartialEq<{{b}}> for {{a}} {
                     fn eq(&self, rhs: &{{b}}) -> bool {
-                        let lhs = {{out}}::from(self.clone());
-                        let rhs = {{out}}::from(rhs.clone());
+                        let lhs = {{into}}::from(self.clone());
+                        let rhs = {{into}}::from(rhs.clone());
 
                         {{partial_eq}}
                     }
@@ -360,8 +369,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn add(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{out}}::from(self);
-                            let rhs = {{out}}::from(rhs);
+                            let lhs = {{into}}::from(self);
+                            let rhs = {{into}}::from(rhs);
 
                             {{add}}
                         }
@@ -377,8 +386,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn mul(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{out}}::from(self);
-                            let rhs = {{out}}::from(rhs);
+                            let lhs = {{into}}::from(self);
+                            let rhs = {{into}}::from(rhs);
 
                             {{mul}}
                         }
@@ -394,8 +403,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn div(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{out}}::from(self);
-                            let rhs = {{out}}::from(rhs);
+                            let lhs = {{into}}::from(self);
+                            let rhs = {{into}}::from(rhs);
 
                             {{div}}
                         }
@@ -411,8 +420,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn sub(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{out}}::from(self);
-                            let rhs = {{out}}::from(rhs);
+                            let lhs = {{into}}::from(self);
+                            let rhs = {{into}}::from(rhs);
 
                             {{sub}}
                         }
@@ -428,8 +437,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn pow(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{out}}::from(self);
-                            let rhs = {{out}}::from(rhs);
+                            let lhs = {{into}}::from(self);
+                            let rhs = {{into}}::from(rhs);
 
                             {{pow}}
                         }

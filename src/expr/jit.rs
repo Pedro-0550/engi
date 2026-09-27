@@ -22,7 +22,11 @@ use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 
 use crate::{
     core::value,
-    expr::{Expr, Node, domain::Domain},
+    expr::{
+        Expr, Node,
+        domain::Domain,
+        tree::{Branch, Leaf},
+    },
     symbol::{
         Realization::{self, Imag, Primary, Real},
         Symbol,
@@ -157,7 +161,7 @@ impl Expr {
 
         println!("Compiling ({}) + i * ({})", re_expr, im_expr);
 
-        let mut args = [re_expr.symbols(), im_expr.symbols()].concat();
+        let mut args = re_expr.symbols().chain(im_expr.symbols()).collect_vec();
         args.sort();
         args.dedup();
 
@@ -193,98 +197,70 @@ impl Expr {
             bcx: &mut FunctionBuilder<'_>,
             fns: &MathFns,
         ) -> Value {
-            let compiled_children = expr
-                .iter_children()
-                .map(|x| compile_realized_expr(x, symbols, bcx, fns))
-                .collect_vec();
-
-            match &expr.node {
-                Node::Symbol(symbol) => symbols.get(symbol).copied().unwrap(),
-                Node::Constant(constant) => {
-                    let qty = constant
-                        .quantity()
-                        .value()
-                        .clone()
-                        .into_scalar()
-                        .unwrap();
-
-                    bcx.ins().f64const(qty.re)
-                }
-                Node::Quantity(quantity) => {
-                    let qty =
-                        quantity.clone().value().clone().into_scalar().unwrap();
-                    bcx.ins().f64const(qty.re)
-                }
-                Node::Add(exprs) => compiled_children
-                    .into_iter()
-                    .reduce(|a, b| bcx.ins().fadd(a, b))
-                    .unwrap(),
-                Node::Mul(exprs) => compiled_children
-                    .into_iter()
-                    .reduce(|a, b| bcx.ins().fmul(a, b))
-                    .unwrap(),
-
-                Node::Min(exprs) => compiled_children
-                    .into_iter()
-                    .reduce(|a, b| bcx.ins().fmin(a, b))
-                    .unwrap(),
-                Node::Max(exprs) => compiled_children
-                    .into_iter()
-                    .reduce(|a, b| bcx.ins().fmax(a, b))
-                    .unwrap(),
-
-                Node::Sin(expr) => fns.sin(bcx, compiled_children[0]),
-                Node::Cos(expr) => fns.cos(bcx, compiled_children[0]),
-                Node::Tan(expr) => fns.tan(bcx, compiled_children[0]),
-                Node::Asin(expr) => fns.asin(bcx, compiled_children[0]),
-                Node::Acos(expr) => fns.acos(bcx, compiled_children[0]),
-                Node::Atan(expr) => fns.atan(bcx, compiled_children[0]),
-                Node::Sinh(expr) => fns.sinh(bcx, compiled_children[0]),
-                Node::Cosh(expr) => fns.cosh(bcx, compiled_children[0]),
-                Node::Tanh(expr) => fns.tanh(bcx, compiled_children[0]),
-                Node::Asinh(expr) => fns.asinh(bcx, compiled_children[0]),
-                Node::Acosh(expr) => fns.acosh(bcx, compiled_children[0]),
-                Node::Atanh(expr) => fns.atanh(bcx, compiled_children[0]),
-                Node::Transpose(expr) => todo!(),
-                Node::Conj(expr) => todo!(),
-                Node::Arg(expr) => todo!(),
-                Node::Det(expr) => todo!(),
-                Node::Norm(expr) => fns.abs(bcx, compiled_children[0]),
-                Node::Real(expr) => compiled_children[0],
-                Node::Sign(expr) => fns.signum(bcx, compiled_children[0]),
-                Node::Imag(expr) => bcx.ins().f64const(0.0),
-
-                Node::Pow { base, .. } => {
-                    if **base == e {
-                        fns.exp(bcx, compiled_children[1])
-                    } else {
-                        fns.powf(
-                            bcx,
-                            compiled_children[0],
-                            compiled_children[1],
-                        )
+            expr.clone().fold_dfs(|node| match node {
+                Node::Leaf(leaf) => match leaf {
+                    Leaf::Symbol(symbol) => {
+                        symbols.get(symbol).copied().unwrap()
                     }
-                }
-                Node::Log { base, .. } => {
-                    if **base == e {
-                        fns.ln(bcx, compiled_children[1])
-                    } else {
-                        let num = fns.ln(bcx, compiled_children[1]);
-                        let denom = fns.ln(bcx, compiled_children[0]);
-                        bcx.ins().fdiv(num, denom)
-                    }
-                }
-                Node::Atan2 { .. } => {
-                    fns.atan2(bcx, compiled_children[0], compiled_children[1])
-                }
+                    Leaf::Constant(constant) => {
+                        let qty = constant
+                            .quantity()
+                            .value()
+                            .clone()
+                            .into_scalar()
+                            .unwrap();
 
-                Node::Matrix(matrix) => todo!(),
-                Node::Rank(expr) => todo!(),
-                Node::Trace(expr) => todo!(),
-                Node::Piecewise { arms, default } => {
-                    todo!()
-                }
-            }
+                        bcx.ins().f64const(qty.re)
+                    }
+                    Leaf::Quantity(quantity) => {
+                        let qty = quantity
+                            .clone()
+                            .value()
+                            .clone()
+                            .into_scalar()
+                            .unwrap();
+                        bcx.ins().f64const(qty.re)
+                    }
+                },
+                Node::Branch(branch) => match branch {
+                    Branch::Add([a, b]) => bcx.ins().fadd(*a, *b),
+                    Branch::Mul([a, b]) => bcx.ins().fmul(*a, *b),
+                    Branch::Min([a, b]) => bcx.ins().fmin(*a, *b),
+                    Branch::Max([a, b]) => bcx.ins().fmax(*a, *b),
+                    Branch::Sin(v) => fns.sin(bcx, *v),
+                    Branch::Cos(v) => fns.cos(bcx, *v),
+                    Branch::Tan(v) => fns.tan(bcx, *v),
+                    Branch::Asin(v) => fns.asin(bcx, *v),
+                    Branch::Acos(v) => fns.acos(bcx, *v),
+                    Branch::Atan(v) => fns.atan(bcx, *v),
+                    Branch::Sinh(v) => fns.sinh(bcx, *v),
+                    Branch::Cosh(v) => fns.cosh(bcx, *v),
+                    Branch::Tanh(v) => fns.tanh(bcx, *v),
+                    Branch::Asinh(v) => fns.asinh(bcx, *v),
+                    Branch::Acosh(v) => fns.acosh(bcx, *v),
+                    Branch::Atanh(v) => fns.atanh(bcx, *v),
+                    Branch::Arg(_) => todo!(),
+                    Branch::Conj(v) => *v,
+                    Branch::Norm(v) => fns.abs(bcx, *v),
+                    Branch::Sign(v) => fns.signum(bcx, *v),
+                    Branch::Real(v) => *v,
+                    Branch::Imag(_) => bcx.ins().f64const(0.0),
+                    Branch::Pow { base, exp } => fns.powf(bcx, *base, *exp),
+                    Branch::Log { base, arg } => {
+                        let a = fns.ln(bcx, *arg);
+                        let b = fns.ln(bcx, *base);
+
+                        bcx.ins().fdiv(a, b)
+                    }
+                    Branch::Atan2 { a, b } => fns.atan2(bcx, *a, *b),
+                    Branch::Matrix(matrix) => todo!(),
+                    Branch::Transpose(_) => todo!(),
+                    Branch::Det(_) => todo!(),
+                    Branch::Rank(_) => todo!(),
+                    Branch::Trace(_) => todo!(),
+                    Branch::Conditional { cond, pass, fail } => todo!(),
+                },
+            })
         }
 
         let (re, im) = (

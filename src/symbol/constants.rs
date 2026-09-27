@@ -75,7 +75,7 @@ constants! {
     // TODO: add more useful constants
 }
 
-#[derive(Hash, Debug, PartialEq)]
+#[derive(Hash, Debug, PartialEq, Copy)]
 pub struct Constant {
     name: &'static str,
     value: fn() -> Quantity,

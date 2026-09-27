@@ -1,6 +1,12 @@
-use num::{Complex, bigint::Sign};
+use std::ops::{Add, Mul};
 
-use super::Node;
+use num::{Complex, bigint::Sign};
+use ordered_float::Pow;
+
+use super::{
+    Node,
+    tree::{Branch, Leaf},
+};
 use crate::expr::{
     Expr,
     domain::Endpoint::{Neg, Pos, Zero},
@@ -188,50 +194,88 @@ impl Domain {
     pub const REAL: Domain = Domain { re: Interval::R, im: Interval::ZERO };
 
     pub const IMAG: Domain = Domain { re: Interval::ZERO, im: Interval::R };
+
+    pub fn real(&self) -> Domain {}
+    pub fn imag(&self) -> Domain {}
+
+    pub fn min(&self, other: Domain) -> Domain {}
+    pub fn max(&self, other: Domain) -> Domain {}
+    pub fn union(&self, other: Domain) -> Domain {}
+}
+
+impl Pow<Domain> for Domain {
+    type Output = Domain;
+
+    fn pow(self, rhs: Domain) -> Self::Output {
+        todo!()
+    }
+}
+
+impl Add<Domain> for Domain {
+    type Output = Domain;
+
+    fn add(self, rhs: Domain) -> Self::Output {}
+}
+
+impl Mul<Domain> for Domain {
+    type Output = Domain;
+
+    fn mul(self, rhs: Domain) -> Self::Output {}
 }
 
 impl Expr {
     /// Returns the domain of this expression.
     /// The value of this expression is guaranteed to be contained in such domain, but its not required to cover all of it.
     pub fn domain(&self) -> Domain {
-        match &self.node {
-            Node::Symbol(symbol) => symbol.domain(),
-            Node::Constant(constant) => constant.quantity().value().domain(),
-            Node::Quantity(quantity) => quantity.value().domain(),
-
-            Node::Add(exprs) => todo!(),
-            Node::Mul(exprs) => todo!(),
-            Node::Min(exprs) => todo!(),
-            Node::Max(exprs) => todo!(),
-            Node::Sin(expr) => todo!(),
-            Node::Cos(expr) => todo!(),
-            Node::Tan(expr) => todo!(),
-            Node::Asin(expr) => todo!(),
-            Node::Acos(expr) => todo!(),
-            Node::Atan(expr) => todo!(),
-            Node::Sinh(expr) => todo!(),
-            Node::Cosh(expr) => todo!(),
-            Node::Tanh(expr) => todo!(),
-            Node::Asinh(expr) => todo!(),
-            Node::Acosh(expr) => todo!(),
-            Node::Atanh(expr) => todo!(),
-            Node::Arg(expr) => todo!(),
-            Node::Conj(expr) => todo!(),
-            Node::Norm(expr) => todo!(),
-            Node::Sign(expr) => todo!(),
-            Node::Real(expr) => todo!(),
-            Node::Imag(expr) => todo!(),
-            Node::Pow { base, exp } => todo!(),
-            Node::Log { base, arg } => todo!(),
-            Node::Atan2 { a, b } => Domain::REAL,
-            Node::Matrix(matrix) => todo!(),
-            Node::Transpose(expr) => expr.domain(),
-            Node::Det(expr) => todo!(),
-            Node::Rank(expr) => todo!(),
-            Node::Trace(expr) => todo!(),
-            Node::Piecewise { arms, default } => todo!(),
-        }
+        self.fold_dfs(|node: &Node<Domain>| match node {
+            Node::Leaf(leaf) => match leaf {
+                Leaf::Symbol(symbol) => symbol.domain(),
+                Leaf::Constant(constant) => {
+                    constant.quantity().value().domain()
+                }
+                Leaf::Quantity(quantity) => quantity.value().domain(),
+            },
+            Node::Branch(branch) => match branch {
+                Branch::Add([a, b]) => *a + *b,
+                Branch::Mul([a, b]) => *a * *b,
+                Branch::Min([a, b]) => a.min(*b),
+                Branch::Max([a, b]) => a.max(*b),
+                Branch::Sin(_) => todo!(),
+                Branch::Cos(_) => todo!(),
+                Branch::Tan(_) => todo!(),
+                Branch::Asin(_) => todo!(),
+                Branch::Acos(_) => todo!(),
+                Branch::Atan(_) => todo!(),
+                Branch::Sinh(_) => todo!(),
+                Branch::Cosh(_) => todo!(),
+                Branch::Tanh(_) => todo!(),
+                Branch::Asinh(_) => todo!(),
+                Branch::Acosh(_) => todo!(),
+                Branch::Atanh(_) => todo!(),
+                Branch::Arg(_) => Domain::REAL,
+                Branch::Conj(_) => todo!(),
+                Branch::Norm(_) => Domain::new(Interval::R_NN, Interval::ZERO),
+                Branch::Sign(_) => todo!(),
+                Branch::Real(x) => x.real(),
+                Branch::Imag(x) => x.imag(),
+                Branch::Pow { base, exp } => base.pow(*exp),
+                Branch::Log { base, arg } => todo!(),
+                Branch::Atan2 { a, b } => Domain::REAL,
+                Branch::Matrix(matrix) => matrix
+                    .elements()
+                    .iter()
+                    .copied()
+                    .reduce(|a, b| a.union(b))
+                    .unwrap(),
+                Branch::Transpose(x) => *x,
+                Branch::Det(_) => todo!(),
+                Branch::Rank(_) => todo!(),
+                Branch::Trace(_) => todo!(),
+                Branch::Conditional { cond, pass, fail } => pass.union(*fail),
+            },
+        })
     }
+
     pub fn realize(self) -> [Expr; 2] {
         todo!()
     }

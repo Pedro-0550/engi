@@ -1,392 +1,322 @@
-use std::{
-    array,
-    cell::{LazyCell, OnceCell},
-    collections::HashMap,
-    fmt::{Debug, Display, Pointer},
-    hash::{BuildHasher, Hash, Hasher},
-    mem::{discriminant, take},
-    num::NonZero,
-    rc::Rc,
-    sync::{Arc, LazyLock},
-};
-
-use cranelift::{
-    codegen::{
-        entity::EntityRef,
-        ir::{
-            AbiParam, FuncRef, InstBuilder, MemFlags, MemFlagsData,
-            UserFuncName,
-            types::{self, F64},
-        },
-        settings::{self, Configurable, Flags},
-    },
-    frontend::{FunctionBuilder, FunctionBuilderContext},
-    jit::{JITBuilder, JITModule},
-    module::{Linkage, Module, default_libcall_names},
-};
-use dashmap::mapref::one::Ref;
-use derive_more::{Deref, DerefMut, From, IsVariant};
-use itertools::Itertools;
-use kinded::Kinded;
-use num::complex::{Complex64, ComplexFloat};
-use ordered_float::Pow;
-use xxhash_rust::xxh3::Xxh3Builder;
-
-use crate::{
-    core::{
-        interned::{Handle, Interned},
-        util::impl_as_variant,
-        value::Value,
-    },
-    expr::mat::Matrix,
-    symbol::{
-        Symbol,
-        constants::{Constant, e, π},
-    },
-    units::Quantity,
-};
-
-/* --------------------------------- MODULES -------------------------------- */
-
+// /* --------------------------------- MODULES -------------------------------- */
 pub mod domain;
 pub mod fmt;
 pub mod jit;
-pub mod mat;
+pub mod normal;
 pub mod ops;
 pub mod shape;
+pub mod tree;
 
-/* --------------------------------- ALIASES -------------------------------- */
+use std::{
+    cell::OnceCell,
+    collections::{HashMap, HashSet},
+    hash::{Hash, Hasher},
+    iter::empty,
+    ops::{Add, Div, Mul, Neg, Sub},
+    slice,
+};
 
-type Bindings = HashMap<Symbol, Expr>;
+use derive_more::IsVariant;
+use itertools::Itertools;
+use kinded::Kinded;
+use num::complex::Complex64;
+use ordered_float::Pow;
+use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 
-/* ---------------------------------- ENUMS --------------------------------- */
-
-#[derive(Eq, Clone, PartialEq, Hash, Debug, From, IsVariant, Kinded)]
-#[kinded(derive(Hash))]
-pub enum Node {
-    #[from]
-    Symbol(Symbol),
-    #[from]
-    Constant(Constant),
-    #[from]
-    Quantity(Quantity),
-
-    Add(Box<[Expr]>),
-    Mul(Box<[Expr]>),
-    Min(Box<[Expr]>),
-    Max(Box<[Expr]>),
-
-    Sin(Box<Expr>),
-    Cos(Box<Expr>),
-    Tan(Box<Expr>),
-
-    Asin(Box<Expr>),
-    Acos(Box<Expr>),
-    Atan(Box<Expr>),
-
-    Sinh(Box<Expr>),
-    Cosh(Box<Expr>),
-    Tanh(Box<Expr>),
-
-    Asinh(Box<Expr>),
-    Acosh(Box<Expr>),
-    Atanh(Box<Expr>),
-
-    Arg(Box<Expr>),
-    Conj(Box<Expr>),
-    Norm(Box<Expr>),
-    Sign(Box<Expr>),
-
-    Real(Box<Expr>),
-    Imag(Box<Expr>),
-
-    Pow {
-        base: Box<Expr>,
-        exp: Box<Expr>,
+use crate::{
+    core::value::Value,
+    expr::{
+        shape::Shape,
+        tree::{Branch, Leaf, Node, NodeKind},
     },
-    Log {
-        base: Box<Expr>,
-        arg: Box<Expr>,
+    model::Variable,
+    symbol::{
+        Symbol,
+        constants::{Constant, e},
     },
-    Atan2 {
-        a: Box<Expr>,
-        b: Box<Expr>,
-    },
+    units::{Quantity, Unit::Unitless},
+};
 
-    #[from]
-    Matrix(Matrix),
-    Transpose(Box<Expr>),
-    Det(Box<Expr>),
-    Rank(Box<Expr>),
-    Trace(Box<Expr>),
+type ExprNode = Node<NodeId>;
 
-    Piecewise {
-        arms: Box<[Arm]>,
-        default: Box<Arm>,
-    },
-}
+#[derive(PartialEq, Clone, Eq, Hash, Copy)]
+pub struct NodeId(usize);
 
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub struct Arm {
-    cond: Condition,
-    expr: Expr,
-}
+#[derive(PartialEq, Clone, Eq, Hash, Copy)]
+pub struct NodeKey(u128);
 
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub enum Condition {
-    Eq(Expr, Expr),
-    Ne(Expr, Expr),
-    Lt(Expr, Expr),
-    Le(Expr, Expr),
-    Gt(Expr, Expr),
-    Ge(Expr, Expr),
+#[derive(PartialEq, Clone, Eq, Hash, Copy)]
+pub struct ExprKey(u128);
 
-    And(Box<[Condition]>),
-    Or(Box<[Condition]>),
-    Not(Box<Condition>),
-}
-
-#[derive(Clone, Eq)]
+#[derive(Eq, Clone)]
 pub struct Expr {
-    node: Node,
-    key: OnceCell<u128>,
+    nodes: Vec<(NodeKey, ExprNode)>,
+    cons: HashMap<NodeKey, NodeId>,
+    root: NodeId,
 }
-
-/* --------------------------------- STRUCTS -------------------------------- */
-
-// #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// pub struct Expr(Handle<Node>);
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl_as_variant!(Node, [Quantity => Quantity, Constant => Constant, Symbol => Symbol]);
-
-impl Hash for Expr {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u128(self.key());
-    }
-}
-
 impl Expr {
-    /// Returns an iterator over the immediate children of this expr node.
-    pub fn iter_children<'s>(&'s self) -> Box<dyn Iterator<Item = &Expr> + 's> {
-        match &self.node {
-            Node::Symbol(_) | Node::Constant(_) | Node::Quantity(_) => {
-                Box::new(std::iter::empty())
-            }
-            Node::Add(nodes)
-            | Node::Mul(nodes)
-            | Node::Min(nodes)
-            | Node::Max(nodes) => Box::new(nodes.iter()),
-            Node::Sin(node)
-            | Node::Cos(node)
-            | Node::Tan(node)
-            | Node::Asin(node)
-            | Node::Acos(node)
-            | Node::Atan(node)
-            | Node::Sinh(node)
-            | Node::Cosh(node)
-            | Node::Tanh(node)
-            | Node::Asinh(node)
-            | Node::Acosh(node)
-            | Node::Atanh(node)
-            | Node::Arg(node)
-            | Node::Conj(node)
-            | Node::Norm(node)
-            | Node::Sign(node)
-            | Node::Real(node)
-            | Node::Imag(node)
-            | Node::Det(node)
-            | Node::Transpose(node)
-            | Node::Rank(node)
-            | Node::Trace(node) => Box::new(std::iter::once(node.as_ref())),
-            Node::Pow { base, exp } => {
-                Box::new([base.as_ref(), exp.as_ref()].into_iter())
-            }
-            Node::Log { base, arg } => {
-                Box::new([base.as_ref(), arg.as_ref()].into_iter())
-            }
-            Node::Atan2 { a, b } => {
-                Box::new([a.as_ref(), b.as_ref()].into_iter())
-            }
-            Node::Matrix(matrix) => Box::new(matrix.elements().iter()),
-            Node::Piecewise { arms, default } => todo!(),
-        }
+    pub fn len(&self) -> usize {
+        self.nodes.len()
     }
 
-    pub fn key(&self) -> u128 {
-        *self.key.get_or_init(|| {
-            let mut hasher = Xxh3Builder::new().with_secret([0; 192]).build();
-            self.node.hash(&mut hasher);
-            hasher.digest128()
-        })
+    pub fn root(&self) -> NodeId {
+        self.root
     }
 
-    /// Returns an iterator over the immediate children of this expr node.
-    pub fn into_iter_children(self) -> Box<dyn Iterator<Item = Expr>> {
-        match self.node {
-            Node::Symbol(_) | Node::Constant(_) | Node::Quantity(_) => {
-                Box::new(std::iter::empty())
+    pub fn node(&self, id: NodeId) -> &ExprNode {
+        &self.nodes[id.0].1
+    }
+
+    pub fn node_mut(&mut self, id: NodeId) -> &mut ExprNode {
+        &mut self.nodes[id.0].1
+    }
+
+    fn key_of(&self, node: &ExprNode) -> NodeKey {
+        let mut hasher = Xxh3Builder::new().with_seed(0).build();
+        match node {
+            Node::Leaf(leaf) => {
+                leaf.hash(&mut hasher);
             }
-            Node::Add(nodes)
-            | Node::Mul(nodes)
-            | Node::Min(nodes)
-            | Node::Max(nodes) => Box::new(nodes.into_iter()),
-            Node::Sin(node)
-            | Node::Cos(node)
-            | Node::Tan(node)
-            | Node::Asin(node)
-            | Node::Acos(node)
-            | Node::Atan(node)
-            | Node::Sinh(node)
-            | Node::Cosh(node)
-            | Node::Tanh(node)
-            | Node::Asinh(node)
-            | Node::Acosh(node)
-            | Node::Atanh(node)
-            | Node::Arg(node)
-            | Node::Conj(node)
-            | Node::Norm(node)
-            | Node::Sign(node)
-            | Node::Real(node)
-            | Node::Imag(node)
-            | Node::Det(node)
-            | Node::Transpose(node)
-            | Node::Rank(node)
-            | Node::Trace(node) => Box::new(std::iter::once(*node)),
-            Node::Pow { base, exp } => Box::new([*base, *exp].into_iter()),
-            Node::Log { base, arg } => Box::new([*base, *arg].into_iter()),
-            Node::Atan2 { a, b } => Box::new([*a, *b].into_iter()),
-            Node::Matrix(matrix) => {
-                Box::new(matrix.into_elements().into_iter())
-            }
-            Node::Piecewise { arms, default } => todo!(),
-        }
-    }
+            Node::Branch(branch) => {
+                branch.kind().hash(&mut hasher);
 
-    /// Applys a function to every child of this node, and returns the same node kind with the new children.
-    pub fn map_children(&self, f: impl FnMut(Expr) -> Expr) -> Expr {
-        let shape = self.shape();
-        let mut mapped = self.iter_children().cloned().map(f);
-
-        let node = match self.node {
-            Node::Symbol(_) => self.node.clone(),
-            Node::Constant(_) => self.node.clone(),
-            Node::Quantity(_) => self.node.clone(),
-
-            Node::Add(_) => Node::Add(mapped.collect()),
-            Node::Mul(_) => Node::Mul(mapped.collect()),
-            Node::Min(_) => Node::Min(mapped.collect()),
-            Node::Max(_) => Node::Max(mapped.collect()),
-
-            Node::Sin(_) => Node::Sin(Box::new(mapped.next().unwrap())),
-            Node::Cos(_) => Node::Cos(Box::new(mapped.next().unwrap())),
-            Node::Tan(_) => Node::Tan(Box::new(mapped.next().unwrap())),
-
-            Node::Asin(_) => Node::Asin(Box::new(mapped.next().unwrap())),
-            Node::Acos(_) => Node::Acos(Box::new(mapped.next().unwrap())),
-            Node::Atan(_) => Node::Atan(Box::new(mapped.next().unwrap())),
-
-            Node::Sinh(_) => Node::Sinh(Box::new(mapped.next().unwrap())),
-            Node::Cosh(_) => Node::Cosh(Box::new(mapped.next().unwrap())),
-            Node::Tanh(_) => Node::Tanh(Box::new(mapped.next().unwrap())),
-
-            Node::Asinh(_) => Node::Asinh(Box::new(mapped.next().unwrap())),
-            Node::Acosh(_) => Node::Acosh(Box::new(mapped.next().unwrap())),
-            Node::Atanh(_) => Node::Atanh(Box::new(mapped.next().unwrap())),
-
-            Node::Arg(_) => Node::Arg(Box::new(mapped.next().unwrap())),
-            Node::Conj(_) => Node::Conj(Box::new(mapped.next().unwrap())),
-            Node::Norm(_) => Node::Norm(Box::new(mapped.next().unwrap())),
-            Node::Sign(_) => Node::Sign(Box::new(mapped.next().unwrap())),
-
-            Node::Real(_) => Node::Real(Box::new(mapped.next().unwrap())),
-            Node::Imag(_) => Node::Imag(Box::new(mapped.next().unwrap())),
-
-            Node::Pow { .. } => Node::Pow {
-                base: Box::new(mapped.next().unwrap()),
-                exp: Box::new(mapped.next().unwrap()),
-            },
-
-            Node::Log { .. } => Node::Log {
-                base: Box::new(mapped.next().unwrap()),
-                arg: Box::new(mapped.next().unwrap()),
-            },
-
-            Node::Atan2 { .. } => Node::Atan2 {
-                a: Box::new(mapped.next().unwrap()),
-                b: Box::new(mapped.next().unwrap()),
-            },
-
-            Node::Transpose(_) => {
-                Node::Transpose(Box::new(mapped.next().unwrap()))
-            }
-            Node::Det(_) => Node::Det(Box::new(mapped.next().unwrap())),
-            Node::Rank(_) => Node::Rank(Box::new(mapped.next().unwrap())),
-            Node::Trace(_) => Node::Trace(Box::new(mapped.next().unwrap())),
-
-            Node::Matrix(_) => {
-                Node::Matrix(Matrix::from_elements(shape, mapped.collect()))
-            }
-            Node::Piecewise { .. } => todo!(),
-        };
-
-        node.into()
-    }
-}
-
-impl Expr {
-    pub fn node(&self) -> &Node {
-        &self.node
-    }
-
-    pub fn into_node(self) -> Node {
-        self.node
-    }
-
-    /// Returns the total number of nodes in this expression
-    pub fn size(&self) -> usize {
-        1 + self.iter_children().map(Expr::size).sum::<usize>()
-    }
-
-    pub fn symbols(&self) -> Vec<Symbol> {
-        fn symbols_inner(expr: &Expr, vec: &mut Vec<Symbol>) {
-            match expr.node() {
-                Node::Symbol(symbol) => vec.push(*symbol),
-                Node::Quantity(quantity) => (),
-                Node::Constant(_) => (),
-                _ => expr.iter_children().for_each(|s| symbols_inner(s, vec)),
-            }
-        }
-
-        let mut vec = Vec::new();
-        symbols_inner(self, &mut vec);
-        vec.sort();
-        vec.dedup();
-        vec
-    }
-
-    pub fn substitute(&self, bindings: &Bindings) -> Self {
-        match self.node() {
-            Node::Constant(c) => c.into(),
-            Node::Quantity(qty) => qty.into(),
-
-            Node::Symbol(sym) => {
-                if let Some(binding) = bindings.get(&sym) {
-                    binding.clone()
-                } else {
-                    self.clone()
+                match branch {
+                    Branch::Matrix(matrix) => {
+                        matrix.shape().hash(&mut hasher);
+                    }
+                    Branch::Conditional { cond, .. } => {
+                        cond.hash_structure(&mut hasher);
+                    }
+                    _ => {}
                 }
             }
-
-            _ => self.map_children(|c| c.substitute(bindings)),
         }
+
+        for child_id in node.children() {
+            let (child_key, _) = self.nodes[child_id.0];
+            child_key.hash(&mut hasher);
+        }
+
+        NodeKey(hasher.digest128())
+    }
+
+    pub fn push(&mut self, node: ExprNode) -> NodeId {
+        self.push_with_key(self.key_of(&node), node)
+    }
+
+    fn push_with_key(&mut self, key: NodeKey, node: ExprNode) -> NodeId {
+        if let Some(&id) = self.cons.get(&key) {
+            return id;
+        }
+
+        let id = NodeId(self.nodes.len());
+
+        self.nodes.push((key, node));
+        self.cons.insert(key, id);
+
+        id
+    }
+
+    pub fn substitute(&mut self, bindings: &[(Symbol, Expr)]) {
+        let symbol_to_expr = bindings
+            .iter()
+            .filter_map(|(symbol, expr)| {
+                let node_key = self.key_of(&Node::Leaf(Leaf::Symbol(*symbol)));
+                let symbol_node_id = *self.cons.get(&node_key)?;
+                let expr_node_id = self.append(expr.clone());
+
+                Some((symbol_node_id, expr_node_id))
+            })
+            .collect::<HashMap<_, _>>();
+
+        for (_, node) in &mut self.nodes {
+            for child_id in node.children_mut() {
+                if let Some(new_id) = symbol_to_expr.get(&*child_id) {
+                    *child_id = *new_id;
+                }
+            }
+        }
+    }
+
+    /// Appends the given expr to the current expr, moving all of its nodes, changing IDs.
+    /// Returns the new id of the other expr's root.
+    fn append(&mut self, other: Expr) -> NodeId {
+        let mut remapped = vec![None; other.nodes.len()];
+        let mut other_nodes = other.nodes.into_iter().map(Some).collect_vec();
+        let mut stack = vec![(other.root, false)];
+
+        while let Some((id, processed)) = stack.pop() {
+            if remapped[id.0].is_some() {
+                continue;
+            }
+
+            if processed {
+                let (key, mut node) = other_nodes[id.0].take().unwrap();
+
+                for child in node.children_mut() {
+                    *child = remapped[child.0].unwrap();
+                }
+
+                let new_id = self.push_with_key(key, node);
+                remapped[id.0] = Some(new_id);
+            } else {
+                stack.push((id, true));
+
+                if let Some((_, node)) = &other_nodes[id.0] {
+                    for child in node.children() {
+                        if remapped[child.0].is_none() {
+                            stack.push((*child, false));
+                        }
+                    }
+                }
+            }
+        }
+
+        remapped[other.root.0].unwrap()
+    }
+
+    pub fn reroot(&mut self, new_root: ExprNode) -> NodeId {
+        let root = self.push(new_root);
+        self.root = root;
+        root
+    }
+
+    pub fn set_root(&mut self, new_root: NodeId) {
+        self.root = new_root;
+    }
+
+    fn pre_dfs(&self) -> Vec<(NodeId, &ExprNode)> {
+        let mut visit = Vec::with_capacity(self.nodes.len());
+
+        fn pre_dfs_inner<'e>(
+            expr: &'e Expr,
+            current: NodeId,
+            into: &mut Vec<(NodeId, &'e ExprNode)>,
+        ) {
+            let node = &expr.nodes[current.0].1;
+            into.push((current, node));
+            for child in node.children() {
+                pre_dfs_inner(expr, *child, into);
+            }
+        }
+
+        pre_dfs_inner(self, self.root, &mut visit);
+        visit
+    }
+
+    pub fn post_dfs(&self) -> Vec<(NodeId, &ExprNode)> {
+        let mut visit = Vec::with_capacity(self.nodes.len());
+
+        fn post_dfs_inner<'e>(
+            expr: &'e Expr,
+            current: NodeId,
+            into: &mut Vec<(NodeId, &'e ExprNode)>,
+        ) {
+            let node = &expr.nodes[current.0].1;
+            for child in node.children() {
+                post_dfs_inner(expr, *child, into);
+            }
+            into.push((current, node));
+        }
+
+        post_dfs_inner(self, self.root, &mut visit);
+        visit
+    }
+
+    pub fn fold_dfs<T: Clone>(&self, mut f: impl FnMut(&Node<T>) -> T) -> T {
+        let mut mapped = HashMap::<NodeId, T>::with_capacity(self.nodes.len());
+
+        for (id, node) in self.post_dfs() {
+            if mapped.contains_key(&id) {
+                continue;
+            }
+
+            let mapped_node = match node {
+                Node::Leaf(leaf) => Node::Leaf(leaf.clone()),
+                Node::Branch(_) => {
+                    node.clone().map(|child_id| mapped[&child_id].clone())
+                }
+            };
+
+            let result = f(&mapped_node);
+            mapped.insert(id, result);
+        }
+
+        mapped.remove(&self.root).unwrap()
+    }
+
+    pub fn new() -> Self {
+        Self { cons: HashMap::new(), nodes: Vec::new(), root: NodeId(0) }
+    }
+
+    pub fn symbols(&self) -> impl Iterator<Item = Symbol> {
+        self.nodes.iter().filter_map(|x| x.1.as_leaf()?.as_symbol().copied())
     }
 }
 
 impl PartialEq for Expr {
     fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
+        self.nodes[self.root.0].0 == other.nodes[other.root.0].0
+    }
+}
+
+impl Hash for Expr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.nodes[self.root.0].0.hash(state);
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
+impl Mul<Expr> for Expr {
+    type Output = Expr;
+
+    fn mul(mut self, rhs: Expr) -> Self::Output {
+        let a_id = self.root();
+        let b_id = self.append(rhs);
+        self.reroot(Node::Branch(Branch::Mul([a_id, b_id])));
+        self
+    }
+}
+
+impl Add<Expr> for Expr {
+    type Output = Expr;
+
+    fn add(mut self, rhs: Expr) -> Self::Output {
+        let a_id = self.root();
+        let b_id = self.append(rhs);
+        self.reroot(Node::Branch(Branch::Add([a_id, b_id])));
+        self
+    }
+}
+
+impl Sub<Expr> for Expr {
+    type Output = Expr;
+
+    fn sub(self, rhs: Expr) -> Self::Output {
+        self + -rhs
+    }
+}
+
+impl Div<Expr> for Expr {
+    type Output = Expr;
+
+    fn div(self, rhs: Expr) -> Self::Output {
+        self * rhs.pow(-1)
+    }
+}
+
+impl Pow<Expr> for Expr {
+    type Output = Expr;
+
+    fn pow(mut self, exp: Expr) -> Self::Output {
+        let base = self.root();
+        let exp = self.append(exp);
+        self.reroot(Node::Branch(Branch::Pow { base, exp }));
+        self
     }
 }
 
@@ -395,15 +325,16 @@ impl PartialEq for Expr {
 macro_rules! impl_unary_fn {
     ($fn:ident, $variant:ident, $name:literal) => {
         pub fn $fn(x: impl Into<Expr>) -> Expr {
-            let expr = x.into();
+            let mut expr = x.into();
 
-            Node::$variant(Box::new(expr)).into()
+            expr.reroot(Node::Branch(Branch::$variant(expr.root())));
+            expr
         }
     };
 
     ($fn:ident, $variant:ident, $name:literal, square) => {
         pub fn $fn(x: impl Into<Expr>) -> Expr {
-            let expr = x.into();
+            let mut expr = x.into();
             let shape = expr.shape();
 
             assert!(
@@ -412,7 +343,8 @@ macro_rules! impl_unary_fn {
                 $name
             );
 
-            Node::$variant(Box::new(expr)).into()
+            expr.reroot(Node::Branch(Branch::$variant(expr.root())));
+            expr
         }
     };
 }
@@ -448,20 +380,24 @@ impl_unary_fn!(
 );
 
 pub fn atan2(a: impl Into<Expr>, b: impl Into<Expr>) -> Expr {
-    let a = Box::new(a.into());
-    let b = Box::new(b.into());
+    let mut expr = a.into();
+    let b = b.into();
 
     assert!(
-        a.shape().is_scalar() && b.shape().is_scalar(),
+        expr.shape().is_scalar() && b.shape().is_scalar(),
         "atan2 is only defined for scalars"
     );
 
-    Node::Atan2 { a, b }.into()
+    let a = expr.root();
+    let b = expr.append(b);
+
+    expr.reroot(Node::Branch(Branch::Atan2 { a, b }));
+    expr
 }
 
 pub fn log(base: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
-    let base = Box::new(base.into());
-    let x = Box::new(x.into());
+    let base = base.into();
+    let x = x.into();
 
     assert!(
         base.shape().is_scalar(),
@@ -473,7 +409,13 @@ pub fn log(base: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
         "Matrix-valued logarithm is only defined for square matrices"
     );
 
-    Node::Log { base, arg: x }.into()
+    let mut expr = base;
+    let base = expr.root();
+    let x = expr.append(x);
+
+    expr.reroot(Node::Branch(Branch::Log { base, arg: x }));
+
+    expr
 }
 
 pub fn ln(x: impl Into<Expr>) -> Expr {

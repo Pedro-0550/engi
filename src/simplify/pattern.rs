@@ -8,12 +8,16 @@ use num::{complex::Complex64, pow::Pow};
 
 use crate::{
     core::{util::impl_op_permutations, value::Value},
-    expr::{Expr, Node, NodeKind, domain::Domain, shape::Shape},
+    expr::{
+        Expr,
+        domain::Domain,
+        shape::Shape,
+        tree::{Branch, Node},
+    },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::{
-        Branch, ClassId, EquivalencyBranch, EquivalencyClass, EquivalencyExpr,
-        EquivalencyGraph, EquivalencyNode, EquivalencyNodeKind, Leaf,
-        Substitution,
+        ClassId, EquivalencyClass, EquivalencyExpr, EquivalencyGraph,
+        EquivalencyNode, EquivalencyNodeStructure, Leaf, Substitution,
     },
     symbol::{
         Symbol,
@@ -62,7 +66,7 @@ pub struct ConditionContext<'a> {
 }
 
 pub enum Instruction {
-    Bind { kind: EquivalencyNodeKind, target: Reg, out: Reg },
+    Bind { structure: EquivalencyNodeStructure, target: Reg, out: Reg },
     Compare { a: Reg, b: Reg },
     If { f: Rc<dyn Fn(ConditionContext<'_>) -> bool> },
 }
@@ -70,8 +74,7 @@ pub enum Instruction {
 #[derive(PartialEq, Clone, Eq)]
 pub enum Pattern {
     Wildcard(Wildcard),
-    Leaf(Leaf),
-    Branch(Branch<Box<Pattern>>),
+    Node(Node<Box<Pattern>>),
 }
 
 impl<'a> ConditionContext<'a> {
@@ -141,28 +144,32 @@ impl Pattern {
                     }
                 }
             }
-            Pattern::Leaf(leaf) => match leaf {
-                _ => state.instructions.push(Instruction::Bind {
-                    kind: EquivalencyNodeKind::Leaf(leaf.clone()),
-                    target,
-                    out: state.next,
-                }),
-            },
-            Pattern::Branch(branch) => {
-                let out = state.next;
-                let children = branch.children();
-                state.next.0 += children.len();
+            Pattern::Node(node) => match node {
+                Node::Leaf(leaf) => match leaf {
+                    _ => state.instructions.push(Instruction::Bind {
+                        structure: EquivalencyNodeStructure::Leaf(leaf.clone()),
+                        target,
+                        out: state.next,
+                    }),
+                },
+                Node::Branch(branch) => {
+                    let out = state.next;
+                    let mut children = node.children();
+                    state.next.0 += children.by_ref().count();
 
-                state.instructions.push(Instruction::Bind {
-                    kind: EquivalencyNodeKind::Branch(branch.kind()),
-                    target,
-                    out,
-                });
+                    state.instructions.push(Instruction::Bind {
+                        structure: EquivalencyNodeStructure::Branch(
+                            branch.kind(),
+                        ),
+                        target,
+                        out,
+                    });
 
-                for (i, child) in children.iter().enumerate() {
-                    child.compile_inner(Reg(out.0 + i), conditions, state);
+                    for (i, child) in children.enumerate() {
+                        child.compile_inner(Reg(out.0 + i), conditions, state);
+                    }
                 }
-            }
+            },
         }
     }
 }
@@ -191,20 +198,20 @@ impl Machine {
             }
 
             match &program.code[pc] {
-                Instruction::Bind { kind, target, out } => {
+                Instruction::Bind { structure, target, out } => {
                     let target_id = registers[target.0];
                     let target_class = &graph.classes[graph.find(target_id).0];
 
                     for node_id in &target_class.exprs {
                         let expr = &graph.exprs[node_id.0];
 
-                        if expr.node.kind() == *kind {
+                        if expr.node.structure() == *structure {
                             let mut regs = registers.clone();
 
                             for (i, &child_class) in
-                                expr.node.children().iter().enumerate()
+                                expr.node.children().enumerate()
                             {
-                                regs[out.0 + i] = *child_class;
+                                regs[out.0 + i] = child_class;
                             }
 
                             stack.push((pc + 1, regs));
@@ -252,25 +259,25 @@ impl From<&Pattern> for Pattern {
 
 impl From<f64> for Pattern {
     fn from(v: f64) -> Self {
-        Pattern::Leaf(Leaf::Quantity(v.into()))
+        Pattern::Node(Node::Leaf(Leaf::Quantity(v.into())))
     }
 }
 
 impl From<i64> for Pattern {
     fn from(v: i64) -> Self {
-        Pattern::Leaf(Leaf::Quantity(v.into()))
+        Pattern::Node(Node::Leaf(Leaf::Quantity(v.into())))
     }
 }
 
 impl From<Value> for Pattern {
     fn from(v: Value) -> Self {
-        Pattern::Leaf(Leaf::Quantity(v * Unit::Unitless))
+        Pattern::Node(Node::Leaf(Leaf::Quantity(v * Unit::Unitless)))
     }
 }
 
 impl From<Complex64> for Pattern {
     fn from(v: Complex64) -> Self {
-        Pattern::Leaf(Leaf::Quantity(v * Unit::Unitless))
+        Pattern::Node(Node::Leaf(Leaf::Quantity(v * Unit::Unitless)))
     }
 }
 
@@ -282,19 +289,19 @@ impl From<Wildcard> for Pattern {
 
 impl From<Symbol> for Pattern {
     fn from(v: Symbol) -> Self {
-        Pattern::Leaf(Leaf::Symbol(v))
+        Pattern::Node(Node::Leaf(Leaf::Symbol(v)))
     }
 }
 
 impl From<Constant> for Pattern {
     fn from(v: Constant) -> Self {
-        Pattern::Leaf(Leaf::Constant(v))
+        Pattern::Node(Node::Leaf(Leaf::Constant(v)))
     }
 }
 
 impl From<Quantity> for Pattern {
     fn from(v: Quantity) -> Self {
-        Pattern::Leaf(Leaf::Quantity(v))
+        Pattern::Node(Node::Leaf(Leaf::Quantity(v)))
     }
 }
 
@@ -317,7 +324,7 @@ impl_op_permutations!(
         //     "Tried to add two expressions of different shapes: {lhs}, {rhs}"
         // );
 
-        Pattern::Branch(Branch::Add([Box::new(lhs), Box::new(rhs)]))
+        Pattern::Node(Node::Branch(Branch::Add([Box::new(lhs), Box::new(rhs)])))
     },
     mul = {
         // assert!(
@@ -326,7 +333,7 @@ impl_op_permutations!(
         //     "Matrix multiplication requires compatible shapes"
         // );
 
-        Pattern::Branch(Branch::Mul([Box::new(lhs), Box::new(rhs)]))
+        Pattern::Node(Node::Branch(Branch::Mul([Box::new(lhs), Box::new(rhs)])))
     },
     div = { lhs * rhs.pow(-1) },
     sub = { lhs + (-rhs) },
@@ -346,7 +353,10 @@ impl_op_permutations!(
         //     "Cannot raise a matrix to the power of another matrix yet"
         // );
 
-        Pattern::Branch(Branch::Pow { base: Box::new(lhs), exp: Box::new(rhs) })
+        Pattern::Node(Node::Branch(Branch::Pow {
+            base: Box::new(lhs),
+            exp: Box::new(rhs),
+        }))
     },
     partial_eq = { lhs == rhs }
 );
@@ -388,7 +398,7 @@ macro_rules! impl_unary_fn {
         pub fn $fn(x: impl Into<Pattern>) -> Pattern {
             let expr = x.into();
 
-            Pattern::Branch(Branch::$variant(Box::new(expr))).into()
+            Pattern::Node(Node::Branch(Branch::$variant(Box::new(expr))).into())
         }
     };
 
@@ -403,7 +413,7 @@ macro_rules! impl_unary_fn {
             //     $name
             // );
 
-            Pattern::Branch(Branch::$variant(Box::new(expr))).into()
+            Pattern::Node(Node::Branch(Branch::$variant(Box::new(expr))).into())
         }
     };
 }
@@ -447,7 +457,7 @@ pub fn atan2(a: impl Into<Pattern>, b: impl Into<Pattern>) -> Pattern {
     //     "atan2 is only defined for scalars"
     // );
 
-    Pattern::Branch(Branch::Atan2 { a, b }).into()
+    Pattern::Node(Node::Branch(Branch::Atan2 { a, b }).into())
 }
 
 pub fn log(base: impl Into<Pattern>, x: impl Into<Pattern>) -> Pattern {
@@ -464,7 +474,7 @@ pub fn log(base: impl Into<Pattern>, x: impl Into<Pattern>) -> Pattern {
     //     "Matrix-valued logarithm is only defined for square matrices"
     // );
 
-    Pattern::Branch(Branch::Log { base, arg: x }).into()
+    Pattern::Node(Node::Branch(Branch::Log { base, arg: x }).into())
 }
 
 pub fn ln(x: impl Into<Pattern>) -> Pattern {

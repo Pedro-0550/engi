@@ -24,12 +24,11 @@ use crate::{
         graph::{BipartiteGraph, DirectedGraph},
         value::Value,
     },
-    expr::{self, Expr, Node},
+    expr::{self, Expr},
     model::{
         eq::{Constraint, Equation},
         solve::Solver,
     },
-    simplify::{Simplify, SimplifyContext},
     symbol::{self, Symbol},
     symbols,
     units::{Dimensioned, Quantity, Unit, si::Hz},
@@ -485,13 +484,14 @@ impl System {
                     _ => None,
                 }
             }))
-            .collect();
+            .collect_vec();
 
         let residuals = equations.iter().filter_map(|eq| {
             let resid = eq.residual();
 
             loop {
-                let step = resid.substitute(&bindings);
+                let step = resid.clone();
+                resid.substitute(&bindings);
                 if step == resid {
                     break;
                 }
@@ -649,16 +649,15 @@ impl System {
 
         let compiled = self.compile();
 
-        for block in compiled.blocks.iter().rev() {
+        for block in compiled.blocks.into_iter().rev() {
             let bindings = knowns
                 .iter()
                 .map(|(var, val)| (var.0, val.clone().into()))
                 .collect();
 
-            let block = block
-                .into_iter()
-                .map(|resid| resid.substitute(&bindings))
-                .collect_vec();
+            for resid in block.iter_mut() {
+                resid.substitute(&bindings);
+            }
 
             println!(
                 "solving [{}]",

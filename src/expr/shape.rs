@@ -1,6 +1,6 @@
 use std::num::NonZero;
 
-use crate::expr::{Expr, mat::Matrix};
+use crate::expr::{Expr, NodeId, tree::Matrix};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Shape {
@@ -66,7 +66,7 @@ impl Expr {
     pub fn shape(&self) -> Shape {
         todo!()
     }
-    pub fn scalarize(self) -> Matrix {
+    pub fn scalarize(self) -> Matrix<Expr> {
         todo!()
     }
 }
