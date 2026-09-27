@@ -14,10 +14,13 @@
 #![feature(derive_const)]
 #![feature(const_default)]
 #![feature(box_patterns)]
+#![feature(macro_metavar_expr)]
+#![feature(try_blocks)]
 
 pub mod core {
     pub mod graph;
     pub mod interned;
+    pub mod tree;
     pub mod util;
     pub mod value;
 }

@@ -421,7 +421,7 @@ impl Dimensioned for Expr {
                 }
             }
             Node::Matrix(matrix) => todo!(),
-            Node::Piecewise { cond, pass, fail } => todo!(),
+            Node::Piecewise { arms, default } => todo!(),
             Node::Transpose(expr) => expr.unit(),
             Node::Det(expr) => todo!(),
             Node::Rank(expr) => todo!(),

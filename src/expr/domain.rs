@@ -1,7 +1,10 @@
 use num::{Complex, bigint::Sign};
 
 use super::Node;
-use crate::expr::Expr;
+use crate::expr::{
+    Expr,
+    domain::Endpoint::{Neg, Pos, Zero},
+};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub enum Endpoint {
@@ -17,7 +20,17 @@ pub enum Edge {
 }
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
-pub struct Interval(Edge, Edge);
+pub struct Interval {
+    from: Edge,
+    to: Edge,
+    over: Universe,
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
+pub enum Universe {
+    Integer,
+    Real,
+}
 
 pub enum Numeric {
     Real,
@@ -27,28 +40,116 @@ pub enum Numeric {
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct Domain {
-    re: Interval,
-    im: Interval,
+    pub re: Interval,
+    pub im: Interval,
 }
 
 impl Interval {
-    const UNIVERSE: Self =
-        Self(Edge::Open(Endpoint::Neg), Edge::Open(Endpoint::Pos));
+    pub const ZERO: Self = Self {
+        from: Edge::Closed(Zero),
+        to: Edge::Closed(Zero),
+        over: Universe::Real,
+    };
 
-    const ZERO: Self =
-        Self(Edge::Closed(Endpoint::Zero), Edge::Open(Endpoint::Zero));
+    const R: Self = Self {
+        from: Edge::Open(Neg),
+        to: Edge::Open(Pos),
+        over: Universe::Real,
+    };
 
-    const POSITIVE: Self =
-        Self(Edge::Open(Endpoint::Zero), Edge::Open(Endpoint::Pos));
+    pub const R_P: Self = Self {
+        from: Edge::Open(Zero),
+        to: Edge::Open(Pos),
+        over: Universe::Real,
+    };
 
-    const NON_NEGATIVE: Self =
-        Self(Edge::Closed(Endpoint::Zero), Edge::Open(Endpoint::Pos));
+    pub const R_NN: Self = Self {
+        from: Edge::Closed(Zero),
+        to: Edge::Open(Pos),
+        over: Universe::Real,
+    };
 
-    const NEGATIVE: Self =
-        Self(Edge::Open(Endpoint::Neg), Edge::Open(Endpoint::Zero));
+    pub const R_N: Self = Self {
+        from: Edge::Open(Neg),
+        to: Edge::Open(Zero),
+        over: Universe::Real,
+    };
 
-    const NON_POSITIVE: Self =
-        Self(Edge::Open(Endpoint::Neg), Edge::Closed(Endpoint::Zero));
+    pub const R_NP: Self = Self {
+        from: Edge::Open(Neg),
+        to: Edge::Closed(Zero),
+        over: Universe::Real,
+    };
+
+    const Z: Self = Self {
+        from: Edge::Open(Neg),
+        to: Edge::Open(Pos),
+        over: Universe::Integer,
+    };
+
+    pub const Z_P: Self = Self {
+        from: Edge::Open(Zero),
+        to: Edge::Open(Pos),
+        over: Universe::Integer,
+    };
+
+    pub const Z_NN: Self = Self {
+        from: Edge::Closed(Zero),
+        to: Edge::Open(Pos),
+        over: Universe::Integer,
+    };
+
+    pub const Z_N: Self = Self {
+        from: Edge::Open(Neg),
+        to: Edge::Open(Zero),
+        over: Universe::Integer,
+    };
+
+    pub const Z_NP: Self = Self {
+        from: Edge::Open(Neg),
+        to: Edge::Closed(Zero),
+        over: Universe::Integer,
+    };
+}
+
+impl Interval {
+    pub fn has_zero(&self) -> bool {
+        match (self.from, self.to) {
+            (_, Edge::Open(Endpoint::Zero)) => false,
+            (Edge::Open(Endpoint::Zero), _) => false,
+            _ => true,
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.from == Edge::Closed(Zero) && self.to == Edge::Closed(Zero)
+    }
+
+    pub fn has_pos(&self) -> bool {
+        match (self.from, self.to) {
+            (_, Edge::Open(Pos)) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_pos(&self) -> bool {
+        self.from == Edge::Open(Zero) && self.to == Edge::Open(Pos)
+    }
+
+    pub fn has_neg(&self) -> bool {
+        match (self.from, self.to) {
+            (Edge::Open(Neg), _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_neg(&self) -> bool {
+        self.from == Edge::Open(Neg) && self.to == Edge::Open(Zero)
+    }
+
+    pub fn is_integer(&self) -> bool {
+        if self.is_zero() { true } else { self.over == Universe::Integer }
+    }
 }
 
 impl Domain {
@@ -66,14 +167,27 @@ impl Domain {
         }
     }
 
-    pub const COMPLEX: Domain =
-        Domain { re: Interval::UNIVERSE, im: Interval::UNIVERSE };
+    pub fn has_zero(&self) -> bool {
+        self.re.has_zero() && self.im.has_zero()
+    }
 
-    pub const REAL: Domain =
-        Domain { re: Interval::UNIVERSE, im: Interval::ZERO };
+    pub fn is_real(&self) -> bool {
+        self.im.is_zero()
+    }
 
-    pub const IMAG: Domain =
-        Domain { re: Interval::ZERO, im: Interval::UNIVERSE };
+    pub fn is_integer(&self) -> bool {
+        self.im.is_zero() && self.re.is_integer()
+    }
+
+    pub fn is_imag(&self) -> bool {
+        self.re.is_zero() && !self.im.is_zero()
+    }
+
+    pub const COMPLEX: Domain = Domain { re: Interval::R, im: Interval::R };
+
+    pub const REAL: Domain = Domain { re: Interval::R, im: Interval::ZERO };
+
+    pub const IMAG: Domain = Domain { re: Interval::ZERO, im: Interval::R };
 }
 
 impl Expr {

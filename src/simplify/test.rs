@@ -17,5 +17,5 @@ fn factoring() {
     let simp = expr.simplify(&mut SimplifyContext::new());
 
     let target = x * ((ln(x) * (1 + z)) + y);
-    assert_eq!(simp, target.normalize(true), "failed: {} vs {}", simp, target)
+    assert_eq!(simp, target.normalize(), "failed: {} vs {}", simp, target)
 }

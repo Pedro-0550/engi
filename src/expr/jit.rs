@@ -281,7 +281,7 @@ impl Expr {
                 Node::Matrix(matrix) => todo!(),
                 Node::Rank(expr) => todo!(),
                 Node::Trace(expr) => todo!(),
-                Node::Piecewise { cond, pass, fail } => {
+                Node::Piecewise { arms, default } => {
                     todo!()
                 }
             }

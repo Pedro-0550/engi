@@ -12,6 +12,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use kinded::Kinded;
 use num::{One, Zero, complex::ComplexFloat, pow::Pow as _};
 use xxhash_rust::xxh3::Xxh3Builder;
 
@@ -29,6 +30,8 @@ use crate::{
 /* --------------------------------- MODULES -------------------------------- */
 
 pub mod pattern;
+mod rules;
+
 #[cfg(test)]
 mod test;
 
@@ -38,7 +41,7 @@ mod test;
 pub struct ClassId(usize);
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub struct NodeId(usize);
+pub struct ExprId(usize);
 
 pub struct Substitution {
     bindings: HashMap<Wildcard, ClassId>,
@@ -47,12 +50,12 @@ pub struct Substitution {
 #[derive(Default)]
 pub struct EquivalencyGraph {
     cons: HashMap<Key, ClassId>,
-    nodes: Vec<EquivalencyNode>,
+    exprs: Vec<EquivalencyExpr>,
     classes: Vec<EquivalencyClass>,
 }
 
 pub struct EquivalencyClass {
-    nodes: Vec<NodeId>,
+    exprs: Vec<ExprId>,
     parent: ClassId,
     domain: Domain,
     shape: Shape,
@@ -61,11 +64,73 @@ pub struct EquivalencyClass {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Key(u128);
 
+type EquivalencyBranch = Branch<ClassId>;
+
+#[derive(Eq, PartialEq, Clone, Hash, Kinded)]
+#[kinded(derive(Hash))]
+pub enum Branch<U> {
+    Add([U; 2]),
+    Mul([U; 2]),
+    Min([U; 2]),
+    Max([U; 2]),
+
+    Sin(U),
+    Cos(U),
+    Tan(U),
+
+    Asin(U),
+    Acos(U),
+    Atan(U),
+
+    Sinh(U),
+    Cosh(U),
+    Tanh(U),
+
+    Asinh(U),
+    Acosh(U),
+    Atanh(U),
+
+    Arg(U),
+    Conj(U),
+    Norm(U),
+    Sign(U),
+
+    Real(U),
+    Imag(U),
+
+    Pow { base: U, exp: U },
+    Log { base: U, arg: U },
+    Atan2 { a: U, b: U },
+
+    // Matrix(Matrix),
+    Transpose(U),
+    Det(U),
+    Rank(U),
+    Trace(U),
+}
+
+#[derive(PartialEq, Clone, Eq, Hash)]
+pub enum EquivalencyNodeKind {
+    Leaf(Leaf),
+    Branch(BranchKind),
+}
+
+#[derive(PartialEq, Clone, Eq, Hash)]
+pub enum Leaf {
+    Symbol(Symbol),
+    Constant(Constant),
+    Quantity(Quantity),
+}
+
+#[derive(PartialEq, Clone, Eq)]
+pub enum EquivalencyNode {
+    Branch(EquivalencyBranch),
+    Leaf(Leaf),
+}
+
 #[derive(Clone, Eq)]
-pub struct EquivalencyNode {
-    children: Box<[ClassId]>,
-    kind: NodeKind,
-    // class: ClassId,
+pub struct EquivalencyExpr {
+    node: EquivalencyNode,
     key: OnceCell<Key>,
 }
 
@@ -79,7 +144,114 @@ impl EquivalencyClass {
     }
 }
 
+impl<U> Branch<U> {
+    fn map<T>(&self, mut f: impl FnMut(&U) -> T) -> Branch<T> {
+        match self {
+            Branch::Add(children) => {
+                Branch::Add(children.each_ref().map(&mut f))
+            }
+            Branch::Min(children) => {
+                Branch::Min(children.each_ref().map(&mut f))
+            }
+            Branch::Max(children) => {
+                Branch::Max(children.each_ref().map(&mut f))
+            }
+            Branch::Mul(children) => {
+                Branch::Mul(children.each_ref().map(&mut f))
+            }
+
+            Branch::Sin(child) => Branch::Sin(f(child)),
+            Branch::Cos(child) => Branch::Cos(f(child)),
+            Branch::Tan(child) => Branch::Tan(f(child)),
+            Branch::Asin(child) => Branch::Asin(f(child)),
+            Branch::Acos(child) => Branch::Acos(f(child)),
+            Branch::Atan(child) => Branch::Atan(f(child)),
+            Branch::Sinh(child) => Branch::Sinh(f(child)),
+            Branch::Cosh(child) => Branch::Cosh(f(child)),
+            Branch::Tanh(child) => Branch::Tanh(f(child)),
+            Branch::Asinh(child) => Branch::Asinh(f(child)),
+            Branch::Acosh(child) => Branch::Acosh(f(child)),
+            Branch::Atanh(child) => Branch::Atanh(f(child)),
+            Branch::Arg(child) => Branch::Arg(f(child)),
+            Branch::Conj(child) => Branch::Conj(f(child)),
+            Branch::Norm(child) => Branch::Norm(f(child)),
+            Branch::Sign(child) => Branch::Sign(f(child)),
+            Branch::Real(child) => Branch::Real(f(child)),
+            Branch::Imag(child) => Branch::Imag(f(child)),
+
+            Branch::Pow { base, exp } => {
+                Branch::Pow { base: f(base), exp: f(exp) }
+            }
+
+            Branch::Log { base, arg } => {
+                Branch::Log { base: f(base), arg: f(arg) }
+            }
+
+            Branch::Atan2 { a, b } => Branch::Atan2 { a: f(a), b: f(b) },
+
+            Branch::Transpose(child) => Branch::Transpose(f(child)),
+            Branch::Det(child) => Branch::Det(f(child)),
+            Branch::Rank(child) => Branch::Rank(f(child)),
+            Branch::Trace(child) => Branch::Trace(f(child)),
+        }
+    }
+
+    fn children(&self) -> Box<[&U]> {
+        match self {
+            Branch::Mul(children)
+            | Branch::Min(children)
+            | Branch::Max(children)
+            | Branch::Add(children) => children.iter().collect(),
+            Branch::Sin(child)
+            | Branch::Cos(child)
+            | Branch::Tan(child)
+            | Branch::Asin(child)
+            | Branch::Acos(child)
+            | Branch::Atan(child)
+            | Branch::Sinh(child)
+            | Branch::Cosh(child)
+            | Branch::Tanh(child)
+            | Branch::Asinh(child)
+            | Branch::Acosh(child)
+            | Branch::Atanh(child)
+            | Branch::Arg(child)
+            | Branch::Conj(child)
+            | Branch::Norm(child)
+            | Branch::Sign(child)
+            | Branch::Real(child)
+            | Branch::Imag(child)
+            | Branch::Transpose(child)
+            | Branch::Det(child)
+            | Branch::Rank(child)
+            | Branch::Trace(child) => Box::new([child]),
+            Branch::Pow { base, exp } => Box::new([base, exp]),
+            Branch::Log { base, arg } => Box::new([base, arg]),
+            Branch::Atan2 { a, b } => Box::new([a, b]),
+        }
+    }
+}
+
 impl EquivalencyNode {
+    fn kind(&self) -> EquivalencyNodeKind {
+        match self {
+            EquivalencyNode::Branch(branch) => {
+                EquivalencyNodeKind::Branch(branch.kind())
+            }
+            EquivalencyNode::Leaf(leaf) => {
+                EquivalencyNodeKind::Leaf(leaf.clone())
+            }
+        }
+    }
+
+    fn children(&self) -> Box<[&ClassId]> {
+        match self {
+            EquivalencyNode::Branch(branch) => branch.children(),
+            EquivalencyNode::Leaf(leaf) => Box::new([]),
+        }
+    }
+}
+
+impl EquivalencyExpr {
     fn build(
         graph: &mut EquivalencyGraph,
         pat: &Pattern,
@@ -87,17 +259,23 @@ impl EquivalencyNode {
     ) -> ClassId {
         match pat {
             Pattern::Wildcard(w) => sub.bindings[w],
-            Pattern::Node(kind, children) => {
-                let node = EquivalencyNode {
-                    kind: *kind,
-                    children: children
-                        .iter()
-                        .map(|child| Self::build(graph, child, sub))
-                        .collect(),
+            Pattern::Leaf(leaf) => {
+                let expr = EquivalencyExpr {
                     key: OnceCell::new(),
+                    node: EquivalencyNode::Leaf(leaf.clone()),
                 };
 
-                graph.add(node)
+                graph.add(expr)
+            }
+            Pattern::Branch(branch) => {
+                let expr = EquivalencyExpr {
+                    key: OnceCell::new(),
+                    node: EquivalencyNode::Branch(
+                        branch.map(|x| Self::build(graph, pat, sub)),
+                    ),
+                };
+
+                graph.add(expr)
             }
         }
     }
@@ -106,8 +284,9 @@ impl EquivalencyNode {
         *self.key.get_or_init(|| {
             let mut hasher = Xxh3Builder::new().with_seed(1).build();
 
-            self.kind.hash(&mut hasher);
-            for child in &self.children {
+            self.node.kind().hash(&mut hasher);
+
+            for child in &self.node.children() {
                 child.hash(&mut hasher);
             }
 
@@ -116,34 +295,35 @@ impl EquivalencyNode {
     }
 }
 
-impl PartialEq for EquivalencyNode {
+impl PartialEq for EquivalencyExpr {
     fn eq(&self, other: &Self) -> bool {
         self.key() == other.key()
     }
 }
 
-impl Hash for EquivalencyNode {
+impl Hash for EquivalencyExpr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         state.write_u128(self.key().0);
     }
 }
 
 impl EquivalencyGraph {
-    fn add(&mut self, node: EquivalencyNode) -> ClassId {
-        if let Some(existing) = self.cons.get(&node.key()) {
+    fn add(&mut self, expr: EquivalencyExpr) -> ClassId {
+        if let Some(existing) = self.cons.get(&expr.key()) {
             return self.find(*existing);
         } else {
-            let node_id = NodeId(self.nodes.len());
+            let node_id = ExprId(self.exprs.len());
             let class_id = ClassId(self.classes.len());
-            self.cons.insert(node.key(), class_id);
-            self.nodes.push(node);
+            self.cons.insert(expr.key(), class_id);
 
             let class = EquivalencyClass {
                 parent: class_id,
-                nodes: vec![node_id],
-                domain: todo!(),
-                shape: todo!(),
+                exprs: vec![node_id],
+                domain: expr.node.domain(),
+                shape: expr.node.shape(),
             };
+
+            self.exprs.push(expr);
             self.classes.push(class);
 
             class_id
@@ -181,7 +361,7 @@ impl EquivalencyGraph {
 
             // Apply
             for (id, to, sub) in matches {
-                let found = EquivalencyNode::build(self, &to, &sub);
+                let found = EquivalencyExpr::build(self, &to, &sub);
 
                 self.union(id, found);
             }
@@ -197,8 +377,8 @@ impl EquivalencyGraph {
             let parent_id = self.find(current_id);
 
             if parent_id != current_id {
-                let mut nodes = mem::take(&mut self.classes[i].nodes);
-                self.classes[parent_id.0].nodes.append(&mut nodes);
+                let mut nodes = mem::take(&mut self.classes[i].exprs);
+                self.classes[parent_id.0].exprs.append(&mut nodes);
             }
         }
     }
@@ -225,6 +405,15 @@ impl EquivalencyGraph {
             // Merge root_b into root_a
             self.classes[root_b.0].parent = root_a;
         }
+    }
+}
+
+impl EquivalencyNode {
+    fn domain(&self) -> Domain {
+        todo!()
+    }
+    fn shape(&self) -> Shape {
+        todo!()
     }
 }
 

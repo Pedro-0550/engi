@@ -8,7 +8,6 @@ use crate::{
         domain::{Domain, Numeric},
         ln, sin, sinh, sqrt,
     },
-    simplify::{Simplify, SimplifyContext, normal::Normalize},
     symbol::{Symbol, constants::e},
 };
 
@@ -32,23 +31,22 @@ pub trait Differentiable {
 
 impl Differentiable for Expr {
     fn diff(&self, s: Symbol) -> Expr {
-        let mut ctx = SimplifyContext::new();
         match self.node() {
             Node::Quantity(_) => 0.into(),
             Node::Constant(_) => 0.into(),
             Node::Symbol(sym) => if *sym == s { 1 } else { 0 }.into(),
-            Node::Sin(u) => u.diff(s) * cos(u),
-            Node::Cos(u) => u.diff(s) * -sin(u),
-            Node::Tan(u) => u.diff(s) / cos(u).pow(2),
-            Node::Asin(u) => u.diff(s) / sqrt(1 - u.pow(2)),
-            Node::Acos(u) => -u.diff(s) / sqrt(1 - u.pow(2)),
-            Node::Atan(u) => u.diff(s) / (u.pow(2) + 1),
-            Node::Sinh(u) => u.diff(s) * cosh(u),
-            Node::Cosh(u) => u.diff(s) * sinh(u),
-            Node::Tanh(u) => u.diff(s) / cosh(u).pow(2),
-            Node::Asinh(u) => u.diff(s) / sqrt(u.pow(2) + 1),
-            Node::Acosh(u) => u.diff(s) / sqrt(u.pow(2) - 1),
-            Node::Atanh(u) => u.diff(s) / (1 - u.pow(2)),
+            Node::Sin(box u) => u.diff(s) * cos(u),
+            Node::Cos(box u) => u.diff(s) * -sin(u),
+            Node::Tan(box u) => u.diff(s) / cos(u).pow(2),
+            Node::Asin(box u) => u.diff(s) / sqrt(1 - u.pow(2)),
+            Node::Acos(box u) => -u.diff(s) / sqrt(1 - u.pow(2)),
+            Node::Atan(box u) => u.diff(s) / (u.pow(2) + 1),
+            Node::Sinh(box u) => u.diff(s) * cosh(u),
+            Node::Cosh(box u) => u.diff(s) * sinh(u),
+            Node::Tanh(box u) => u.diff(s) / cosh(u).pow(2),
+            Node::Asinh(box u) => u.diff(s) / sqrt(u.pow(2) + 1),
+            Node::Acosh(box u) => u.diff(s) / sqrt(u.pow(2) - 1),
+            Node::Atanh(box u) => u.diff(s) / (1 - u.pow(2)),
             Node::Transpose(u) => Node::Transpose(Box::new(u.diff(s))).into(),
             Node::Conj(u) => match u.domain().numeric() {
                 Numeric::Real => u.diff(s),
@@ -111,6 +109,6 @@ impl Differentiable for Expr {
                 (b * a.diff(s) - a * b.diff(s)) / (a.pow(2) + b.pow(2))
             }
         }
-        .normalize(true)
+        .normalize()
     }
 }
