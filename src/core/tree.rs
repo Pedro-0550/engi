@@ -3,8 +3,10 @@ use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     iter::empty,
+    slice,
 };
 
+use derive_more::IsVariant;
 use itertools::Itertools;
 use kinded::Kinded;
 use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
@@ -88,6 +90,7 @@ pub enum Leaf {
     Quantity(Quantity),
 }
 
+#[derive(Eq, PartialEq, Clone, Hash, IsVariant)]
 pub enum Node<N> {
     Leaf(Leaf),
     Branch(Branch<N>),
@@ -108,6 +111,7 @@ pub struct NodeKey(u128);
 #[derive(PartialEq, Clone, Eq, Hash, Copy)]
 pub struct ExprKey(u128);
 
+#[derive(Eq, Clone)]
 pub struct Expr {
     nodes: Vec<(NodeKey, Node<NodeId>)>,
     cons: HashMap<NodeKey, NodeId>,
@@ -165,6 +169,27 @@ impl Expr {
         id
     }
 
+    pub fn substitute(&mut self, bindings: &[(Symbol, Expr)]) {
+        let symbol_to_expr = bindings
+            .iter()
+            .filter_map(|(symbol, expr)| {
+                let node_key = self.key_of(&Node::Leaf(Leaf::Symbol(*symbol)));
+                let symbol_node_id = *self.cons.get(&node_key)?;
+                let expr_node_id = self.append(expr.clone());
+
+                Some((symbol_node_id, expr_node_id))
+            })
+            .collect::<HashMap<_, _>>();
+
+        for (_, node) in &mut self.nodes {
+            for child_id in node.children_mut() {
+                if let Some(new_id) = symbol_to_expr.get(&*child_id) {
+                    *child_id = *new_id;
+                }
+            }
+        }
+    }
+
     /// Appends the given expr to the current expr, moving all of its nodes, changing IDs.
     /// Returns the new id of the other expr's root.
     fn append(&mut self, other: Expr) -> NodeId {
@@ -206,6 +231,31 @@ impl Expr {
         let root = self.add(new_root);
         self.root = root;
         root
+    }
+
+    fn pre_dfs(&self) -> Vec<&Node<NodeId>> {
+        let mut visit = Vec::with_capacity(self.nodes.len());
+
+        fn pre_dfs_inner<'e>(
+            expr: &'e Expr,
+            current: NodeId,
+            into: &mut Vec<&'e Node<NodeId>>,
+        ) {
+            let node = &expr.nodes[current.0].1;
+            into.push(node);
+            for child in node.children() {
+                pre_dfs_inner(expr, *child, into);
+            }
+        }
+
+        pre_dfs_inner(self, self.root, &mut visit);
+        visit
+    }
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes[self.root.0].0 == other.nodes[other.root.0].0
     }
 }
 
