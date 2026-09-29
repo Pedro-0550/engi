@@ -17,7 +17,7 @@ use crate::{
     units::{Quantity, Unit::Unitless},
 };
 
-#[derive(Eq, PartialEq, Clone, Hash, Kinded)]
+#[derive(Eq, PartialEq, Clone, Hash, Kinded, IsVariant)]
 #[kinded(derive(Hash))]
 pub enum Branch<N> {
     Add([N; 2]),
@@ -115,6 +115,13 @@ impl<N> Node<N> {
     }
 
     pub fn as_branch(&self) -> Option<&Branch<N>> {
+        match self {
+            Node::Branch(branch) => Some(branch),
+            Node::Leaf(leaf) => None,
+        }
+    }
+
+    pub fn as_branch_mut(&mut self) -> Option<&mut Branch<N>> {
         match self {
             Node::Branch(branch) => Some(branch),
             Node::Leaf(leaf) => None,
@@ -352,6 +359,28 @@ impl<N> Node<N> {
                     }
                 }
             }),
+        }
+    }
+}
+
+impl<N> Branch<N> {
+    pub fn as_binary(&self) -> Option<[&N; 2]> {
+        match self {
+            Branch::Add([a, b])
+            | Branch::Mul([a, b])
+            | Branch::Min([a, b])
+            | Branch::Max([a, b]) => Some([a, b]),
+            _ => None,
+        }
+    }
+
+    pub fn as_binary_mut(&mut self) -> Option<[&mut N; 2]> {
+        match self {
+            Branch::Add([a, b])
+            | Branch::Mul([a, b])
+            | Branch::Min([a, b])
+            | Branch::Max([a, b]) => Some([a, b]),
+            _ => None,
         }
     }
 }

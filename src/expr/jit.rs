@@ -197,7 +197,7 @@ impl Expr {
             bcx: &mut FunctionBuilder<'_>,
             fns: &MathFns,
         ) -> Value {
-            expr.clone().fold_dfs(|node| match node {
+            expr.clone().fold_dfs(|_, node| match node {
                 Node::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => {
                         symbols.get(symbol).copied().unwrap()
@@ -258,7 +258,7 @@ impl Expr {
                     Branch::Det(_) => todo!(),
                     Branch::Rank(_) => todo!(),
                     Branch::Trace(_) => todo!(),
-                    Branch::Conditional { cond, pass, fail } => todo!(),
+                    Branch::Conditional { cond, pass, fail } => {}
                 },
             })
         }

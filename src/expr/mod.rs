@@ -12,6 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     iter::empty,
+    mem,
     ops::{Add, Div, Mul, Neg, Sub},
     slice,
 };
@@ -68,6 +69,10 @@ impl Expr {
 
     pub fn node(&self, id: NodeId) -> &ExprNode {
         &self.nodes[id.0].1
+    }
+
+    pub fn key(&self, id: NodeId) -> NodeKey {
+        self.nodes[id.0].0
     }
 
     pub fn node_mut(&mut self, id: NodeId) -> &mut ExprNode {
@@ -188,16 +193,16 @@ impl Expr {
         self.root = new_root;
     }
 
-    fn pre_dfs(&self) -> Vec<(NodeId, &ExprNode)> {
+    fn pre_dfs(&self) -> Vec<NodeId> {
         let mut visit = Vec::with_capacity(self.nodes.len());
 
         fn pre_dfs_inner<'e>(
             expr: &'e Expr,
             current: NodeId,
-            into: &mut Vec<(NodeId, &'e ExprNode)>,
+            into: &mut Vec<NodeId>,
         ) {
             let node = &expr.nodes[current.0].1;
-            into.push((current, node));
+            into.push(current);
             for child in node.children() {
                 pre_dfs_inner(expr, *child, into);
             }
@@ -207,29 +212,33 @@ impl Expr {
         visit
     }
 
-    pub fn post_dfs(&self) -> Vec<(NodeId, &ExprNode)> {
+    pub fn post_dfs(&self) -> Vec<NodeId> {
         let mut visit = Vec::with_capacity(self.nodes.len());
 
         fn post_dfs_inner<'e>(
             expr: &'e Expr,
             current: NodeId,
-            into: &mut Vec<(NodeId, &'e ExprNode)>,
+            into: &mut Vec<NodeId>,
         ) {
             let node = &expr.nodes[current.0].1;
             for child in node.children() {
                 post_dfs_inner(expr, *child, into);
             }
-            into.push((current, node));
+            into.push(current);
         }
 
         post_dfs_inner(self, self.root, &mut visit);
         visit
     }
 
-    pub fn fold_dfs<T: Clone>(&self, mut f: impl FnMut(&Node<T>) -> T) -> T {
+    pub fn fold_dfs<T: Clone>(
+        &self,
+        mut f: impl FnMut(NodeId, &Node<T>) -> T,
+    ) -> T {
         let mut mapped = HashMap::<NodeId, T>::with_capacity(self.nodes.len());
 
-        for (id, node) in self.post_dfs() {
+        for (id) in self.post_dfs() {
+            let node = self.node(id);
             if mapped.contains_key(&id) {
                 continue;
             }
@@ -241,11 +250,61 @@ impl Expr {
                 }
             };
 
-            let result = f(&mapped_node);
+            let result = f(id, &mapped_node);
             mapped.insert(id, result);
         }
 
         mapped.remove(&self.root).unwrap()
+    }
+
+    /// Imports an entire node's subtree from another expr, mapping IDs appropriately
+    pub fn import(&mut self, src: &Expr, src_id: NodeId) -> NodeId {
+        let mut cache = HashMap::new();
+
+        fn import_inner(
+            expr: &mut Expr,
+            src: &Expr,
+            src_id: NodeId,
+            mapped: &mut HashMap<NodeId, NodeId>,
+        ) -> NodeId {
+            if let Some(&remapped) = mapped.get(&src_id) {
+                return remapped;
+            }
+
+            let remapped_node = src
+                .node(src_id)
+                .clone()
+                .map(|child| import_inner(expr, src, child, mapped));
+
+            let new_id = expr.push(remapped_node);
+            mapped.insert(src_id, new_id);
+            new_id
+        }
+
+        import_inner(self, src, src_id, &mut cache)
+    }
+
+    pub fn normalize(&mut self) {
+        for id in self.post_dfs() {
+            let _ = try {
+                let branch = self.node(id).as_branch()?;
+                let [a, b] = branch.as_binary()?;
+
+                if self.key(*b).0 > self.key(*a).0
+                    && (!branch.is_mul()
+                        || (self.shape_of(*a).is_scalar()
+                            && self.shape_of(*b).is_scalar()))
+                {
+                    let [a, b] =
+                        self.node_mut(id).as_branch_mut()?.as_binary_mut()?;
+
+                    mem::swap(a, b);
+                    let new_key = self.key_of(self.node(id));
+                    self.cons.insert(new_key, id);
+                    // We keep the old key because why not, its the same thing anyway
+                }
+            };
+        }
     }
 
     pub fn new() -> Self {

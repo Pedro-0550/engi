@@ -64,6 +64,10 @@ impl Shape {
 
 impl Expr {
     pub fn shape(&self) -> Shape {
+        self.shape_of(self.root())
+    }
+
+    pub fn shape_of(&self, id: NodeId) -> Shape {
         todo!()
     }
     pub fn scalarize(self) -> Matrix<Expr> {

@@ -35,54 +35,63 @@ impl Differentiable for Expr {
     fn diff(&self, s: Symbol) -> Expr {
         let mut dx = Expr::new();
 
-        let (u, du) = self.fold_dfs(|node| match node {
-            Node::Leaf(leaf) => match leaf {
-                Leaf::Symbol(symbol) => (
-                    dx.symbol(*symbol),
-                    if s == *symbol { dx.one() } else { dx.zero() },
-                ),
-                Leaf::Constant(constant) => (dx.constant(*constant), dx.zero()),
-                Leaf::Quantity(quantity) => (dx.qty(quantity), dx.zero()),
-            },
-            Node::Branch(branch) => match branch {
-                Branch::Add([(a, da), (b, db)]) => {
-                    (dx.add(*a, *b), dx.add(*da, *db))
-                }
-                Branch::Mul([(a, da), (b, db)]) => {
-                    let x = dx.mul(*a, *db);
-                    let y = dx.mul(*da, *b);
-                    (dx.mul(*a, *b), dx.add(x, y))
-                }
-                Branch::Min(_) => todo!(),
-                Branch::Max(_) => todo!(),
-                Branch::Sin(_) => todo!(),
-                Branch::Cos(_) => todo!(),
-                Branch::Tan(_) => todo!(),
-                Branch::Asin(_) => todo!(),
-                Branch::Acos(_) => todo!(),
-                Branch::Atan(_) => todo!(),
-                Branch::Sinh(_) => todo!(),
-                Branch::Cosh(_) => todo!(),
-                Branch::Tanh(_) => todo!(),
-                Branch::Asinh(_) => todo!(),
-                Branch::Acosh(_) => todo!(),
-                Branch::Atanh(_) => todo!(),
-                Branch::Arg(_) => todo!(),
-                Branch::Conj(_) => todo!(),
-                Branch::Norm(_) => todo!(),
-                Branch::Sign(_) => todo!(),
-                Branch::Real(_) => todo!(),
-                Branch::Imag(_) => todo!(),
-                Branch::Pow { base, exp } => todo!(),
-                Branch::Log { base, arg } => todo!(),
-                Branch::Atan2 { a, b } => todo!(),
-                Branch::Matrix(matrix) => todo!(),
-                Branch::Transpose(_) => todo!(),
-                Branch::Det(_) => todo!(),
-                Branch::Rank(_) => todo!(),
-                Branch::Trace(_) => todo!(),
-                Branch::Conditional { cond, pass, fail } => todo!(),
-            },
+        let (u, du) = self.fold_dfs(|id, node| {
+            (
+                id,
+                match node {
+                    Node::Leaf(leaf) => match leaf {
+                        Leaf::Symbol(symbol) => {
+                            if s == *symbol {
+                                dx.one()
+                            } else {
+                                dx.zero()
+                            }
+                        }
+                        Leaf::Constant(constant) => dx.zero(),
+                        Leaf::Quantity(quantity) => dx.zero(),
+                    },
+                    Node::Branch(branch) => match branch {
+                        Branch::Add([(a, da), (b, db)]) => dx.add(*da, *db),
+                        Branch::Mul([(a, da), (b, db)]) => {
+                            let a = dx.import(self, *a);
+                            let b = dx.import(self, *b);
+
+                            let x = dx.mul(a, *db);
+                            let y = dx.mul(*da, b);
+                            dx.add(x, y)
+                        }
+                        Branch::Min(_) => todo!(),
+                        Branch::Max(_) => todo!(),
+                        Branch::Sin(_) => todo!(),
+                        Branch::Cos(_) => todo!(),
+                        Branch::Tan(_) => todo!(),
+                        Branch::Asin(_) => todo!(),
+                        Branch::Acos(_) => todo!(),
+                        Branch::Atan(_) => todo!(),
+                        Branch::Sinh(_) => todo!(),
+                        Branch::Cosh(_) => todo!(),
+                        Branch::Tanh(_) => todo!(),
+                        Branch::Asinh(_) => todo!(),
+                        Branch::Acosh(_) => todo!(),
+                        Branch::Atanh(_) => todo!(),
+                        Branch::Arg(_) => todo!(),
+                        Branch::Conj(_) => todo!(),
+                        Branch::Norm(_) => todo!(),
+                        Branch::Sign(_) => todo!(),
+                        Branch::Real(d) => todo!(),
+                        Branch::Imag(d) => todo!(),
+                        Branch::Pow { base, exp } => todo!(),
+                        Branch::Log { base, arg } => todo!(),
+                        Branch::Atan2 { a, b } => todo!(),
+                        Branch::Matrix(matrix) => todo!(),
+                        Branch::Transpose(_) => todo!(),
+                        Branch::Det(_) => todo!(),
+                        Branch::Rank(_) => todo!(),
+                        Branch::Trace(_) => todo!(),
+                        Branch::Conditional { cond, pass, fail } => todo!(),
+                    },
+                },
+            )
         });
 
         dx.set_root(du);

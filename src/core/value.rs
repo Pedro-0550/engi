@@ -153,15 +153,39 @@ impl Value {
             Value::Matrix(mat) => todo!(),
             Value::Scalar(complex) => Domain::new(
                 match complex.re {
-                    re if re < -EQ_ABS_TOL => Interval::Negative,
-                    re if re.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::Zero,
-                    re if re > EQ_ABS_TOL => Interval::Positive,
+                    re if re < -EQ_ABS_TOL => {
+                        if re.round().eq_abs(&re, &EQ_ABS_TOL) {
+                            Interval::Z_NP
+                        } else {
+                            Interval::R_NP
+                        }
+                    }
+                    re if re.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::ZERO,
+                    re if re > EQ_ABS_TOL => {
+                        if re.round().eq_abs(&re, &EQ_ABS_TOL) {
+                            Interval::Z_NN
+                        } else {
+                            Interval::R_NN
+                        }
+                    }
                     _ => unreachable!(),
                 },
                 match complex.im {
-                    im if im < -EQ_ABS_TOL => Interval::Negative,
-                    im if im.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::Zero,
-                    im if im > EQ_ABS_TOL => Interval::Positive,
+                    im if im < -EQ_ABS_TOL => {
+                        if im.round().eq_abs(&im, &EQ_ABS_TOL) {
+                            Interval::Z_NP
+                        } else {
+                            Interval::R_NP
+                        }
+                    }
+                    im if im.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::ZERO,
+                    im if im > EQ_ABS_TOL => {
+                        if im.round().eq_abs(&im, &EQ_ABS_TOL) {
+                            Interval::Z_NN
+                        } else {
+                            Interval::R_NN
+                        }
+                    }
                     _ => unreachable!(),
                 },
             ),
@@ -195,12 +219,14 @@ impl Value {
 
     /// Returns the n by n zero matrix, or 0 for n = 1
     fn zero(n: usize) -> Value {
-        if n == 0 {
+        if n == 1 {
             0.0.into()
         } else {
             Value::Matrix(Arc::new(Mat::zeros(n, n)))
         }
     }
+
+    pub fn is_zero(&self) -> bool {}
 
     pub fn is_scalar_integer(&self) -> bool {
         self.as_scalar().is_some_and(|s| s.is_integer())

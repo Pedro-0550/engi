@@ -225,9 +225,9 @@ impl Mul<Domain> for Domain {
 
 impl Expr {
     /// Returns the domain of this expression.
-    /// The value of this expression is guaranteed to be contained in such domain, but its not required to cover all of it.
+    /// The possible values of this expression are guaranteed to be contained in its domain, but its not required to cover all of it.
     pub fn domain(&self) -> Domain {
-        self.fold_dfs(|node: &Node<Domain>| match node {
+        self.fold_dfs(|_, node: &Node<Domain>| match node {
             Node::Leaf(leaf) => match leaf {
                 Leaf::Symbol(symbol) => symbol.domain(),
                 Leaf::Constant(constant) => {
