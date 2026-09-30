@@ -28,7 +28,7 @@ use crate::{
     core::value::Value,
     expr::{
         shape::Shape,
-        tree::{Branch, Leaf, Node, NodeKind},
+        tree::{Branch, BranchKind, Leaf, Node, NodeKind},
     },
     model::Variable,
     symbol::{
@@ -233,28 +233,29 @@ impl Expr {
 
     pub fn fold_dfs<T: Clone>(
         &self,
-        mut f: impl FnMut(NodeId, &Node<T>) -> T,
+        mut f: impl FnMut(NodeId, Node<(NodeId, T)>) -> T,
     ) -> T {
         let mut mapped = HashMap::<NodeId, T>::with_capacity(self.nodes.len());
 
-        for (id) in self.post_dfs() {
-            let node = self.node(id);
+        for id in self.post_dfs() {
             if mapped.contains_key(&id) {
                 continue;
             }
 
+            let node = self.node(id);
+
             let mapped_node = match node {
                 Node::Leaf(leaf) => Node::Leaf(leaf.clone()),
-                Node::Branch(_) => {
-                    node.clone().map(|child_id| mapped[&child_id].clone())
-                }
+                Node::Branch(_) => node
+                    .clone()
+                    .map(|child_id| (child_id, mapped[&child_id].clone())),
             };
 
-            let result = f(id, &mapped_node);
+            let result = f(id, mapped_node);
             mapped.insert(id, result);
         }
 
-        mapped.remove(&self.root).unwrap()
+        mapped.remove(&self.root).expect("root node should be folded")
     }
 
     /// Imports an entire node's subtree from another expr, mapping IDs appropriately
@@ -284,6 +285,113 @@ impl Expr {
         import_inner(self, src, src_id, &mut cache)
     }
 
+    pub fn fold_consts(&mut self) {
+        #[derive(Clone)]
+        struct Accumulated {
+            value: Option<Value>,
+            symbolic: Vec<NodeId>,
+        }
+
+        let mut mapped = HashMap::new();
+
+        self.fold_dfs(|id, node: Node<(NodeId, Accumulated)>| match node {
+            Node::Leaf(leaf) => match leaf {
+                Leaf::Symbol(symbol) => {
+                    Accumulated { value: None, symbolic: vec![id] }
+                }
+                Leaf::Constant(constant) => {
+                    Accumulated { value: None, symbolic: vec![id] }
+                }
+                Leaf::Quantity(quantity) => Accumulated {
+                    value: Some(quantity.into_value()),
+                    symbolic: vec![],
+                },
+            },
+            Node::Branch(branch) => match branch {
+                Branch::Add(children)
+                | Branch::Mul(children)
+                | Branch::Max(children)
+                | Branch::Min(children) => {
+                    let this_node = self.node(id);
+                    let [(a_id, mut a_acc), (b_id, mut b_acc)] = children;
+
+                    // There is no order for complex numbers, matrices, and sets.
+                    if this_node
+                        .as_branch()
+                        .is_some_and(|b| b.is_max() || b.is_min())
+                        && !(a_acc.value.as_ref().is_none_or(|v| {
+                            v.is_scalar_real() || v.is_scalar_imag()
+                        }) && b_acc.value.as_ref().is_none_or(|v| {
+                            v.is_scalar_real() || v.is_scalar_imag()
+                        }))
+                    {
+                        return Accumulated { value: None, symbolic: vec![id] };
+                    }
+
+                    let a_node = self.node(a_id);
+                    let b_node = self.node(b_id);
+
+                    let foldable_a =
+                        a_node.kind() == this_node.kind() || a_node.is_leaf();
+                    let foldable_b =
+                        b_node.kind() == this_node.kind() || b_node.is_leaf();
+
+                    if foldable_a && foldable_b {
+                        Accumulated {
+                            value: a_acc.value.zip(b_acc.value).map(
+                                |(a, b)| match this_node {
+                                    Node::Branch(Branch::Add(_)) => a + b,
+                                    Node::Branch(Branch::Mul(_)) => a * b,
+                                    Node::Branch(Branch::Max(_))
+                                    | Node::Branch(Branch::Min(_)) => {
+                                        let a = a.as_scalar().unwrap();
+                                        let b = b.as_scalar().unwrap();
+
+                                        if this_node
+                                            .as_branch()
+                                            .is_some_and(|b| b.is_max())
+                                        {
+                                            Complex64 {
+                                                re: a.re.max(b.re),
+                                                im: a.im.max(b.im),
+                                            }
+                                        } else {
+                                            Complex64 {
+                                                re: a.re.min(b.re),
+                                                im: a.im.min(b.im),
+                                            }
+                                        }
+                                        .into()
+                                    }
+                                    _ => unreachable!(),
+                                },
+                            ),
+                            symbolic: [a_acc.symbolic, b_acc.symbolic].concat(),
+                        }
+                    } else {
+                        if foldable_a {
+                            a_acc.symbolic.push(b_id);
+                            mapped.insert(id, a_acc);
+                        } else if foldable_b {
+                            b_acc.symbolic.push(a_id);
+                            mapped.insert(id, b_acc);
+                        }
+
+                        Accumulated { value: None, symbolic: vec![id] }
+                    }
+                }
+
+                _ => Accumulated { value: None, symbolic: vec![id] },
+            },
+        });
+
+        todo!("reconstruct");
+
+        self.clean();
+    }
+
+    pub fn clean(&mut self) {}
+
     pub fn normalize(&mut self) {
         for id in self.post_dfs() {
             let _ = try {
@@ -292,6 +400,7 @@ impl Expr {
 
                 if self.key(*b).0 > self.key(*a).0
                     && (!branch.is_mul()
+                        // Multiplicative commutativity rule
                         || (self.shape_of(*a).is_scalar()
                             && self.shape_of(*b).is_scalar()))
                 {

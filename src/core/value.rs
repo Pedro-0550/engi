@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use derive_more::{Deref, DerefMut, From};
+use derive_more::{Deref, DerefMut, From, IsVariant};
 use faer::{
     Mat, MatRef, Scale, Side, linalg::solvers::DenseSolveCore,
     traits::ComplexField,
@@ -53,7 +53,7 @@ pub struct Set;
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, IsVariant)]
 pub enum Value {
     Set(Arc<Set>),
     Matrix(Arc<Mat<Complex64>>),
