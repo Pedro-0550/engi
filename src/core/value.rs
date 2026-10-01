@@ -260,6 +260,14 @@ impl Value {
         }
     }
 
+    pub fn ln(&self) -> Self {
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => todo!(),
+            Value::Scalar(complex) => complex.ln().into(),
+        }
+    }
+
     pub fn sign(&self) -> Self {
         match self {
             Value::Set(set) => todo!(),

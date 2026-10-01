@@ -167,7 +167,7 @@ where
 {
     fn from(value: T) -> Self {
         let mut expr = Self::new();
-        expr.reroot(value.into());
+        expr.push_root(value.into());
 
         expr
     }
@@ -203,6 +203,14 @@ impl Expr {
 
     pub fn mul(&mut self, a: NodeId, b: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Mul([a, b])))
+    }
+
+    pub fn max(&mut self, a: NodeId, b: NodeId) -> NodeId {
+        self.push(Node::Branch(Branch::Nax([a, b])))
+    }
+
+    pub fn min(&mut self, a: NodeId, b: NodeId) -> NodeId {
+        self.push(Node::Branch(Branch::Min([a, b])))
     }
 
     pub fn neg(&mut self, a: NodeId) -> NodeId {

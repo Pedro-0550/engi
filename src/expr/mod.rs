@@ -2,7 +2,6 @@
 pub mod domain;
 pub mod fmt;
 pub mod jit;
-pub mod normal;
 pub mod ops;
 pub mod shape;
 pub mod tree;
@@ -18,9 +17,10 @@ use std::{
 };
 
 use derive_more::IsVariant;
+use faer::linalg::svd::ComputeSvdVectors::No;
 use itertools::Itertools;
 use kinded::Kinded;
-use num::complex::Complex64;
+use num::complex::{Complex64, c64};
 use ordered_float::Pow;
 use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 
@@ -183,7 +183,7 @@ impl Expr {
         remapped[other.root.0].unwrap()
     }
 
-    pub fn reroot(&mut self, new_root: ExprNode) -> NodeId {
+    pub fn push_root(&mut self, new_root: ExprNode) -> NodeId {
         let root = self.push(new_root);
         self.root = root;
         root
@@ -233,7 +233,7 @@ impl Expr {
 
     pub fn fold_dfs<T: Clone>(
         &self,
-        mut f: impl FnMut(NodeId, Node<(NodeId, T)>) -> T,
+        mut f: impl FnMut(NodeId, &Node<NodeId>, Node<T>) -> T,
     ) -> T {
         let mut mapped = HashMap::<NodeId, T>::with_capacity(self.nodes.len());
 
@@ -246,12 +246,12 @@ impl Expr {
 
             let mapped_node = match node {
                 Node::Leaf(leaf) => Node::Leaf(leaf.clone()),
-                Node::Branch(_) => node
-                    .clone()
-                    .map(|child_id| (child_id, mapped[&child_id].clone())),
+                Node::Branch(_) => {
+                    node.clone().map(|child_id| mapped[&child_id].clone())
+                }
             };
 
-            let result = f(id, mapped_node);
+            let result = f(id, node, mapped_node);
             mapped.insert(id, result);
         }
 
@@ -285,109 +285,223 @@ impl Expr {
         import_inner(self, src, src_id, &mut cache)
     }
 
-    pub fn fold_consts(&mut self) {
+    /// Folds values in branches by evaluating them as much as possible
+    pub fn folded(&self) -> Self {
         #[derive(Clone)]
         struct Accumulated {
             value: Option<Value>,
             symbolic: Vec<NodeId>,
         }
 
-        let mut mapped = HashMap::new();
-
-        self.fold_dfs(|id, node: Node<(NodeId, Accumulated)>| match node {
-            Node::Leaf(leaf) => match leaf {
-                Leaf::Symbol(symbol) => {
-                    Accumulated { value: None, symbolic: vec![id] }
+        fn identity(kind: BranchKind) -> Value {
+            match kind {
+                BranchKind::Add => Value::ZERO,
+                BranchKind::Mul => Value::ONE,
+                BranchKind::Max => {
+                    c64(f64::NEG_INFINITY, f64::NEG_INFINITY).into()
                 }
-                Leaf::Constant(constant) => {
-                    Accumulated { value: None, symbolic: vec![id] }
-                }
-                Leaf::Quantity(quantity) => Accumulated {
-                    value: Some(quantity.into_value()),
-                    symbolic: vec![],
-                },
-            },
-            Node::Branch(branch) => match branch {
-                Branch::Add(children)
-                | Branch::Mul(children)
-                | Branch::Max(children)
-                | Branch::Min(children) => {
-                    let this_node = self.node(id);
-                    let [(a_id, mut a_acc), (b_id, mut b_acc)] = children;
+                BranchKind::Min => c64(f64::INFINITY, f64::INFINITY).into(),
+                _ => unreachable!(),
+            }
+        }
 
-                    // There is no order for complex numbers, matrices, and sets.
-                    if this_node
-                        .as_branch()
-                        .is_some_and(|b| b.is_max() || b.is_min())
-                        && !(a_acc.value.as_ref().is_none_or(|v| {
-                            v.is_scalar_real() || v.is_scalar_imag()
-                        }) && b_acc.value.as_ref().is_none_or(|v| {
-                            v.is_scalar_real() || v.is_scalar_imag()
-                        }))
-                    {
-                        return Accumulated { value: None, symbolic: vec![id] };
-                    }
+        impl Accumulated {
+            fn into_value(self) -> Option<Value> {
+                if self.symbolic.is_empty() { self.value } else { None }
+            }
 
-                    let a_node = self.node(a_id);
-                    let b_node = self.node(b_id);
+            fn value(v: Value) -> Self {
+                Self { symbolic: vec![], value: Some(v) }
+            }
 
-                    let foldable_a =
-                        a_node.kind() == this_node.kind() || a_node.is_leaf();
-                    let foldable_b =
-                        b_node.kind() == this_node.kind() || b_node.is_leaf();
+            fn symbolic(node: NodeId) -> Self {
+                Self { symbolic: vec![node], value: None }
+            }
 
-                    if foldable_a && foldable_b {
-                        Accumulated {
-                            value: a_acc.value.zip(b_acc.value).map(
-                                |(a, b)| match this_node {
-                                    Node::Branch(Branch::Add(_)) => a + b,
-                                    Node::Branch(Branch::Mul(_)) => a * b,
-                                    Node::Branch(Branch::Max(_))
-                                    | Node::Branch(Branch::Min(_)) => {
-                                        let a = a.as_scalar().unwrap();
-                                        let b = b.as_scalar().unwrap();
+            fn push_into(self, op: BranchKind, into: &mut Expr) -> NodeId {
+                let mut iter = self.symbolic.iter().copied();
+                let init = self
+                    .value
+                    .map(|x| into.push(x.into()))
+                    .or_else(|| iter.next())
+                    .unwrap();
 
-                                        if this_node
-                                            .as_branch()
-                                            .is_some_and(|b| b.is_max())
-                                        {
+                iter.fold(init, |acc, v| match op {
+                    BranchKind::Add => into.add(acc, v),
+                    BranchKind::Mul => into.mul(acc, v),
+                    BranchKind::Min => into.min(acc, v),
+                    BranchKind::Max => into.max(acc, v),
+                    _ => unreachable!(),
+                })
+            }
+
+            fn fold_binary(
+                a: Accumulated,
+                b: Accumulated,
+                kind: BranchKind,
+            ) -> Self {
+                Accumulated {
+                    value: {
+                        let a = a.value;
+                        let b = b.value;
+
+                        if a.is_none() && b.is_none() {
+                            None
+                        } else {
+                            Some(a.iter().chain(b.iter()).fold(
+                                identity(kind),
+                                |acc, v| match kind {
+                                    BranchKind::Add => acc + v,
+                                    BranchKind::Mul => acc * v,
+                                    BranchKind::Max | BranchKind::Min => {
+                                        let acc = acc.as_scalar().unwrap();
+                                        let v = v.as_scalar().unwrap();
+
+                                        if kind == BranchKind::Max {
                                             Complex64 {
-                                                re: a.re.max(b.re),
-                                                im: a.im.max(b.im),
+                                                re: acc.re.max(v.re),
+                                                im: acc.im.max(v.im),
                                             }
                                         } else {
                                             Complex64 {
-                                                re: a.re.min(b.re),
-                                                im: a.im.min(b.im),
+                                                re: acc.re.min(v.re),
+                                                im: acc.im.min(v.im),
                                             }
                                         }
                                         .into()
                                     }
                                     _ => unreachable!(),
                                 },
-                            ),
-                            symbolic: [a_acc.symbolic, b_acc.symbolic].concat(),
+                            ))
                         }
-                    } else {
-                        if foldable_a {
-                            a_acc.symbolic.push(b_id);
-                            mapped.insert(id, a_acc);
-                        } else if foldable_b {
-                            b_acc.symbolic.push(a_id);
-                            mapped.insert(id, b_acc);
-                        }
+                    },
+                    symbolic: [a.symbolic, b.symbolic].concat(),
+                }
+            }
+        }
 
-                        Accumulated { value: None, symbolic: vec![id] }
+        let mut new_expr = Expr::new();
+
+        let acc =
+            self.fold_dfs(|id, old: &Node<NodeId>, new: Node<Accumulated>| {
+                match new {
+                    Node::Leaf(leaf) => match leaf {
+                        Leaf::Quantity(quantity) => {
+                            Accumulated::value(quantity.into_value())
+                        }
+                        _ => {
+                            let new_id = new_expr.push(old.clone());
+                            Accumulated::symbolic(new_id)
+                        }
+                    },
+                    Node::Branch(branch) => {
+                        let branch_kind = branch.kind();
+
+                        match branch {
+                            Branch::Add(children)
+                            | Branch::Mul(children)
+                            | Branch::Max(children)
+                            | Branch::Min(children) => {
+                                let this_node = self.node(id);
+                                let [mut a_acc, mut b_acc] = children;
+                                let [a_id, b_id] = old
+                                    .children()
+                                    .copied()
+                                    .collect_array()
+                                    .unwrap();
+
+                                // There is no order for complex numbers (although we still allow it elementwise), matrices, and sets.
+                                if this_node
+                                    .as_branch()
+                                    .is_some_and(|b| b.is_max() || b.is_min())
+                                    && !(a_acc
+                                        .value
+                                        .as_ref()
+                                        .is_none_or(|v| v.is_scalar())
+                                        && b_acc
+                                            .value
+                                            .as_ref()
+                                            .is_none_or(|v| v.is_scalar()))
+                                {
+                                    let new_id = new_expr.push(old.clone());
+                                    return Accumulated::symbolic(new_id);
+                                }
+
+                                let a_node = self.node(a_id);
+                                let b_node = self.node(b_id);
+
+                                let foldable_a = a_node.kind()
+                                    == this_node.kind()
+                                    || a_node.is_leaf();
+                                let foldable_b = b_node.kind()
+                                    == this_node.kind()
+                                    || b_node.is_leaf();
+
+                                if foldable_a && foldable_b {
+                                    Accumulated::fold_binary(
+                                        a_acc,
+                                        b_acc,
+                                        branch_kind,
+                                    )
+                                } else if foldable_a {
+                                    a_acc.symbolic.push(b_id);
+                                    Accumulated::symbolic(
+                                        a_acc.push_into(
+                                            branch_kind,
+                                            &mut new_expr,
+                                        ),
+                                    )
+                                } else if foldable_b {
+                                    b_acc.symbolic.push(a_id);
+                                    Accumulated::symbolic(
+                                        b_acc.push_into(
+                                            branch_kind,
+                                            &mut new_expr,
+                                        ),
+                                    )
+                                } else {
+                                    Accumulated::symbolic(
+                                        new_expr.import(self, id),
+                                    )
+                                }
+                            }
+                            Branch::Pow { base, exp } => {
+                                if let Some(base) = base.into_value()
+                                    && let Some(exp) = exp.into_value()
+                                {
+                                    Accumulated::value(base.pow(exp))
+                                } else {
+                                    Accumulated::symbolic(
+                                        new_expr.import(self, id),
+                                    )
+                                }
+                            }
+                            Branch::Log { base, arg } => {
+                                if let Some(base) = base.into_value()
+                                    && let Some(arg) = arg.into_value()
+                                {
+                                    Accumulated::value(arg.ln() / base.ln())
+                                } else {
+                                    Accumulated::symbolic(
+                                        new_expr.import(self, id),
+                                    )
+                                }
+                            }
+
+                            _ => {
+                                Accumulated::symbolic(new_expr.import(self, id))
+                            }
+                        }
                     }
                 }
+            });
 
-                _ => Accumulated { value: None, symbolic: vec![id] },
-            },
-        });
+        if !acc.symbolic.is_empty() {
+            assert!(acc.symbolic.len() == 1);
+            new_expr.set_root(acc.symbolic[0])
+        }
 
-        todo!("reconstruct");
-
-        self.clean();
+        new_expr
     }
 
     pub fn clean(&mut self) {}
@@ -398,12 +512,15 @@ impl Expr {
                 let branch = self.node(id).as_branch()?;
                 let [a, b] = branch.as_binary()?;
 
-                if self.key(*b).0 > self.key(*a).0
-                    && (!branch.is_mul()
-                        // Multiplicative commutativity rule
-                        || (self.shape_of(*a).is_scalar()
-                            && self.shape_of(*b).is_scalar()))
+                // Multiplicative commutativity rule
+                if branch.is_mul()
+                    && !self.shape_of(*a).is_scalar()
+                    && !self.shape_of(*b).is_scalar()
                 {
+                    continue;
+                }
+
+                if self.key(*b).0 > self.key(*a).0 {
                     let [a, b] =
                         self.node_mut(id).as_branch_mut()?.as_binary_mut()?;
 
@@ -445,7 +562,7 @@ impl Mul<Expr> for Expr {
     fn mul(mut self, rhs: Expr) -> Self::Output {
         let a_id = self.root();
         let b_id = self.append(rhs);
-        self.reroot(Node::Branch(Branch::Mul([a_id, b_id])));
+        self.push_root(Node::Branch(Branch::Mul([a_id, b_id])));
         self
     }
 }
@@ -456,7 +573,7 @@ impl Add<Expr> for Expr {
     fn add(mut self, rhs: Expr) -> Self::Output {
         let a_id = self.root();
         let b_id = self.append(rhs);
-        self.reroot(Node::Branch(Branch::Add([a_id, b_id])));
+        self.push_root(Node::Branch(Branch::Add([a_id, b_id])));
         self
     }
 }
@@ -483,7 +600,7 @@ impl Pow<Expr> for Expr {
     fn pow(mut self, exp: Expr) -> Self::Output {
         let base = self.root();
         let exp = self.append(exp);
-        self.reroot(Node::Branch(Branch::Pow { base, exp }));
+        self.push_root(Node::Branch(Branch::Pow { base, exp }));
         self
     }
 }
@@ -559,7 +676,7 @@ pub fn atan2(a: impl Into<Expr>, b: impl Into<Expr>) -> Expr {
     let a = expr.root();
     let b = expr.append(b);
 
-    expr.reroot(Node::Branch(Branch::Atan2 { a, b }));
+    expr.push_root(Node::Branch(Branch::Atan2 { a, b }));
     expr
 }
 
@@ -581,7 +698,7 @@ pub fn log(base: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
     let base = expr.root();
     let x = expr.append(x);
 
-    expr.reroot(Node::Branch(Branch::Log { base, arg: x }));
+    expr.push_root(Node::Branch(Branch::Log { base, arg: x }));
 
     expr
 }

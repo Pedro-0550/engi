@@ -82,7 +82,7 @@ pub enum Condition<N> {
     Not(Box<Condition<N>>),
 }
 
-#[derive(PartialEq, Clone, Eq, Hash, Kinded)]
+#[derive(PartialEq, Clone, Eq, Hash, Kinded, IsVariant)]
 #[kinded(derive(Hash))]
 pub enum Leaf {
     Symbol(Symbol),
@@ -239,6 +239,46 @@ impl<N> Node<N> {
                         .chain(std::iter::once(pass))
                         .chain(std::iter::once(fail)),
                 ),
+            },
+        }
+    }
+
+    /// Cost function based on a cycle count heuristic on modern CPUs
+    pub fn cost(&self) -> u8 {
+        match self {
+            Node::Leaf(leaf) => 1,
+            Node::Branch(branch) => match branch {
+                Branch::Add(_) => 1,
+                Branch::Mul(_) => 1,
+                Branch::Min(_) => 1,
+                Branch::Max(_) => 1,
+                Branch::Sin(_) => 2,
+                Branch::Cos(_) => 2,
+                Branch::Tan(_) => 2,
+                Branch::Asin(_) => 3,
+                Branch::Acos(_) => 3,
+                Branch::Atan(_) => 3,
+                Branch::Sinh(_) => 3,
+                Branch::Cosh(_) => 3,
+                Branch::Tanh(_) => 3,
+                Branch::Asinh(_) => 3,
+                Branch::Acosh(_) => 3,
+                Branch::Atanh(_) => 3,
+                Branch::Arg(_) => 3,
+                Branch::Conj(_) => 1,
+                Branch::Norm(_) => 3,
+                Branch::Sign(_) => 1,
+                Branch::Real(_) => 1,
+                Branch::Imag(_) => 1,
+                Branch::Pow { base, exp } => 4,
+                Branch::Log { base, arg } => 4,
+                Branch::Atan2 { a, b } => 3,
+                Branch::Matrix(matrix) => todo!(),
+                Branch::Transpose(_) => todo!(),
+                Branch::Det(_) => todo!(),
+                Branch::Rank(_) => todo!(),
+                Branch::Trace(_) => todo!(),
+                Branch::Conditional { cond, pass, fail } => todo!(),
             },
         }
     }
