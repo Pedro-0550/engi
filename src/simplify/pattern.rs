@@ -247,7 +247,7 @@ where
     Pattern: From<T>,
 {
     default fn from(value: &T) -> Self {
-        value.clone().into()
+        value.into()
     }
 }
 
@@ -316,6 +316,7 @@ impl_op_permutations!(
         Symbol, &Symbol, Constant, &Constant
     ],
     exclude_specific = [],
+    into = Pattern,
     out = Pattern,
     add = {
         // assert_eq!(

@@ -93,7 +93,7 @@ impl Constant {
 
 impl Clone for Constant {
     fn clone(&self) -> Self {
-        Self { name: self.name.clone(), value: self.value.clone() }
+        Self { name: self.name, value: self.value.clone() }
     }
 }
 

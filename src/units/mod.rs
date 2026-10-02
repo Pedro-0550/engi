@@ -15,7 +15,7 @@ use crate::{
         util::to_superscript,
         value::Value,
     },
-    expr::{Expr, Node},
+    expr::Expr,
     model::Variable,
     units::{Unit::Unitless, isq::DIMENSIONLESS, si::rad},
 };
@@ -329,104 +329,106 @@ impl Dimensioned for Expr {
     }
 
     fn unit(&self) -> Result<Unit, DimensionalError> {
-        match self.node() {
-            Node::Symbol(symbol) => Ok(symbol.unit()),
-            Node::Constant(constant) => Ok(constant.quantity().unit()),
-            Node::Quantity(quantity) => Ok(quantity.unit()),
-            Node::Add(exprs) | Node::Min(exprs) | Node::Max(exprs) => {
-                let first = exprs.first().unwrap().unit()?;
+        // match self.node() {
+        //     Node::Symbol(symbol) => Ok(symbol.unit()),
+        //     Node::Constant(constant) => Ok(constant.quantity().unit()),
+        //     Node::Quantity(quantity) => Ok(quantity.unit()),
+        //     Node::Add(exprs) | Node::Min(exprs) | Node::Max(exprs) => {
+        //         let first = exprs.first().unwrap().unit()?;
 
-                for expr in exprs.iter().skip(1) {
-                    if expr.unit()? != first {
-                        return Err(
-                            if self.node().is_max() | self.node().is_min() {
-                                DimensionalError::IncompatibleComparison {
-                                    expr: self.into(),
-                                }
-                            } else {
-                                DimensionalError::IncompatibleSum {
-                                    expr: self.into(),
-                                }
-                            },
-                        );
-                    }
-                }
+        //         for expr in exprs.iter().skip(1) {
+        //             if expr.unit()? != first {
+        //                 return Err(
+        //                     if self.node().is_max() | self.node().is_min() {
+        //                         DimensionalError::IncompatibleComparison {
+        //                             expr: self.into(),
+        //                         }
+        //                     } else {
+        //                         DimensionalError::IncompatibleSum {
+        //                             expr: self.into(),
+        //                         }
+        //                     },
+        //                 );
+        //             }
+        //         }
 
-                Ok(first)
-            }
+        //         Ok(first)
+        //     }
 
-            Node::Mul(exprs) => Ok(exprs
-                .iter()
-                .try_fold(Unit::Unitless, |acc, x| Ok(acc * x.unit()?))?),
-            Node::Sin(expr)
-            | Node::Cos(expr)
-            | Node::Tan(expr)
-            | Node::Asin(expr)
-            | Node::Acos(expr)
-            | Node::Atan(expr)
-            | Node::Sinh(expr)
-            | Node::Cosh(expr)
-            | Node::Tanh(expr)
-            | Node::Asinh(expr)
-            | Node::Acosh(expr)
-            | Node::Atanh(expr) => {
-                if expr.dimension()? != DIMENSIONLESS {
-                    Err(DimensionalError::DimensionedTranscendental {
-                        expr: self.into(),
-                    })
-                } else {
-                    Ok(Unit::Unitless)
-                }
-            }
-            Node::Arg(expr) => Ok(rad),
-            Node::Conj(expr) => expr.unit(),
-            Node::Norm(expr) => expr.unit(),
-            Node::Sign(expr) => expr.unit(),
-            Node::Real(expr) => expr.unit(),
-            Node::Imag(expr) => expr.unit(),
-            Node::Pow { exp, base } => {
-                if exp.dimension()? != DIMENSIONLESS {
-                    Err(DimensionalError::DimensionedTranscendental {
-                        expr: self.into(),
-                    })
-                    // TODO: Fix
-                } else if let Some(qty) = exp
-                    .node()
-                    .as_quantity()
-                    .and_then(|qty| qty.value().as_scalar_integer())
-                {
-                    Ok(base.unit()?.pow(qty))
-                } else {
-                    Ok(Unit::Unitless)
-                }
-            }
-            Node::Log { base, arg } => {
-                if arg.dimension()? != DIMENSIONLESS {
-                    Err(DimensionalError::DimensionedTranscendental {
-                        expr: self.into(),
-                    })
-                } else {
-                    Ok(Unit::Unitless)
-                }
-            }
-            Node::Atan2 { a, b } => {
-                if a.dimension()? != DIMENSIONLESS
-                    && b.dimension()? != DIMENSIONLESS
-                {
-                    Err(DimensionalError::DimensionedTranscendental {
-                        expr: self.into(),
-                    })
-                } else {
-                    Ok(rad)
-                }
-            }
-            Node::Matrix(matrix) => todo!(),
-            Node::Piecewise { arms, default } => todo!(),
-            Node::Transpose(expr) => expr.unit(),
-            Node::Det(expr) => todo!(),
-            Node::Rank(expr) => todo!(),
-            Node::Trace(expr) => todo!(),
-        }
+        //     Node::Mul(exprs) => Ok(exprs
+        //         .iter()
+        //         .try_fold(Unit::Unitless, |acc, x| Ok(acc * x.unit()?))?),
+        //     Node::Sin(expr)
+        //     | Node::Cos(expr)
+        //     | Node::Tan(expr)
+        //     | Node::Asin(expr)
+        //     | Node::Acos(expr)
+        //     | Node::Atan(expr)
+        //     | Node::Sinh(expr)
+        //     | Node::Cosh(expr)
+        //     | Node::Tanh(expr)
+        //     | Node::Asinh(expr)
+        //     | Node::Acosh(expr)
+        //     | Node::Atanh(expr) => {
+        //         if expr.dimension()? != DIMENSIONLESS {
+        //             Err(DimensionalError::DimensionedTranscendental {
+        //                 expr: self.into(),
+        //             })
+        //         } else {
+        //             Ok(Unit::Unitless)
+        //         }
+        //     }
+        //     Node::Arg(expr) => Ok(rad),
+        //     Node::Conj(expr) => expr.unit(),
+        //     Node::Norm(expr) => expr.unit(),
+        //     Node::Sign(expr) => expr.unit(),
+        //     Node::Real(expr) => expr.unit(),
+        //     Node::Imag(expr) => expr.unit(),
+        //     Node::Pow { exp, base } => {
+        //         if exp.dimension()? != DIMENSIONLESS {
+        //             Err(DimensionalError::DimensionedTranscendental {
+        //                 expr: self.into(),
+        //             })
+        //             // TODO: Fix
+        //         } else if let Some(qty) = exp
+        //             .node()
+        //             .as_quantity()
+        //             .and_then(|qty| qty.value().as_scalar_integer())
+        //         {
+        //             Ok(base.unit()?.pow(qty))
+        //         } else {
+        //             Ok(Unit::Unitless)
+        //         }
+        //     }
+        //     Node::Log { base, arg } => {
+        //         if arg.dimension()? != DIMENSIONLESS {
+        //             Err(DimensionalError::DimensionedTranscendental {
+        //                 expr: self.into(),
+        //             })
+        //         } else {
+        //             Ok(Unit::Unitless)
+        //         }
+        //     }
+        //     Node::Atan2 { a, b } => {
+        //         if a.dimension()? != DIMENSIONLESS
+        //             && b.dimension()? != DIMENSIONLESS
+        //         {
+        //             Err(DimensionalError::DimensionedTranscendental {
+        //                 expr: self.into(),
+        //             })
+        //         } else {
+        //             Ok(rad)
+        //         }
+        //     }
+        //     Node::Matrix(matrix) => todo!(),
+        //     Node::Piecewise { arms, default } => todo!(),
+        //     Node::Transpose(expr) => expr.unit(),
+        //     Node::Det(expr) => todo!(),
+        //     Node::Rank(expr) => todo!(),
+        //     Node::Trace(expr) => todo!(),
+        // }
+        // }
+        todo!()
     }
 }
 

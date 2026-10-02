@@ -195,12 +195,22 @@ impl Domain {
 
     pub const IMAG: Domain = Domain { re: Interval::ZERO, im: Interval::R };
 
-    pub fn real(&self) -> Domain {}
-    pub fn imag(&self) -> Domain {}
+    pub fn real(&self) -> Domain {
+        Domain { re: self.re, im: Interval::ZERO }
+    }
+    pub fn imag(&self) -> Domain {
+        Domain { re: Interval::ZERO, im: self.im }
+    }
 
-    pub fn min(&self, other: Domain) -> Domain {}
-    pub fn max(&self, other: Domain) -> Domain {}
-    pub fn union(&self, other: Domain) -> Domain {}
+    pub fn min(&self, other: Domain) -> Domain {
+        todo!()
+    }
+    pub fn max(&self, other: Domain) -> Domain {
+        todo!()
+    }
+    pub fn union(&self, other: Domain) -> Domain {
+        todo!()
+    }
 }
 
 impl Pow<Domain> for Domain {
@@ -214,20 +224,36 @@ impl Pow<Domain> for Domain {
 impl Add<Domain> for Domain {
     type Output = Domain;
 
-    fn add(self, rhs: Domain) -> Self::Output {}
+    fn add(self, rhs: Domain) -> Self::Output {
+        todo!()
+    }
 }
 
 impl Mul<Domain> for Domain {
     type Output = Domain;
 
-    fn mul(self, rhs: Domain) -> Self::Output {}
+    fn mul(self, rhs: Domain) -> Self::Output {
+        let re_universe = if self.re.is_integer() && rhs.re.is_integer() {
+            Universe::Integer
+        } else {
+            Universe::Real
+        };
+
+        let im_universe = if self.im.is_integer() && rhs.im.is_integer() {
+            Universe::Integer
+        } else {
+            Universe::Real
+        };
+
+        todo!()
+    }
 }
 
 impl Expr {
     /// Returns the domain of this expression.
     /// The possible values of this expression are guaranteed to be contained in its domain, but its not required to cover all of it.
     pub fn domain(&self) -> Domain {
-        self.fold_dfs(|_, node: &Node<Domain>| match node {
+        self.fold_dfs(|_, _, node: Node<Domain>| match node {
             Node::Leaf(leaf) => match leaf {
                 Leaf::Symbol(symbol) => symbol.domain(),
                 Leaf::Constant(constant) => {
@@ -236,10 +262,10 @@ impl Expr {
                 Leaf::Quantity(quantity) => quantity.value().domain(),
             },
             Node::Branch(branch) => match branch {
-                Branch::Add([a, b]) => *a + *b,
-                Branch::Mul([a, b]) => *a * *b,
-                Branch::Min([a, b]) => a.min(*b),
-                Branch::Max([a, b]) => a.max(*b),
+                Branch::Add([a, b]) => a + b,
+                Branch::Mul([a, b]) => a * b,
+                Branch::Min([a, b]) => a.min(b),
+                Branch::Max([a, b]) => a.max(b),
                 Branch::Sin(_) => todo!(),
                 Branch::Cos(_) => todo!(),
                 Branch::Tan(_) => todo!(),
@@ -258,7 +284,7 @@ impl Expr {
                 Branch::Sign(_) => todo!(),
                 Branch::Real(x) => x.real(),
                 Branch::Imag(x) => x.imag(),
-                Branch::Pow { base, exp } => base.pow(*exp),
+                Branch::Pow { base, exp } => base.pow(exp),
                 Branch::Log { base, arg } => todo!(),
                 Branch::Atan2 { a, b } => Domain::REAL,
                 Branch::Matrix(matrix) => matrix
@@ -267,11 +293,11 @@ impl Expr {
                     .copied()
                     .reduce(|a, b| a.union(b))
                     .unwrap(),
-                Branch::Transpose(x) => *x,
+                Branch::Transpose(x) => x,
                 Branch::Det(_) => todo!(),
                 Branch::Rank(_) => todo!(),
                 Branch::Trace(_) => todo!(),
-                Branch::Conditional { cond, pass, fail } => pass.union(*fail),
+                Branch::Conditional { pass, fail, .. } => pass.union(fail),
             },
         })
     }

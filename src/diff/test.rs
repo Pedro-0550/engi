@@ -1,9 +1,4 @@
-use crate::{
-    diff::Differentiable,
-    simplify::{Simplify, SimplifyContext},
-    symbol::Symbol,
-    units::Unit,
-};
+use crate::{diff::Differentiable, symbol::Symbol, units::Unit};
 
 #[test]
 fn diff() {

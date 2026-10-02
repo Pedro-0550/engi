@@ -172,6 +172,7 @@ where
         expr
     }
 }
+
 impl Expr {
     pub fn qty(&mut self, val: impl Into<Quantity>) -> NodeId {
         self.push(Node::Leaf(Leaf::Quantity(val.into())))
@@ -206,7 +207,7 @@ impl Expr {
     }
 
     pub fn max(&mut self, a: NodeId, b: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Nax([a, b])))
+        self.push(Node::Branch(Branch::Max([a, b])))
     }
 
     pub fn min(&mut self, a: NodeId, b: NodeId) -> NodeId {

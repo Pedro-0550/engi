@@ -226,7 +226,21 @@ impl Value {
         }
     }
 
-    pub fn is_zero(&self) -> bool {}
+    pub fn is_zero(&self) -> bool {
+        match self {
+            Value::Set(set) => todo!(),
+            Value::Matrix(mat) => mat.row_iter().all(|r| {
+                r.iter().all(|el| {
+                    el.re.eq_abs(&0.0, &EQ_ABS_TOL)
+                        && el.im.eq_abs(&0.0, &EQ_ABS_TOL)
+                })
+            }),
+            Value::Scalar(complex) => {
+                complex.re.eq_abs(&0.0, &EQ_ABS_TOL)
+                    && complex.im.eq_abs(&0.0, &EQ_ABS_TOL)
+            }
+        }
+    }
 
     pub fn is_scalar_integer(&self) -> bool {
         self.as_scalar().is_some_and(|s| s.is_integer())

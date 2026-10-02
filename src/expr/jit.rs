@@ -197,7 +197,7 @@ impl Expr {
             bcx: &mut FunctionBuilder<'_>,
             fns: &MathFns,
         ) -> Value {
-            expr.clone().fold_dfs(|_, node| match node {
+            expr.clone().fold_dfs(|_, _, node| match node {
                 Node::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => {
                         symbols.get(&symbol).copied().unwrap()
@@ -223,36 +223,36 @@ impl Expr {
                     }
                 },
                 Node::Branch(branch) => match branch {
-                    Branch::Add([a, b]) => bcx.ins().fadd(a.1, b.1),
-                    Branch::Mul([a, b]) => bcx.ins().fmul(a.1, b.1),
-                    Branch::Min([a, b]) => bcx.ins().fmin(a.1, b.1),
-                    Branch::Max([a, b]) => bcx.ins().fmax(a.1, b.1),
-                    Branch::Sin(v) => fns.sin(bcx, v.1),
-                    Branch::Cos(v) => fns.cos(bcx, v.1),
-                    Branch::Tan(v) => fns.tan(bcx, v.1),
-                    Branch::Asin(v) => fns.asin(bcx, v.1),
-                    Branch::Acos(v) => fns.acos(bcx, v.1),
-                    Branch::Atan(v) => fns.atan(bcx, v.1),
-                    Branch::Sinh(v) => fns.sinh(bcx, v.1),
-                    Branch::Cosh(v) => fns.cosh(bcx, v.1),
-                    Branch::Tanh(v) => fns.tanh(bcx, v.1),
-                    Branch::Asinh(v) => fns.asinh(bcx, v.1),
-                    Branch::Acosh(v) => fns.acosh(bcx, v.1),
-                    Branch::Atanh(v) => fns.atanh(bcx, v.1),
+                    Branch::Add([a, b]) => bcx.ins().fadd(a, b),
+                    Branch::Mul([a, b]) => bcx.ins().fmul(a, b),
+                    Branch::Min([a, b]) => bcx.ins().fmin(a, b),
+                    Branch::Max([a, b]) => bcx.ins().fmax(a, b),
+                    Branch::Sin(v) => fns.sin(bcx, v),
+                    Branch::Cos(v) => fns.cos(bcx, v),
+                    Branch::Tan(v) => fns.tan(bcx, v),
+                    Branch::Asin(v) => fns.asin(bcx, v),
+                    Branch::Acos(v) => fns.acos(bcx, v),
+                    Branch::Atan(v) => fns.atan(bcx, v),
+                    Branch::Sinh(v) => fns.sinh(bcx, v),
+                    Branch::Cosh(v) => fns.cosh(bcx, v),
+                    Branch::Tanh(v) => fns.tanh(bcx, v),
+                    Branch::Asinh(v) => fns.asinh(bcx, v),
+                    Branch::Acosh(v) => fns.acosh(bcx, v),
+                    Branch::Atanh(v) => fns.atanh(bcx, v),
                     Branch::Arg(_) => todo!(),
-                    Branch::Conj(v) => v.1,
-                    Branch::Norm(v) => fns.abs(bcx, v.1),
-                    Branch::Sign(v) => fns.signum(bcx, v.1),
-                    Branch::Real(v) => v.1,
+                    Branch::Conj(v) => v,
+                    Branch::Norm(v) => fns.abs(bcx, v),
+                    Branch::Sign(v) => fns.signum(bcx, v),
+                    Branch::Real(v) => v,
                     Branch::Imag(_) => bcx.ins().f64const(0.0),
-                    Branch::Pow { base, exp } => fns.powf(bcx, base.1, exp.1),
+                    Branch::Pow { base, exp } => fns.powf(bcx, base, exp),
                     Branch::Log { base, arg } => {
-                        let a = fns.ln(bcx, arg.1);
-                        let b = fns.ln(bcx, base.1);
+                        let a = fns.ln(bcx, arg);
+                        let b = fns.ln(bcx, base);
 
                         bcx.ins().fdiv(a, b)
                     }
-                    Branch::Atan2 { a, b } => fns.atan2(bcx, a.1, b.1),
+                    Branch::Atan2 { a, b } => fns.atan2(bcx, a, b),
                     Branch::Matrix(matrix) => todo!(),
                     Branch::Transpose(_) => todo!(),
                     Branch::Det(_) => todo!(),

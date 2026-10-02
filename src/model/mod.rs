@@ -390,8 +390,6 @@ impl System {
         let mut equations = Vec::new();
 
         let connections = self.adjacency.borrow();
-        let var_assoc = self.var_association.borrow();
-        let conn_assoc = self.conn_association.borrow();
 
         /* -------------------------------------------------------------------------- */
         let mut visited = HashSet::new();
@@ -432,16 +430,21 @@ impl System {
                         }
                     }
                     Condition::Conserved => {
-                        let terms = component
-                            .iter()
-                            .map(|id| {
-                                let interface =
-                                    &self.model(&id.path).interfaces[id.idx];
-                                Expr::from(interface.connectors[i].variable)
-                            })
-                            .collect();
+                        let mut terms = component.iter().map(|id| {
+                            let interface =
+                                &self.model(&id.path).interfaces[id.idx];
+                            interface.connectors[i].variable
+                        });
 
-                        equations.push(relation!(Node::Add(terms) = 0));
+                        let mut term_sum = Expr::new();
+                        let init = term_sum.push(terms.next().unwrap().into());
+                        let root_term = terms.fold(init, |a, v| {
+                            let b = term_sum.push(v.into());
+                            term_sum.add(a, b)
+                        });
+                        term_sum.set_root(root_term);
+
+                        equations.push(relation!(term_sum = 0));
                     }
                 }
             }
@@ -462,32 +465,41 @@ impl System {
             collect_equations(model, &mut equations);
         }
 
+        let var_assoc = self.var_association.borrow().clone();
+        let conn_assoc = self.conn_association.borrow().clone();
+
         let bindings = var_assoc
-            .iter()
+            .into_iter()
             .filter_map(|(var_id, assoc)| match assoc {
-                Associated::Binding(expr) => Some((
-                    self.model(&var_id.path).variables[var_id.idx].symbol(),
-                    expr.simplify(),
-                )),
+                Associated::Binding(mut expr) => {
+                    expr.simplify();
+                    Some((
+                        self.model(&var_id.path).variables[var_id.idx].symbol(),
+                        expr,
+                    ))
+                }
                 _ => None,
             })
-            .chain(conn_assoc.iter().filter_map(|(conn_id, assoc)| {
+            .chain(conn_assoc.into_iter().filter_map(|(conn_id, assoc)| {
                 match assoc {
-                    Associated::Binding(expr) => Some((
-                        self.model(&conn_id.interface.path).interfaces
-                            [conn_id.interface.idx]
-                            .connectors[conn_id.idx]
-                            .variable()
-                            .symbol(),
-                        expr.simplify(),
-                    )),
+                    Associated::Binding(mut expr) => {
+                        expr.simplify();
+                        Some((
+                            self.model(&conn_id.interface.path).interfaces
+                                [conn_id.interface.idx]
+                                .connectors[conn_id.idx]
+                                .variable()
+                                .symbol(),
+                            expr,
+                        ))
+                    }
                     _ => None,
                 }
             }))
             .collect_vec();
 
         let residuals = equations.iter().filter_map(|eq| {
-            let resid = eq.residual();
+            let mut resid = eq.residual();
 
             loop {
                 let step = resid.clone();
@@ -498,7 +510,7 @@ impl System {
                 resid = step
             }
 
-            let resid = resid.simplify();
+            resid.simplify();
 
             if resid == 0 { None } else { Some(resid) }
         });
@@ -614,9 +626,13 @@ impl System {
                     guesses.insert(var, quantity.value().clone());
                 }
                 Associated::Binding(expr) => {
-                    if let Some(c) = expr.node().as_constant() {
+                    if let Some(c) =
+                        try { expr.as_single()?.as_leaf()?.as_constant()? }
+                    {
                         knowns.insert(var, c.quantity().value().clone());
-                    } else if let Some(qty) = expr.node().as_quantity() {
+                    } else if let Some(qty) =
+                        try { expr.as_single()?.as_leaf()?.as_quantity()? }
+                    {
                         knowns.insert(var, qty.value().clone());
                     }
                 }
@@ -634,12 +650,16 @@ impl System {
                     guesses.insert(conn.variable, quantity.value().clone());
                 }
                 Associated::Binding(expr) => {
-                    if let Some(c) = expr.node().as_constant() {
+                    if let Some(c) =
+                        try { expr.as_single()?.as_leaf()?.as_constant()? }
+                    {
                         knowns.insert(
                             conn.variable,
                             c.quantity().value().clone(),
                         );
-                    } else if let Some(qty) = expr.node().as_quantity() {
+                    } else if let Some(qty) =
+                        try { expr.as_single()?.as_leaf()?.as_quantity()? }
+                    {
                         knowns.insert(conn.variable, qty.value().clone());
                     }
                 }
@@ -649,13 +669,13 @@ impl System {
 
         let compiled = self.compile();
 
-        for block in compiled.blocks.into_iter().rev() {
+        for mut block in compiled.blocks.into_iter().rev() {
             let bindings = knowns
                 .iter()
                 .map(|(var, val)| (var.0, val.clone().into()))
-                .collect();
+                .collect_vec();
 
-            for resid in block.iter_mut() {
+            for resid in &mut block {
                 resid.substitute(&bindings);
             }
 

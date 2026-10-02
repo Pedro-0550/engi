@@ -196,6 +196,7 @@ impl_op_permutations! {
     exclude_permutations = [i64, f64, Complex64, Value, &Value],
     exclude_specific = [(Unit, Unit)],
     out = Quantity,
+    into = Quantity,
 
     exclude = {
         pow = {

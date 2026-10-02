@@ -6,6 +6,9 @@ pub mod ops;
 pub mod shape;
 pub mod tree;
 
+#[cfg(test)]
+mod test;
+
 use std::{
     cell::OnceCell,
     collections::{HashMap, HashSet},
@@ -56,6 +59,13 @@ pub struct Expr {
     root: NodeId,
 }
 
+#[derive(Eq, Clone, Copy, PartialEq)]
+enum Order {
+    Post,
+    In,
+    Pre,
+}
+
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Expr {
@@ -69,6 +79,10 @@ impl Expr {
 
     pub fn node(&self, id: NodeId) -> &ExprNode {
         &self.nodes[id.0].1
+    }
+
+    pub fn as_single(&self) -> Option<&ExprNode> {
+        if self.len() == 1 { Some(&self.nodes[0].1) } else { None }
     }
 
     pub fn key(&self, id: NodeId) -> NodeKey {
@@ -193,41 +207,50 @@ impl Expr {
         self.root = new_root;
     }
 
-    fn pre_dfs(&self) -> Vec<NodeId> {
+    fn dfs(&self, order: Order) -> Vec<NodeId> {
         let mut visit = Vec::with_capacity(self.nodes.len());
 
-        fn pre_dfs_inner<'e>(
+        fn dfs_inner<'e>(
             expr: &'e Expr,
             current: NodeId,
             into: &mut Vec<NodeId>,
+            order: &Order,
         ) {
             let node = &expr.nodes[current.0].1;
-            into.push(current);
-            for child in node.children() {
-                pre_dfs_inner(expr, *child, into);
+
+            if *order == Order::Pre {
+                into.push(current);
+            }
+
+            if *order == Order::In {
+                let mut children = node.children();
+                match (children.next(), children.next()) {
+                    (Some(left), Some(right)) => {
+                        dfs_inner(expr, *left, into, order);
+                        into.push(current);
+                        dfs_inner(expr, *right, into, order);
+                    }
+                    (Some(child), None) => {
+                        into.push(current);
+                        dfs_inner(expr, *child, into, order);
+                    }
+                    (None, _) => {
+                        into.push(current);
+                    }
+                }
+            } else {
+                // Pre and Post rely on standard order
+                for child in node.children() {
+                    dfs_inner(expr, *child, into, order);
+                }
+            }
+
+            if *order == Order::Post {
+                into.push(current);
             }
         }
 
-        pre_dfs_inner(self, self.root, &mut visit);
-        visit
-    }
-
-    pub fn post_dfs(&self) -> Vec<NodeId> {
-        let mut visit = Vec::with_capacity(self.nodes.len());
-
-        fn post_dfs_inner<'e>(
-            expr: &'e Expr,
-            current: NodeId,
-            into: &mut Vec<NodeId>,
-        ) {
-            let node = &expr.nodes[current.0].1;
-            for child in node.children() {
-                post_dfs_inner(expr, *child, into);
-            }
-            into.push(current);
-        }
-
-        post_dfs_inner(self, self.root, &mut visit);
+        dfs_inner(self, self.root, &mut visit, &order);
         visit
     }
 
@@ -237,7 +260,7 @@ impl Expr {
     ) -> T {
         let mut mapped = HashMap::<NodeId, T>::with_capacity(self.nodes.len());
 
-        for id in self.post_dfs() {
+        for id in self.dfs(Order::Post) {
             if mapped.contains_key(&id) {
                 continue;
             }
@@ -246,9 +269,9 @@ impl Expr {
 
             let mapped_node = match node {
                 Node::Leaf(leaf) => Node::Leaf(leaf.clone()),
-                Node::Branch(_) => {
-                    node.clone().map(|child_id| mapped[&child_id].clone())
-                }
+                Node::Branch(_) => node.clone().map(|child_id: NodeId| {
+                    mapped.get(&child_id).unwrap().clone()
+                }),
             };
 
             let result = f(id, node, mapped_node);
@@ -275,7 +298,7 @@ impl Expr {
             let remapped_node = src
                 .node(src_id)
                 .clone()
-                .map(|child| import_inner(expr, src, child, mapped));
+                .map(|child: NodeId| import_inner(expr, src, child, mapped));
 
             let new_id = expr.push(remapped_node);
             mapped.insert(src_id, new_id);
@@ -507,7 +530,7 @@ impl Expr {
     pub fn clean(&mut self) {}
 
     pub fn normalize(&mut self) {
-        for id in self.post_dfs() {
+        for id in self.dfs(Order::Post) {
             let _ = try {
                 let branch = self.node(id).as_branch()?;
                 let [a, b] = branch.as_binary()?;
@@ -539,6 +562,10 @@ impl Expr {
 
     pub fn symbols(&self) -> impl Iterator<Item = Symbol> {
         self.nodes.iter().filter_map(|x| x.1.as_leaf()?.as_symbol().copied())
+    }
+
+    pub fn simplify(&mut self) {
+        todo!()
     }
 }
 
@@ -612,7 +639,7 @@ macro_rules! impl_unary_fn {
         pub fn $fn(x: impl Into<Expr>) -> Expr {
             let mut expr = x.into();
 
-            expr.reroot(Node::Branch(Branch::$variant(expr.root())));
+            expr.push_root(Node::Branch(Branch::$variant(expr.root())));
             expr
         }
     };
@@ -628,7 +655,7 @@ macro_rules! impl_unary_fn {
                 $name
             );
 
-            expr.reroot(Node::Branch(Branch::$variant(expr.root())));
+            expr.push_root(Node::Branch(Branch::$variant(expr.root())));
             expr
         }
     };

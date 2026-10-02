@@ -5,7 +5,7 @@ use num::{Zero, complex::Complex64};
 use crate::{
     core::value::{EQ_ABS_TOL, Set},
     expr::{
-        self, Expr, Node, NodeId, cos, cosh,
+        self, Expr, NodeId, cos, cosh,
         domain::{Domain, Numeric},
         ln, sin, sinh, sqrt,
         tree::{Branch, Leaf, Node},
@@ -35,13 +35,13 @@ impl Differentiable for Expr {
     fn diff(&self, s: Symbol) -> Expr {
         let mut dx = Expr::new();
 
-        let (u, du) = self.fold_dfs(|id, node| {
+        let (u, du) = self.fold_dfs(|id, _, node| {
             (
                 id,
                 match node {
                     Node::Leaf(leaf) => match leaf {
                         Leaf::Symbol(symbol) => {
-                            if s == *symbol {
+                            if s == symbol {
                                 dx.one()
                             } else {
                                 dx.zero()
@@ -51,13 +51,13 @@ impl Differentiable for Expr {
                         Leaf::Quantity(quantity) => dx.zero(),
                     },
                     Node::Branch(branch) => match branch {
-                        Branch::Add([(a, da), (b, db)]) => dx.add(*da, *db),
+                        Branch::Add([(a, da), (b, db)]) => dx.add(da, db),
                         Branch::Mul([(a, da), (b, db)]) => {
-                            let a = dx.import(self, *a);
-                            let b = dx.import(self, *b);
+                            let a = dx.import(self, a);
+                            let b = dx.import(self, b);
 
-                            let x = dx.mul(a, *db);
-                            let y = dx.mul(*da, b);
+                            let x = dx.mul(a, db);
+                            let y = dx.mul(da, b);
                             dx.add(x, y)
                         }
                         Branch::Min(_) => todo!(),
@@ -95,6 +95,7 @@ impl Differentiable for Expr {
         });
 
         dx.set_root(du);
+        dx.simplify();
 
         dx
 

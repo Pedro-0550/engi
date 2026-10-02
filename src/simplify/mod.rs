@@ -22,10 +22,10 @@ use crate::{
         value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
-        Expr,
+        Expr, NodeId,
         domain::Domain,
         shape::Shape,
-        tree::{BranchKind, Leaf, Node},
+        tree::{Branch, BranchKind, Leaf, Node},
     },
     simplify::pattern::{Machine, Pattern, Program, Rule, Wildcard},
     symbol::{Symbol, constants::Constant},
@@ -42,7 +42,7 @@ mod test;
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Default)]
 pub struct ClassId(usize);
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
@@ -57,11 +57,12 @@ pub struct EquivalencyGraph {
     cons: HashMap<Key, ClassId>,
     exprs: Vec<EquivalencyExpr>,
     classes: Vec<EquivalencyClass>,
+    root: ClassId,
 }
 
 pub struct EquivalencyClass {
     exprs: Vec<ExprId>,
-    parent: ClassId,
+    parent: Cell<ClassId>,
     domain: Domain,
     shape: Shape,
 }
@@ -126,9 +127,7 @@ impl EquivalencyExpr {
                 Node::Branch(branch) => {
                     let expr = EquivalencyExpr {
                         key: OnceCell::new(),
-                        node: node
-                            .clone()
-                            .map(|x| Self::build(graph, pat, sub)),
+                        node: node.clone().map(|x| Self::build(graph, &x, sub)),
                     };
 
                     graph.add(expr)
@@ -174,7 +173,7 @@ impl EquivalencyGraph {
             self.cons.insert(expr.key(), class_id);
 
             let class = EquivalencyClass {
-                parent: class_id,
+                parent: Cell::new(class_id),
                 exprs: vec![node_id],
                 domain: expr.node.domain(),
                 shape: expr.node.shape(),
@@ -229,25 +228,19 @@ impl EquivalencyGraph {
     }
 
     fn rebuild(&mut self) {
-        for i in 0..self.classes.len() {
-            let current_id = ClassId(i);
-            let parent_id = self.find(current_id);
-
-            if parent_id != current_id {
-                let mut nodes = mem::take(&mut self.classes[i].exprs);
-                self.classes[parent_id.0].exprs.append(&mut nodes);
-            }
-        }
+        todo!()
     }
 
-    fn find(&self, class: ClassId) -> ClassId {
-        let mut current = class;
+    fn find(&self, id: ClassId) -> ClassId {
+        let class = &self.classes[id.0];
 
-        while self.classes[current.0].parent != current {
-            current = self.classes[current.0].parent;
+        if class.parent.get() != id {
+            let up = self.find(class.parent.get());
+            self.classes[id.0].parent.set(up);
+            up
+        } else {
+            id
         }
-
-        current
     }
 
     fn union(&mut self, a: ClassId, b: ClassId) {
@@ -260,8 +253,110 @@ impl EquivalencyGraph {
                 "Cannot union two classes of different shapes"
             );
             // Merge root_b into root_a
-            self.classes[root_b.0].parent = root_a;
+            self.classes[root_b.0].parent.set(root_a);
         }
+    }
+
+    fn extract(&self) -> Expr {
+        let mut extracted = HashMap::new();
+
+        fn cost(node: Node<u32>) -> u32 {
+            node.children().sum::<u32>()
+                + match node {
+                    Node::Leaf(leaf) => match leaf {
+                        Leaf::Symbol(symbol) => 1,
+                        Leaf::Constant(constant) => 0,
+                        Leaf::Quantity(quantity) => 0,
+                    },
+                    Node::Branch(branch) => match branch {
+                        Branch::Add(_)
+                        | Branch::Mul(_)
+                        | Branch::Min(_)
+                        | Branch::Max(_) => 2,
+                        Branch::Sin(_)
+                        | Branch::Cos(_)
+                        | Branch::Tan(_)
+                        | Branch::Asin(_)
+                        | Branch::Acos(_)
+                        | Branch::Atan(_)
+                        | Branch::Sinh(_)
+                        | Branch::Cosh(_)
+                        | Branch::Tanh(_)
+                        | Branch::Asinh(_)
+                        | Branch::Acosh(_)
+                        | Branch::Atanh(_) => 3,
+                        Branch::Atan2 { .. }
+                        | Branch::Arg(_)
+                        | Branch::Norm(_) => 4,
+                        Branch::Conj(_)
+                        | Branch::Sign(_)
+                        | Branch::Real(_)
+                        | Branch::Imag(_) => 2,
+                        Branch::Pow { .. } => 5,
+                        Branch::Log { .. } => 5,
+                        Branch::Matrix(_) => todo!(),
+                        Branch::Transpose(_) => todo!(),
+                        Branch::Det(_) => todo!(),
+                        Branch::Rank(_) => todo!(),
+                        Branch::Trace(_) => todo!(),
+                        Branch::Conditional { .. } => todo!(),
+                    },
+                }
+        }
+
+        fn extract_class(
+            graph: &EquivalencyGraph,
+            class_id: ClassId,
+            into: &mut HashMap<ClassId, (ExprId, u32)>,
+        ) -> u32 {
+            if let Some((_, cost)) = into.get(&class_id) {
+                return *cost;
+            }
+
+            let class = &graph.classes[class_id.0];
+            let (best_expr, lowest_cost) = class
+                .exprs
+                .iter()
+                .map(|id| {
+                    let expr = &graph.exprs[id.0];
+                    let mapped = expr
+                        .node
+                        .clone()
+                        .map(|child| extract_class(graph, child, into));
+                    (id, cost(mapped))
+                })
+                .min_by_key(|x| x.1)
+                .unwrap();
+
+            into.insert(class_id, (*best_expr, lowest_cost));
+            lowest_cost
+        }
+
+        extract_class(self, self.root, &mut extracted);
+
+        let mut new_expr = Expr::new();
+
+        fn build_extracted(
+            class_id: ClassId,
+            graph: &EquivalencyGraph,
+            extracted: &HashMap<ClassId, (ExprId, u32)>,
+            into: &mut Expr,
+        ) -> NodeId {
+            let (expr_id, _) = extracted[&class_id];
+            let expr = &graph.exprs[expr_id.0];
+
+            let mapped_node = expr.node.clone().map(|child_id| {
+                build_extracted(child_id, graph, extracted, into)
+            });
+
+            into.push(mapped_node)
+        }
+
+        let new_root_id =
+            build_extracted(self.root, self, &extracted, &mut new_expr);
+        new_expr.set_root(new_root_id);
+
+        new_expr
     }
 }
 
