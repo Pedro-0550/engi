@@ -68,7 +68,7 @@ impl Expr {
     }
 
     pub fn shape_of(&self, id: NodeId) -> Shape {
-        todo!()
+        Shape::SCALAR
     }
     pub fn scalarize(self) -> Matrix<Expr> {
         todo!()

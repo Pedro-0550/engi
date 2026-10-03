@@ -10,7 +10,6 @@ use ordered_float::Pow;
 
 use crate::{
     core::value::{EQ_ABS_TOL, Value},
-    diff::Differentiable,
     expr::Expr,
     model::{
         Variable,

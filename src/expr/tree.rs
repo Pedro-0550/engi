@@ -337,15 +337,15 @@ impl<N> Node<N> {
         }
     }
 
-    pub fn map<T>(self, mut f: impl FnMut(N) -> T) -> Node<T> {
+    pub fn map<T>(self, f: &mut impl FnMut(N) -> T) -> Node<T> {
         match self {
             Node::Leaf(l) => Node::Leaf(l),
 
             Node::Branch(branch) => Node::Branch(match branch {
-                Branch::Add(ns) => Branch::Add(ns.map(&mut f)),
-                Branch::Mul(ns) => Branch::Mul(ns.map(&mut f)),
-                Branch::Min(ns) => Branch::Min(ns.map(&mut f)),
-                Branch::Max(ns) => Branch::Max(ns.map(&mut f)),
+                Branch::Add(ns) => Branch::Add(ns.map(f)),
+                Branch::Mul(ns) => Branch::Mul(ns.map(f)),
+                Branch::Min(ns) => Branch::Min(ns.map(f)),
+                Branch::Max(ns) => Branch::Max(ns.map(f)),
 
                 Branch::Sin(n) => Branch::Sin(f(n)),
                 Branch::Cos(n) => Branch::Cos(f(n)),
@@ -383,7 +383,7 @@ impl<N> Node<N> {
 
                 Branch::Matrix(matrix) => Branch::Matrix(Matrix {
                     shape: matrix.shape,
-                    elements: matrix.elements.into_iter().map(&mut f).collect(),
+                    elements: matrix.elements.into_iter().map(f).collect(),
                 }),
 
                 Branch::Transpose(n) => Branch::Transpose(f(n)),
@@ -393,7 +393,7 @@ impl<N> Node<N> {
 
                 Branch::Conditional { cond, pass, fail } => {
                     Branch::Conditional {
-                        cond: cond.map(&mut f),
+                        cond: cond.map(&mut *f),
                         pass: f(pass),
                         fail: f(fail),
                     }
@@ -426,7 +426,7 @@ impl<N> Branch<N> {
 }
 
 impl<N> Condition<N> {
-    pub fn map<T>(self, mut f: impl FnMut(N) -> T) -> Condition<T> {
+    pub fn map<T>(self, f: &mut impl FnMut(N) -> T) -> Condition<T> {
         match self {
             Condition::Eq(a, b) => Condition::Eq(f(a), f(b)),
             Condition::Ne(a, b) => Condition::Ne(f(a), f(b)),
@@ -436,15 +436,15 @@ impl<N> Condition<N> {
             Condition::Ge(a, b) => Condition::Ge(f(a), f(b)),
 
             Condition::And(conditions) => Condition::And(
-                conditions.into_iter().map(|c| c.map(&mut f)).collect(),
+                conditions.into_iter().map(|c| c.map(f)).collect(),
             ),
 
             Condition::Or(conditions) => Condition::Or(
-                conditions.into_iter().map(|c| c.map(&mut f)).collect(),
+                conditions.into_iter().map(|c| c.map(f)).collect(),
             ),
 
             Condition::Not(condition) => {
-                Condition::Not(Box::new(condition.map(&mut f)))
+                Condition::Not(Box::new(condition.map(f)))
             }
         }
     }
@@ -574,14 +574,14 @@ impl<N> Matrix<N> {
         self.elements
     }
 
-    pub fn map<T>(self, f: impl FnMut(N) -> T) -> Matrix<T> {
+    pub fn map<T>(self, f: &mut impl FnMut(N) -> T) -> Matrix<T> {
         Matrix {
             shape: self.shape,
             elements: self.elements.into_iter().map(f).collect(),
         }
     }
 
-    pub fn into_map(self, f: impl FnMut(N) -> N) -> Matrix<N> {
+    pub fn into_map(self, f: &mut impl FnMut(N) -> N) -> Matrix<N> {
         Matrix {
             shape: self.shape,
             elements: self.elements.into_iter().map(f).collect(),

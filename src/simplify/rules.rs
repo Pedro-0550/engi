@@ -60,13 +60,14 @@ macro_rules! rule {
     };
 }
 
-fn algebraic() -> Vec<Rule> {
+pub fn algebraic() -> Vec<Rule> {
     wildcards!(x, y, a, b);
 
     [
         rule!({ x + y } -> { y + x }),
         rule!({ x + 0 } -> { x }),
         rule!({ x - x } -> { 0 }),
+        rule!({ -(-x) } <-> { x }),
 
         /* -------------------------------------------------------------------------- */
 
@@ -80,6 +81,8 @@ fn algebraic() -> Vec<Rule> {
             } over [x, y]
         ]),
         rule!({ x * (a + b) } <-> { x * a + x * b }),
+        rule!({ (a + b) + x } <-> { a + (b + x) }),
+        rule!({ (a * b) * x } <-> { a * (b * x) }),
 
         /* -------------------------------------------------------------------------- */
 
@@ -247,7 +250,7 @@ fn algebraic() -> Vec<Rule> {
     .concat()
 }
 
-fn trig() -> Vec<Rule> {
+pub fn trig() -> Vec<Rule> {
     wildcards!(x);
 
     [
@@ -258,9 +261,9 @@ fn trig() -> Vec<Rule> {
         rule!({ cos(-x) } <-> { cos(x) }),
         rule!({ tan(-x) } <-> { -tan(x) }),
         /* -------------------------------------------------------------------------- */
-        rule!({ sin(asin(x)) } <-> { x }),
-        rule!({ cos(acos(x)) } <-> { x }),
-        rule!({ tan(atan(x)) } <-> { x }),
+        rule!({ sin(asin(x)) } -> { x }),
+        rule!({ cos(acos(x)) } -> { x }),
+        rule!({ tan(atan(x)) } -> { x }),
         /* -------------------------------------------------------------------------- */
         rule!({ cosh(x).pow(2) - sinh(x).pow(2) } -> { 1 }),
         rule!({ sinh(x) / cosh(x) } <-> { tanh(x) }),
@@ -269,9 +272,9 @@ fn trig() -> Vec<Rule> {
         rule!({ cosh(-x) } <-> { cosh(x) }),
         rule!({ tanh(-x) } <-> { -tanh(x) }),
         /* -------------------------------------------------------------------------- */
-        rule!({ sinh(asinh(x)) } <-> { x }),
-        rule!({ cosh(acosh(x)) } <-> { x }),
-        rule!({ tanh(atanh(x)) } <-> { x }),
+        rule!({ sinh(asinh(x)) } -> { x }),
+        rule!({ cosh(acosh(x)) } -> { x }),
+        rule!({ tanh(atanh(x)) } -> { x }),
 
     ]
     .concat()

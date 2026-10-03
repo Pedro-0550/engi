@@ -82,7 +82,8 @@ impl<'a> ConditionContext<'a> {
         let reg = self.allocations.get(&wildcard)?;
         let class_id = self.registers[reg.0];
 
-        Some(&self.graph.classes[class_id.0])
+        let canonical_id = self.graph.find(class_id);
+        Some(&self.graph.classes[canonical_id.0])
     }
 
     pub fn domain(&self, wildcard: Wildcard) -> Domain {
@@ -155,7 +156,7 @@ impl Pattern {
                 Node::Branch(branch) => {
                     let out = state.next;
                     let mut children = node.children();
-                    state.next.0 += children.by_ref().count();
+                    state.next.0 += node.children().count();
 
                     state.instructions.push(Instruction::Bind {
                         structure: EquivalencyNodeStructure::Branch(
@@ -190,7 +191,9 @@ impl Machine {
                     bindings: program
                         .allocations
                         .iter()
-                        .map(|(wildcard, reg)| (*wildcard, registers[reg.0]))
+                        .map(|(wildcard, reg)| {
+                            (*wildcard, graph.find(registers[reg.0]))
+                        })
                         .collect(),
                 });
 

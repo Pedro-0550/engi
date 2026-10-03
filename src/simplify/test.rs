@@ -2,6 +2,8 @@ use std::time::{self, Instant};
 
 use ordered_float::Pow;
 
+use crate as engi;
+use crate::expr::{cos, sin};
 use crate::{
     // expr::ops::{cos, cosh, ln, log, sinh},
     // simplify::{Simplify, SimplifyContext, normal::Normalize},
@@ -10,12 +12,7 @@ use crate::{
 };
 
 #[test]
-fn factoring() {
-    // symbols!(x, y, z);
-
-    // let expr = (x * y * 3) + (6 * y.pow(2));
-    // let simp = expr.simplify(&mut SimplifyContext::new());
-
-    // let target = x * ((ln(x) * (1 + z)) + y);
-    // assert_eq!(simp, target.normalize(), "failed: {} vs {}", simp, target)
+fn simple() {
+    symbols!(x);
+    panic!("{}", (sin(x).pow(2) + cos(x).pow(2) + 2 * x + 3 * x).simplified());
 }

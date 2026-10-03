@@ -13,6 +13,7 @@ use std::{
 
 use itertools::Itertools;
 use kinded::Kinded;
+use nlopt::Algorithm::Newuoa;
 use num::{One, Zero, complex::ComplexFloat, pow::Pow as _};
 use xxhash_rust::xxh3::Xxh3Builder;
 
@@ -35,7 +36,7 @@ use crate::{
 /* --------------------------------- MODULES -------------------------------- */
 
 pub mod pattern;
-mod rules;
+pub mod rules;
 
 #[cfg(test)]
 mod test;
@@ -127,7 +128,9 @@ impl EquivalencyExpr {
                 Node::Branch(branch) => {
                     let expr = EquivalencyExpr {
                         key: OnceCell::new(),
-                        node: node.clone().map(|x| Self::build(graph, &x, sub)),
+                        node: node
+                            .clone()
+                            .map(&mut |x| Self::build(graph, &x, sub)),
                     };
 
                     graph.add(expr)
@@ -186,7 +189,19 @@ impl EquivalencyGraph {
         }
     }
 
-    fn rewrite(&mut self, rules: &[Rule]) {
+    pub fn rewrite(&mut self, rules: &[Rule]) {
+        const CLASS_LIMIT: usize = 10_000;
+        const MATCH_LIMIT: usize = 10_000;
+        const PER_RULE_MATCH_LIMIT: usize = 1_000;
+
+        #[derive(Default, Clone, Copy)]
+        struct Productivity {
+            merged: usize,
+            matched: usize,
+            ban_length: usize = 4,
+            banned_for: usize,
+        }
+
         // Compile
 
         let compiled = rules
@@ -194,41 +209,119 @@ impl EquivalencyGraph {
             .map(|r| (r.from.compile(&r.conds), &r.to))
             .collect_vec();
 
+        let mut prod = vec![Productivity::default(); compiled.len()];
+
         loop {
             let mut matches = Vec::new();
 
             // Search
-            for i in 0..self.classes.len() {
-                let id = ClassId(i);
 
-                for (program, to) in &compiled {
+            for (rule_idx, (program, to)) in compiled.iter().enumerate() {
+                let prod = &mut prod[rule_idx];
+                if prod.banned_for > 0 {
+                    prod.banned_for -= 1;
+                    continue;
+                }
+
+                if prod.matched > 12 && prod.matched > prod.merged * 5 {
+                    prod.banned_for += prod.ban_length;
+                    prod.ban_length *= 2;
+                    prod.merged = 0;
+                    prod.matched = 0;
+                    continue;
+                }
+
+                prod.merged = 0;
+                prod.matched = 0;
+
+                for class_id in 0..self.classes.len() {
+                    let id = ClassId(class_id);
+
                     let mut subs = Vec::new();
                     Machine::execute(self, &program, id, &mut subs);
 
                     for sub in subs {
-                        matches.push((id, to, sub));
+                        prod.matched += 1;
+                        if prod.matched >= PER_RULE_MATCH_LIMIT
+                            || matches.len() >= MATCH_LIMIT
+                        {
+                            break;
+                        }
+
+                        matches.push((rule_idx, id, to, sub));
                     }
                 }
             }
 
-            if matches.is_empty() {
-                break; // Saturated
-            }
+            let mut graph_changed = false;
 
             // Apply
-            for (id, to, sub) in matches {
+            for (rule_idx, id, to, sub) in matches {
                 let found = EquivalencyExpr::build(self, &to, &sub);
 
-                self.union(id, found);
+                if self.find(id) != self.find(found) {
+                    self.union(id, found);
+                    prod[rule_idx].merged += 1;
+                    graph_changed = true;
+                }
             }
 
             // Rebuild
             self.rebuild();
+
+            if !graph_changed || self.classes.len() > CLASS_LIMIT {
+                break;
+            }
         }
     }
 
     fn rebuild(&mut self) {
-        todo!()
+        let mut converged = false;
+
+        while !converged {
+            converged = true;
+            let mut unions = HashMap::new();
+
+            for id in 0..self.classes.len() {
+                let id = ClassId(id);
+                let parent = self.find(id);
+                unions.insert(id, parent);
+
+                let class = &mut self.classes[id.0];
+                if parent != id {
+                    let mut exprs = mem::take(&mut class.exprs);
+                    let parent = &mut self.classes[parent.0];
+                    parent.exprs.append(&mut exprs);
+                }
+            }
+
+            self.cons.clear();
+
+            for class_id in 0..self.classes.len() {
+                let class = &self.classes[class_id];
+
+                for expr_id in &class.exprs {
+                    let expr = &mut self.exprs[expr_id.0];
+
+                    for child in expr.node.children_mut() {
+                        *child = unions[&*child]
+                    }
+                    expr.key = OnceCell::new();
+
+                    if let Some(existing) = self.cons.get(&expr.key()) {
+                        let root_a = self.find(*existing);
+                        let root_b = self.find(ClassId(class_id));
+
+                        if root_a != root_b {
+                            self.union(root_a, root_b);
+                            converged = false;
+                        }
+                    } else {
+                        self.cons.insert(expr.key(), ClassId(class_id));
+                    }
+                }
+            }
+        }
     }
 
     fn find(&self, id: ClassId) -> ClassId {
@@ -243,7 +336,7 @@ impl EquivalencyGraph {
         }
     }
 
-    fn union(&mut self, a: ClassId, b: ClassId) {
+    fn union(&self, a: ClassId, b: ClassId) {
         let root_a = self.find(a);
         let root_b = self.find(b);
 
@@ -257,689 +350,138 @@ impl EquivalencyGraph {
         }
     }
 
-    fn extract(&self) -> Expr {
-        let mut extracted = HashMap::new();
+    pub(crate) fn extract(&self) -> Expr {
+        fn calculate_cost(
+            node: &EquivalencyNode,
+            best_nodes: &HashMap<ClassId, (usize, EquivalencyNode)>,
+        ) -> Option<usize> {
+            let mut node_cost = match node {
+                Node::Leaf(leaf) => match leaf {
+                    Leaf::Symbol(symbol) => 1,
+                    Leaf::Constant(constant) => 0,
+                    Leaf::Quantity(quantity) => 0,
+                },
+                Node::Branch(branch) => match branch {
+                    Branch::Add(_)
+                    | Branch::Mul(_)
+                    | Branch::Min(_)
+                    | Branch::Max(_) => 2,
+                    Branch::Sin(_)
+                    | Branch::Cos(_)
+                    | Branch::Tan(_)
+                    | Branch::Asin(_)
+                    | Branch::Acos(_)
+                    | Branch::Atan(_)
+                    | Branch::Sinh(_)
+                    | Branch::Cosh(_)
+                    | Branch::Tanh(_)
+                    | Branch::Asinh(_)
+                    | Branch::Acosh(_)
+                    | Branch::Atanh(_) => 3,
+                    Branch::Atan2 { .. } | Branch::Arg(_) | Branch::Norm(_) => {
+                        4
+                    }
+                    Branch::Conj(_)
+                    | Branch::Sign(_)
+                    | Branch::Real(_)
+                    | Branch::Imag(_) => 2,
+                    Branch::Pow { .. } => 5,
+                    Branch::Log { .. } => 5,
+                    Branch::Matrix(_) => todo!(),
+                    Branch::Transpose(_) => todo!(),
+                    Branch::Det(_) => todo!(),
+                    Branch::Rank(_) => todo!(),
+                    Branch::Trace(_) => todo!(),
+                    Branch::Conditional { .. } => todo!(),
+                },
+            };
 
-        fn cost(node: Node<u32>) -> u32 {
-            node.children().sum::<u32>()
-                + match node {
-                    Node::Leaf(leaf) => match leaf {
-                        Leaf::Symbol(symbol) => 1,
-                        Leaf::Constant(constant) => 0,
-                        Leaf::Quantity(quantity) => 0,
-                    },
-                    Node::Branch(branch) => match branch {
-                        Branch::Add(_)
-                        | Branch::Mul(_)
-                        | Branch::Min(_)
-                        | Branch::Max(_) => 2,
-                        Branch::Sin(_)
-                        | Branch::Cos(_)
-                        | Branch::Tan(_)
-                        | Branch::Asin(_)
-                        | Branch::Acos(_)
-                        | Branch::Atan(_)
-                        | Branch::Sinh(_)
-                        | Branch::Cosh(_)
-                        | Branch::Tanh(_)
-                        | Branch::Asinh(_)
-                        | Branch::Acosh(_)
-                        | Branch::Atanh(_) => 3,
-                        Branch::Atan2 { .. }
-                        | Branch::Arg(_)
-                        | Branch::Norm(_) => 4,
-                        Branch::Conj(_)
-                        | Branch::Sign(_)
-                        | Branch::Real(_)
-                        | Branch::Imag(_) => 2,
-                        Branch::Pow { .. } => 5,
-                        Branch::Log { .. } => 5,
-                        Branch::Matrix(_) => todo!(),
-                        Branch::Transpose(_) => todo!(),
-                        Branch::Det(_) => todo!(),
-                        Branch::Rank(_) => todo!(),
-                        Branch::Trace(_) => todo!(),
-                        Branch::Conditional { .. } => todo!(),
-                    },
+            for child_id in node.children() {
+                if let Some((child_cost, _)) = best_nodes.get(&child_id) {
+                    node_cost = node_cost + *child_cost;
+                } else {
+                    return None;
                 }
-        }
-
-        fn extract_class(
-            graph: &EquivalencyGraph,
-            class_id: ClassId,
-            into: &mut HashMap<ClassId, (ExprId, u32)>,
-        ) -> u32 {
-            if let Some((_, cost)) = into.get(&class_id) {
-                return *cost;
             }
-
-            let class = &graph.classes[class_id.0];
-            let (best_expr, lowest_cost) = class
-                .exprs
-                .iter()
-                .map(|id| {
-                    let expr = &graph.exprs[id.0];
-                    let mapped = expr
-                        .node
-                        .clone()
-                        .map(|child| extract_class(graph, child, into));
-                    (id, cost(mapped))
-                })
-                .min_by_key(|x| x.1)
-                .unwrap();
-
-            into.insert(class_id, (*best_expr, lowest_cost));
-            lowest_cost
+            Some(node_cost)
         }
 
-        extract_class(self, self.root, &mut extracted);
+        let mut best_nodes =
+            HashMap::<ClassId, (usize, EquivalencyNode)>::new();
+        let mut converged = false;
 
-        let mut new_expr = Expr::new();
+        while !converged {
+            converged = true;
+
+            for class_id in 0..self.classes.len() {
+                let class_id = ClassId(class_id);
+                let root_id = self.find(class_id);
+                let class = &self.classes[root_id.0];
+
+                for expr_id in &class.exprs {
+                    let expr = &self.exprs[expr_id.0];
+
+                    if let Some(node_cost) =
+                        calculate_cost(&expr.node, &best_nodes)
+                    {
+                        let current_best_cost = best_nodes
+                            .get(&class_id)
+                            .map(|(cost, _)| *cost)
+                            .unwrap_or(usize::MAX);
+
+                        if node_cost < current_best_cost {
+                            best_nodes.insert(
+                                class_id,
+                                (node_cost, expr.node.clone()),
+                            );
+                            converged = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut expr = Expr::new();
 
         fn build_extracted(
             class_id: ClassId,
             graph: &EquivalencyGraph,
-            extracted: &HashMap<ClassId, (ExprId, u32)>,
+            best_nodes: &HashMap<ClassId, (usize, EquivalencyNode)>,
             into: &mut Expr,
         ) -> NodeId {
-            let (expr_id, _) = extracted[&class_id];
-            let expr = &graph.exprs[expr_id.0];
+            let (_, node) = &best_nodes[&class_id];
 
-            let mapped_node = expr.node.clone().map(|child_id| {
-                build_extracted(child_id, graph, extracted, into)
+            let mapped_node = node.clone().map(&mut |child_id| {
+                build_extracted(child_id, graph, best_nodes, into)
             });
 
             into.push(mapped_node)
         }
 
-        let new_root_id =
-            build_extracted(self.root, self, &extracted, &mut new_expr);
-        new_expr.set_root(new_root_id);
+        let root_id = build_extracted(self.root, &self, &best_nodes, &mut expr);
+        expr.set_root(root_id);
+        expr
+    }
 
-        new_expr
+    pub(crate) fn build(expr: &Expr) -> Self {
+        let mut graph = Self::default();
+
+        let root = expr.fold_dfs(|_, _, node| {
+            let expr = EquivalencyExpr { node, key: OnceCell::new() };
+            graph.add(expr)
+        });
+        graph.root = root;
+
+        graph
     }
 }
 
 impl EquivalencyNode {
     fn domain(&self) -> Domain {
-        todo!()
+        Domain::REAL
     }
+
     fn shape(&self) -> Shape {
-        todo!()
+        Shape::SCALAR
     }
 }
-
-// enum SimplificationStep {
-//     GroupTerms {},
-//     FactorTerms {},
-// }
-
-// pub struct SimplifyContext {
-//     steps: Option<Vec<SimplificationStep>>,
-//     cache: HashMap<Expr, Expr>,
-// }
-
-// // struct Path {
-// //     expr: Expr,
-// //     cost: usize,
-// //     seen: HashSet<Expr>,
-// // }
-
-// /* ---------------------------------- IMPLS --------------------------------- */
-// impl SimplifyContext {
-//     pub fn new() -> Self {
-//         Self { steps: None, cache: HashMap::new() }
-//     }
-// }
-
-// impl Expr {
-//     pub(crate) fn simplify_inner(&self, ctx: &mut SimplifyContext) -> Self {
-//         if self.node().is_symbol()
-//             || self.node().is_quantity()
-//             || self.node().is_constant()
-//         {
-//             return self.clone();
-//         }
-
-//         if let Some(hit) = ctx.cache.get(self) {
-//             return hit.clone();
-//         }
-
-//         let simplified = match self.node() {
-//             Node::Variadic(variadic) => variadic.simplify(ctx),
-//             Node::Unary(single) => single.simplify(ctx),
-//             Node::Binary(double) => double.simplify(ctx),
-//             Node::Matrix(matrix) => todo!(),
-//             _ => unreachable!(),
-//         }
-//         .normalize(true);
-
-//         ctx.cache.insert(self.clone(), simplified.clone());
-//         simplified
-//     }
-// }
-
-// impl Simplify for Expr {
-//     fn simplify(&self, ctx: &mut SimplifyContext) -> Expr {
-//         if self.node().is_symbol()
-//             || self.node().is_quantity()
-//             || self.node().is_constant()
-//         {
-//             return self.clone();
-//         }
-
-//         let initial = self.normalize(true);
-//         let mut step = initial.clone();
-
-//         // if let Some(hit) = CACHE.get(&step) {
-//         //     return hit;
-//         // }
-
-//         loop {
-//             let simplified = step.simplify_inner(ctx);
-
-//             if simplified == step {
-//                 break;
-//             }
-
-//             step = simplified;
-//         }
-
-//         // CACHE.insert(initial, step.clone());
-
-//         step
-//     }
-
-//     // fn range(&self) -> Set {
-//     //     todo!()
-//     // }
-// }
-
-// macro_rules! trig_simplify {
-//     ($inv:ident, $fn:ident, $expr:ident, $self:ident, $ctx:ident) => {
-//         match $expr.node() {
-//             Node::Quantity(qty) => {
-//                 $crate::core::value::Value::from(qty.value().$fn()).into()
-//             }
-//             Node::Unary(op) if let Unary::$inv(ref x) = *op => {
-//                 x.simplify_inner($ctx)
-//             }
-//             _ => $self.with_arg($self.arg().simplify_inner($ctx)).into(),
-//         }
-//     };
-// }
-
-// impl Simplify for Unary {
-//     fn simplify(&self, ctx: &mut SimplifyContext) -> Expr {
-//         match self {
-//             Unary::Sin(x) => trig_simplify!(Asin, sin, x, self, ctx),
-//             Unary::Cos(x) => trig_simplify!(Acos, cos, x, self, ctx),
-//             Unary::Tan(x) => trig_simplify!(Atan, tan, x, self, ctx),
-//             Unary::Sinh(x) => trig_simplify!(Asinh, sinh, x, self, ctx),
-//             Unary::Cosh(x) => trig_simplify!(Acosh, cosh, x, self, ctx),
-//             Unary::Tanh(x) => trig_simplify!(Atanh, tanh, x, self, ctx),
-
-//             Unary::Transpose(expr) => todo!(),
-//             Unary::Conj(expr) => todo!(),
-//             Unary::Arg(expr) => todo!(),
-//             Unary::Det(expr) => todo!(),
-//             Unary::Norm(expr) => todo!(),
-//             _ => self.with_arg(self.arg().simplify_inner(ctx)).into(),
-//         }
-//     }
-// }
-
-// impl Simplify for Binary {
-//     fn simplify(&self, ctx: &mut SimplifyContext) -> Expr {
-//         let simplified = self
-//             .with_args(array::from_fn(|i| self.args()[i].simplify_inner(ctx)))
-//             .into();
-
-//         match &simplified {
-//             Binary::Pow(Pow { base, exp }) => {
-//                 if let Node::Binary(Binary::Pow(Pow {
-//                     base: inner_base,
-//                     exp: inner_exp,
-//                 })) = &base.node()
-//                     && let Node::Quantity(exp) = exp.node()
-//                     && let Node::Quantity(inner_exp) = inner_exp.node()
-//                     && exp.value().is_scalar_integer()
-//                     && inner_exp.value().is_scalar_integer()
-//                 {
-//                     inner_base.pow(exp * inner_exp).simplify_inner(ctx)
-//                 } else if let Node::Quantity(qty) = exp.node()
-//                     && qty.value() == 0.0
-//                 {
-//                     (1.0).into()
-//                 } else if let Node::Quantity(qty) = exp.node()
-//                     && qty.value() == 1.0
-//                 {
-//                     base.clone()
-//                 } else if let Node::Quantity(qty) = base.node()
-//                     && qty.value() == 1.0
-//                 {
-//                     (1.0).into()
-//                 } else {
-//                     simplified.into()
-//                 }
-//             }
-//             _ => simplified.into(),
-//         }
-//     }
-// }
-
-// impl Simplify for Variadic {
-//     fn simplify(&self, ctx: &mut SimplifyContext) -> Expr {
-//         let simplified =
-//             self.operands().iter().map(|expr| expr.simplify_inner(ctx));
-
-//         let mut groupings =
-//             AHashMap::<Expr, Value>::with_capacity(self.operands().len());
-
-//         for term in simplified {
-//             /* -------------------------------------------------------------------------- */
-//             // joins coefficients: 2x + x -> 3x
-//             if self.is_add()
-//                 && let Node::Variadic(Variadic::Mul(terms)) = term.node()
-//             {
-//                 let (coef, exprs) = extract_const(&terms);
-//                 *groupings
-//                     .entry(Variadic::Mul(exprs.collect()).normalize(false))
-//                     .or_insert(0.0.into()) +=
-//                     coef.unwrap_or(1.0.into()).value();
-//             /* -------------------------------------------------------------------------- */
-//             // joins integer powers -> x^2 * x^3 -> x^5
-//             } else if self.is_mul()
-//                 && let Node::Binary(Binary::Pow(Pow { base, exp })) =
-//                     term.node()
-//                 && let Node::Quantity(exp) = exp.node()
-//                 && exp.value().is_scalar_integer()
-//             {
-//                 if let Node::Variadic(Variadic::Mul(terms)) = base.node() {
-//                     for term in terms {
-//                         *groupings.entry(term.clone()).or_insert(0.0.into()) +=
-//                             exp.value();
-//                     }
-//                 } else {
-//                     *groupings.entry(base.clone()).or_insert(0.0.into()) +=
-//                         exp.value();
-//                 }
-//             /* -------------------------------------------------------------------------- */
-//             } else {
-//                 *groupings.entry(term.clone()).or_insert(0.0.into()) += 1;
-//             }
-//         }
-
-//         // TODO: no need to allocate twice here, first in aggregated then in common if its add
-//         let mut aggregated: Vec<Expr> = match self {
-//             Variadic::Add(_) => groupings
-//                 .into_iter()
-//                 .map(|(base, coef)| {
-//                     if coef == 1.0 {
-//                         base
-//                     } else if coef == 0.0 {
-//                         0.0.into()
-//                     } else {
-//                         base * coef
-//                     }
-//                     .normalize(false)
-//                 })
-//                 .collect(),
-//             Variadic::Mul(_) => groupings
-//                 .into_iter()
-//                 .map(|(base, exp)| {
-//                     if exp == 1.0 {
-//                         base
-//                     } else if exp == 0.0 {
-//                         1.0.into()
-//                     } else {
-//                         base.pow(exp)
-//                     }
-//                     .normalize(false)
-//                 })
-//                 .collect(),
-//         };
-
-//         /* -------------------------------------------------------------------------- */
-//         // Partial factoring -> x * a + x * b -> x(a + b)
-//         // x * a + x * b + y * c + y * d -> x(a+b) + y(b+c)
-//         // TODO
-
-//         // if self.is_add() && aggregated.len() >= 2 {
-//         //     // TODO: when domain is implemented allow fractional exponents to be factored as well
-//         //     //
-//         //     // I really wrote this. With my free will.
-//         //     //
-//         //     // The factor table stores the individual factors for each term in this addition and their exponents,
-//         //     // as well as the term's coefficient.
-//         //     //
-//         //     // For the expression (x * y * 3) + (4 * x^2 / y) + (y^3) + (4y^2) + (8y^2 * x) it would look something like:
-//         //     // [
-//         //     //  ({ x: 1, y:  1 }, 3)
-//         //     //  ({ x: 2, y: -1 }, 4)
-//         //     //  ({       y: 3  }, 1)
-//         //     //  ({       y: 2  }, 4)
-//         //     //  ({ x: 1, y: 2  }, 8)
-//         //     // ]
-//         //     // We want to factor this into: y * ((x * 3) + y * (4 + 8x + y)) + (4 * x^2 / y)
-//         //     // During factoring, powers over multiplication are expanded.
-//         //     // Then, we group unique factors by exponent sign, ignoring terms where its 0, producing 2 groups for each factor like so:
-//         //     // x:
-//         //     // + [
-//         //     //  ({ x: 1, y:  1 }, 3)
-//         //     //  ({ x: 2, y: -1 }, 4)
-//         //     //  ({ x: 1, y: 2  }, 8)
-//         //     // ]
-//         //     // - []
-//         //     //
-//         //     // y:
-//         //     // + [
-//         //     //  ({ x: 1, y:  1 }, 3)
-//         //     //  ({ y: 3        }, 1)
-//         //     //  ({ y: 2        }, 4)
-//         //     //  ({ x: 1, y: 2  }, 8)
-//         //     // ]
-//         //     // - [
-//         //     //  ({ x: 2, y: -1 }, 4)
-//         //     // ]
-//         //     //
-//         //     // The group with the most terms is factored first, and its terms are removed from other groups. Positive and negative groups are factored separately
-//         //     // We start from the term with the highest exp, then move out.
-//         //     // First we calculate what exp each level will take by subtracting the sum of every previous exp, starting from the lowest exp:
-//         //     // y -> y^1
-//         //     // y^2 -> y^(2-1) -> y^1
-//         //     // y^3 -> y^(3 - (1 + 1)) -> y^1
-//         //     //
-//         //     // Then we factor from the inside out, appending each previous level to the current sum, and mapping exponents:
-//         //     // y^3 maps -> y
-//         //     // For n factors with the same exp, the GCD of the coefficient must be taken to pull it out:
-//         //     //
-//         //     //  ({ y: 2        }, 4)
-//         //     //  ({ x: 1, y: 2  }, 8)
-//         //     //  <prev> -> ({ y: 1  }, 1)
-//         //     // GCD = 1
-//         //     //
-//         //     // y^2 maps -> y
-//         //     // 4(y^2) + 8(y^2 * x) + <prev> -> y * (4 + 8x + <prev>) -> y * (4 + 8x + y)
-//         //     //
-//         //     // y maps -> y
-//         //     // y * x * 3 + <prev> -> (y * x * 3) + (y * (4 + 8x + y)) -> y(3x + y(4 + 8x + y))
-//         //     //
-//         //     // After the first step, we have
-//         //     // x:
-//         //     // + []
-//         //     // - []
-//         //     //
-//         //     // y:
-//         //     // + []
-//         //     // - [
-//         //     //  ({ x: 2, y: -1 }, 4)
-//         //     // ]
-//         //     //
-//         //     // This would then be repeated until all terms are disjoint, which they already are.
-//         //     // The last term is left unfactored.
-
-//         //     #[derive(PartialEq, Clone, Debug)]
-//         //     struct Term {
-//         //         factors: AHashMap<Expr, i64>,
-//         //         coef: f64,
-//         //     }
-
-//         //     impl Term {
-//         //         fn new(factors: AHashMap<Expr, i64>, coef: f64) -> Self {
-//         //             Self { factors, coef }
-//         //         }
-//         //     }
-
-//         //     impl PartialOrd for Term {
-//         //         fn partial_cmp(
-//         //             &self,
-//         //             other: &Self,
-//         //         ) -> Option<std::cmp::Ordering> {
-//         //             Some(self.coef.partial_cmp(&other.coef).unwrap().then_with(
-//         //                 || {
-//         //                     self.factors
-//         //                         .iter()
-//         //                         .partial_cmp(other.factors.iter())
-//         //                         .unwrap()
-//         //                 },
-//         //             ))
-//         //         }
-//         //     }
-
-//         //     let mut remaining = Vec::<Option<Term>>::new();
-//         //     let mut groups =
-//         //         AHashMap::<Expr, AHashMap<i64, Vec<usize>>>::with_capacity(
-//         //             aggregated.len(),
-//         //         );
-
-//         //     aggregated.sort_unstable();
-//         //     let (lone_const, terms) = extract_const(&aggregated);
-
-//         //     /* -------------------------------------------------------------------------- */
-//         //     for term in terms {
-//         //         let mut term_data =
-//         //             Term::new(AHashMap::with_capacity(aggregated.len()), 1.0);
-
-//         //         fn match_term(term: Expr, acc: i64, term_data: &mut Term) {
-//         //             match term.node() {
-//         //                 Node::Variadic(Variadic::Mul(t)) => {
-//         //                     let (coef, factors) = extract_const(&t);
-
-//         //                     let coef = coef.unwrap_or(1.0.into());
-
-//         //                     for fac in factors {
-//         //                         match_term(fac, acc, term_data);
-//         //                     }
-
-//         //                     if let Some(coef) = coef.value().as_real() {
-//         //                         term_data.coef = coef;
-//         //                     } else {
-//         //                         term_data.factors.insert(coef.into(), acc);
-//         //                     }
-//         //                 }
-//         //                 Node::Binary(Binary::Pow(Pow { base, exp }))
-//         //                     if let Some(exp) = exp
-//         //                         .node()
-//         //                         .as_const()
-//         //                         .and_then(|qty| qty.value().as_integer()) =>
-//         //                 {
-//         //                     match_term(base.clone(), acc * exp, term_data);
-//         //                 }
-//         //                 Node::Const(_) => unreachable!(),
-//         //                 _ => {
-//         //                     term_data.factors.insert(term, acc);
-//         //                 }
-//         //             }
-//         //         }
-
-//         //         match_term(term, 1, &mut term_data);
-
-//         //         let term_idx = remaining.len();
-
-//         //         for (fac, exp) in term_data.factors.clone() {
-//         //             groups
-//         //                 .entry(fac)
-//         //                 .or_insert_with(AHashMap::new)
-//         //                 .entry(exp)
-//         //                 .or_insert_with(Vec::new)
-//         //                 .push(term_idx);
-//         //         }
-
-//         //         remaining.push(Some(term_data));
-//         //     }
-
-//         //     /* -------------------------------------------------------------------------- */
-//         //     // TODO: refactor this shit
-
-//         //     if !groups.is_empty() {
-//         //         println!("groups: {:#?}", groups);
-
-//         //         println!("Remaining terms: {:#?}", remaining);
-
-//         //         let mut groups = groups
-//         //             .into_iter()
-//         //             .map(|group| (group.0, group.1.into_iter().collect_vec()))
-//         //             .collect_vec();
-
-//         //         groups.sort_unstable_by(|a, b| {
-//         //             a.1.iter()
-//         //                 .map(|x| x.1.len())
-//         //                 .sum::<usize>()
-//         //                 .cmp(&b.1.iter().map(|x| x.1.len()).sum::<usize>())
-//         //                 .then_with(|| {
-//         //                     a.1.iter()
-//         //                         .map(|x| {
-//         //                             x.1.iter().map(|i| remaining[*i].as_ref())
-//         //                         })
-//         //                         .flatten()
-//         //                         .partial_cmp(
-//         //                             b.1.iter()
-//         //                                 .map(|x| {
-//         //                                     x.1.iter()
-//         //                                         .map(|i| remaining[*i].as_ref())
-//         //                                 })
-//         //                                 .flatten(),
-//         //                         )
-//         //                         .unwrap()
-//         //                 })
-//         //         });
-
-//         //         let mut factored = Vec::new();
-
-//         //         while !groups.is_empty() {
-//         //             let (fac, mut levels) = groups.pop().unwrap();
-
-//         //             levels.sort_unstable_by_key(|(exp, ..)| *exp);
-
-//         //             let partition_point =
-//         //                 levels.partition_point(|(exp, ..)| *exp > 0);
-//         //             let (pos, neg) = levels.split_at_mut(partition_point);
-
-//         //             for part in [pos, neg] {
-//         //                 for i in 0..part.len() {
-//         //                     let (prev, current) = part.split_at_mut(i);
-//         //                     let level = &mut current[0];
-
-//         //                     let prev = prev.last().map(|x| x.0).unwrap_or(0);
-
-//         //                     level.0 = level.0 - prev;
-//         //                 }
-
-//         //                 let mut prev = Expr::from(0.0);
-
-//         //                 for (delta_exp, terms) in part.iter_mut().rev() {
-//         //                     println!("{}", delta_exp);
-//         //                     println!(
-//         //                         "Terms: {:#?}",
-//         //                         terms
-//         //                             .iter()
-//         //                             .map(|i| remaining[*i]
-//         //                                 .as_ref()
-//         //                                 .map(|t| t.factors.clone()))
-//         //                             .collect_vec()
-//         //                     );
-
-//         //                     let pulled_out = terms
-//         //                         .iter()
-//         //                         .filter_map(|i| remaining[*i].take())
-//         //                         .reduce(|mut a, b| {
-//         //                             a.factors.retain(|base, exp| {
-//         //                                 if *base == fac {
-//         //                                     *exp = *delta_exp;
-//         //                                     return true;
-//         //                                 }
-
-//         //                                 match b.factors.get(base) {
-//         //                                     Some(other_exp) => {
-//         //                                         *exp = (*exp).min(*other_exp);
-//         //                                         true
-//         //                                     }
-//         //                                     None => false,
-//         //                                 }
-//         //                             });
-
-//         //                             Term::new(
-//         //                                 a.factors,
-//         //                                 gcd_f64(a.coef, b.coef),
-//         //                             )
-//         //                         })
-//         //                         .or(terms
-//         //                             .iter()
-//         //                             .filter_map(|i| remaining[*i].take())
-//         //                             .map(|mut x| {
-//         //                                 *x.factors.get_mut(&fac).unwrap() =
-//         //                                     *delta_exp;
-//         //                                 x
-//         //                             })
-//         //                             .at_most_one()
-//         //                             .ok()
-//         //                             .flatten())
-//         //                         .unwrap_or(Term::new(AHashMap::new(), 1.0));
-
-//         //                     if !pulled_out.factors.is_empty()
-//         //                         || pulled_out.coef != 1.0
-//         //                     {
-//         //                         let common_factor =
-//         //                             (pulled_out.factors.iter().fold(
-//         //                                 Expr::from(1.0),
-//         //                                 |acc, (base, exp)| acc * (base ^ *exp),
-//         //                             ) * pulled_out.coef)
-//         //                                 .simplify_inner(ctx);
-
-//         //                         let mut sum = Vec::new();
-
-//         //                         sum.push(prev);
-
-//         //                         println!("Pulled out: {:#?}", pulled_out);
-//         //                         println!("Common factor: {}", common_factor);
-//         //                         prev = common_factor
-//         //                             * Expr::from(Variadic::Add(sum))
-//         //                     }
-//         //                 }
-//         //                 factored.push(prev);
-//         //             }
-//         //         }
-
-//         //         aggregated = factored;
-//         //         if let Some(qty) = lone_const {
-//         //             aggregated.push(qty.into());
-//         //         }
-//         //     }
-//         // }
-
-//         /* -------------------------------------------------------------------------- */
-//         if aggregated.len() <= 1 {
-//             aggregated.pop().unwrap_or(0.into())
-//         } else {
-//             self.with_operands(aggregated).into()
-//         }
-//     }
-// }
-
-// pub fn separate_consts(
-//     terms: impl IntoIterator<Item = Expr>,
-// ) -> (Vec<Quantity>, Vec<Expr>) {
-//     let mut consts = Vec::new();
-//     let mut exprs = Vec::new();
-
-//     for expr in terms {
-//         match expr.node() {
-//             Node::Quantity(qty) => consts.push(qty.clone()),
-//             _ => exprs.push(expr),
-//         }
-//     }
-
-//     (consts, exprs)
-// }
-
-// pub fn extract_const(
-//     terms: &Vec<Expr>,
-// ) -> (Option<Quantity>, impl Iterator<Item = Expr>) {
-//     let constant =
-//         terms.get(0).and_then(|x| x.clone().into_node().as_quantity().cloned());
-
-//     let exprs = terms.iter().cloned().filter(|expr| !expr.node().is_quantity());
-
-//     (constant, exprs)
-// }

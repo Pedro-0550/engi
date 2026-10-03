@@ -440,7 +440,7 @@ impl System {
                         let init = term_sum.push(terms.next().unwrap().into());
                         let root_term = terms.fold(init, |a, v| {
                             let b = term_sum.push(v.into());
-                            term_sum.add(a, b)
+                            term_sum.edit().add(a, b)
                         });
                         term_sum.set_root(root_term);
 
@@ -471,28 +471,22 @@ impl System {
         let bindings = var_assoc
             .into_iter()
             .filter_map(|(var_id, assoc)| match assoc {
-                Associated::Binding(mut expr) => {
-                    expr.simplify();
-                    Some((
-                        self.model(&var_id.path).variables[var_id.idx].symbol(),
-                        expr,
-                    ))
-                }
+                Associated::Binding(mut expr) => Some((
+                    self.model(&var_id.path).variables[var_id.idx].symbol(),
+                    expr.simplified(),
+                )),
                 _ => None,
             })
             .chain(conn_assoc.into_iter().filter_map(|(conn_id, assoc)| {
                 match assoc {
-                    Associated::Binding(mut expr) => {
-                        expr.simplify();
-                        Some((
-                            self.model(&conn_id.interface.path).interfaces
-                                [conn_id.interface.idx]
-                                .connectors[conn_id.idx]
-                                .variable()
-                                .symbol(),
-                            expr,
-                        ))
-                    }
+                    Associated::Binding(mut expr) => Some((
+                        self.model(&conn_id.interface.path).interfaces
+                            [conn_id.interface.idx]
+                            .connectors[conn_id.idx]
+                            .variable()
+                            .symbol(),
+                        expr.simplified(),
+                    )),
                     _ => None,
                 }
             }))
@@ -510,7 +504,7 @@ impl System {
                 resid = step
             }
 
-            resid.simplify();
+            resid = resid.simplified();
 
             if resid == 0 { None } else { Some(resid) }
         });

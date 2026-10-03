@@ -24,159 +24,236 @@ mod test;
 //     Conventional { dz: Expr },
 //     Wirtinger { dz: Expr, dz_conj: Expr },
 // }
-
-pub trait Differentiable {
-    fn diff(&self, symbol: Symbol) -> Expr;
-}
-
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl Differentiable for Expr {
-    fn diff(&self, s: Symbol) -> Expr {
+impl Expr {
+    pub fn diff(&self, s: Symbol) -> Expr {
         let mut dx = Expr::new();
 
         let (u, du) = self.fold_dfs(|id, _, node| {
             (
                 id,
                 match node {
-                    Node::Leaf(leaf) => match leaf {
-                        Leaf::Symbol(symbol) => {
-                            if s == symbol {
-                                dx.one()
-                            } else {
-                                dx.zero()
+                    Node::Leaf(leaf) => {
+                        let ctx = dx.edit();
+                        match leaf {
+                            Leaf::Symbol(symbol) => {
+                                if s == symbol {
+                                    ctx.one()
+                                } else {
+                                    ctx.zero()
+                                }
                             }
+                            Leaf::Constant(_) => ctx.zero(),
+                            Leaf::Quantity(_) => ctx.zero(),
                         }
-                        Leaf::Constant(constant) => dx.zero(),
-                        Leaf::Quantity(quantity) => dx.zero(),
-                    },
+                    }
                     Node::Branch(branch) => match branch {
-                        Branch::Add([(a, da), (b, db)]) => dx.add(da, db),
+                        Branch::Add([(_, da), (_, db)]) => {
+                            let ctx = dx.edit();
+                            ctx.add(da, db)
+                        }
                         Branch::Mul([(a, da), (b, db)]) => {
                             let a = dx.import(self, a);
                             let b = dx.import(self, b);
-
-                            let x = dx.mul(a, db);
-                            let y = dx.mul(da, b);
-                            dx.add(x, y)
+                            let ctx = dx.edit();
+                            ctx.add(ctx.mul(a, db), ctx.mul(da, b))
                         }
                         Branch::Min(_) => todo!(),
                         Branch::Max(_) => todo!(),
-                        Branch::Sin(_) => todo!(),
-                        Branch::Cos(_) => todo!(),
-                        Branch::Tan(_) => todo!(),
-                        Branch::Asin(_) => todo!(),
-                        Branch::Acos(_) => todo!(),
-                        Branch::Atan(_) => todo!(),
-                        Branch::Sinh(_) => todo!(),
-                        Branch::Cosh(_) => todo!(),
-                        Branch::Tanh(_) => todo!(),
-                        Branch::Asinh(_) => todo!(),
-                        Branch::Acosh(_) => todo!(),
-                        Branch::Atanh(_) => todo!(),
+
+                        // Trigonometric
+                        Branch::Sin((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.mul(du, ctx.cos(u))
+                        }
+                        Branch::Cos((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.mul(du, ctx.neg(ctx.sin(u)))
+                        }
+                        Branch::Tan((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(du, ctx.pow(ctx.cos(u), ctx.qty(2)))
+                        }
+
+                        // Inverse Trigonometric
+                        Branch::Asin((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(
+                                du,
+                                ctx.sqrt(
+                                    ctx.sub(ctx.one(), ctx.pow(u, ctx.qty(2))),
+                                ),
+                            )
+                        }
+                        Branch::Acos((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(
+                                ctx.neg(du),
+                                ctx.sqrt(
+                                    ctx.sub(ctx.one(), ctx.pow(u, ctx.qty(2))),
+                                ),
+                            )
+                        }
+                        Branch::Atan((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(
+                                du,
+                                ctx.add(ctx.pow(u, ctx.qty(2)), ctx.one()),
+                            )
+                        }
+
+                        // Hyperbolic
+                        Branch::Sinh((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.mul(du, ctx.cosh(u))
+                        }
+                        Branch::Cosh((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.mul(du, ctx.sinh(u))
+                        }
+                        Branch::Tanh((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(du, ctx.pow(ctx.cosh(u), ctx.qty(2)))
+                        }
+
+                        // Inverse Hyperbolic
+                        Branch::Asinh((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(
+                                du,
+                                ctx.sqrt(
+                                    ctx.add(ctx.pow(u, ctx.qty(2)), ctx.one()),
+                                ),
+                            )
+                        }
+                        Branch::Acosh((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(
+                                du,
+                                ctx.sqrt(
+                                    ctx.sub(ctx.pow(u, ctx.qty(2)), ctx.one()),
+                                ),
+                            )
+                        }
+                        Branch::Atanh((u, du)) => {
+                            let u = dx.import(self, u);
+                            let ctx = dx.edit();
+                            ctx.div(
+                                du,
+                                ctx.sub(ctx.one(), ctx.pow(u, ctx.qty(2))),
+                            )
+                        }
+
+                        // Complex & Structural Unaries
                         Branch::Arg(_) => todo!(),
                         Branch::Conj(_) => todo!(),
                         Branch::Norm(_) => todo!(),
-                        Branch::Sign(_) => todo!(),
-                        Branch::Real(d) => todo!(),
-                        Branch::Imag(d) => todo!(),
-                        Branch::Pow { base, exp } => todo!(),
-                        Branch::Log { base, arg } => todo!(),
-                        Branch::Atan2 { a, b } => todo!(),
-                        Branch::Matrix(matrix) => todo!(),
+                        Branch::Sign(_) => {
+                            let ctx = dx.edit();
+                            ctx.zero()
+                        }
+                        Branch::Real(_) => todo!(),
+                        Branch::Imag(_) => todo!(),
+
+                        // Power & Exponential
+                        Branch::Pow {
+                            base: (base, d_base),
+                            exp: (exp, d_exp),
+                        } => {
+                            let base = dx.import(self, base);
+                            let exp = dx.import(self, exp);
+                            let ctx = dx.edit();
+                            if d_exp == ctx.zero() {
+                                ctx.mul(
+                                    exp,
+                                    ctx.mul(
+                                        ctx.pow(base, ctx.sub(exp, ctx.qty(1))),
+                                        d_base,
+                                    ),
+                                )
+                            } else {
+                                ctx.mul(
+                                    ctx.pow(base, exp),
+                                    ctx.add(
+                                        ctx.div(ctx.mul(d_base, exp), base),
+                                        ctx.mul(d_exp, ctx.ln(base)),
+                                    ),
+                                )
+                            }
+                        }
+
+                        // Logarithmic
+                        Branch::Log {
+                            base: (base, d_base),
+                            arg: (arg, d_arg),
+                        } => {
+                            let base = dx.import(self, base);
+                            let arg = dx.import(self, arg);
+                            let ctx = dx.edit();
+                            if d_base == ctx.zero() {
+                                ctx.div(d_arg, ctx.mul(arg, ctx.ln(base)))
+                            } else {
+                                ctx.div(
+                                    ctx.sub(
+                                        ctx.mul(
+                                            ctx.div(d_arg, arg),
+                                            ctx.ln(base),
+                                        ),
+                                        ctx.mul(
+                                            ctx.div(d_base, base),
+                                            ctx.ln(arg),
+                                        ),
+                                    ),
+                                    ctx.pow(ctx.ln(base), ctx.qty(2)),
+                                )
+                            }
+                        }
+
+                        // Multivariable / Geometric
+                        Branch::Atan2 { a: (a, da), b: (b, db) } => {
+                            let a = dx.import(self, a);
+                            let b = dx.import(self, b);
+                            let ctx = dx.edit();
+                            ctx.div(
+                                ctx.sub(ctx.mul(b, da), ctx.mul(a, db)),
+                                ctx.add(
+                                    ctx.pow(a, ctx.qty(2)),
+                                    ctx.pow(b, ctx.qty(2)),
+                                ),
+                            )
+                        }
+
+                        // Matrix Operations & Control Flow
+                        Branch::Matrix(_) => todo!(),
                         Branch::Transpose(_) => todo!(),
                         Branch::Det(_) => todo!(),
                         Branch::Rank(_) => todo!(),
                         Branch::Trace(_) => todo!(),
-                        Branch::Conditional { cond, pass, fail } => todo!(),
+                        Branch::Conditional { cond: _, pass: _, fail: _ } => {
+                            todo!()
+                        }
                     },
                 },
             )
         });
 
         dx.set_root(du);
-        dx.simplify();
+        println!("non simp: {}", dx.len());
+        let simp = dx.simplified();
+        println!("simp: {}", simp.len());
 
-        dx
-
-        // match self.node() {
-        //     Node::Quantity(_) => 0.into(),
-        //     Node::Constant(_) => 0.into(),
-        //     Node::Symbol(sym) => if *sym == s { 1 } else { 0 }.into(),
-        //     Node::Sin(box u) => u.diff(s) * cos(u),
-        //     Node::Cos(box u) => u.diff(s) * -sin(u),
-        //     Node::Tan(box u) => u.diff(s) / cos(u).pow(2),
-        //     Node::Asin(box u) => u.diff(s) / sqrt(1 - u.pow(2)),
-        //     Node::Acos(box u) => -u.diff(s) / sqrt(1 - u.pow(2)),
-        //     Node::Atan(box u) => u.diff(s) / (u.pow(2) + 1),
-        //     Node::Sinh(box u) => u.diff(s) * cosh(u),
-        //     Node::Cosh(box u) => u.diff(s) * sinh(u),
-        //     Node::Tanh(box u) => u.diff(s) / cosh(u).pow(2),
-        //     Node::Asinh(box u) => u.diff(s) / sqrt(u.pow(2) + 1),
-        //     Node::Acosh(box u) => u.diff(s) / sqrt(u.pow(2) - 1),
-        //     Node::Atanh(box u) => u.diff(s) / (1 - u.pow(2)),
-        //     Node::Transpose(u) => Node::Transpose(Box::new(u.diff(s))).into(),
-        //     Node::Conj(u) => match u.domain().numeric() {
-        //         Numeric::Real => u.diff(s),
-        //         Numeric::Imag => -u.diff(s),
-        //         Numeric::Complex => todo!("We're still developing the funny"),
-        //     },
-        //     Node::Arg(_u) => todo!(),
-        //     Node::Det(_u) => todo!(),
-        //     Node::Norm(_u) => todo!(),
-        //     Node::Real(u) => match u.domain().numeric() {
-        //         Numeric::Real => u.diff(s),
-        //         Numeric::Imag => 0.into(),
-        //         Numeric::Complex => todo!("We're still developing the funny"),
-        //     },
-        //     Node::Imag(u) => match u.domain().numeric() {
-        //         Numeric::Real => 0.into(),
-        //         Numeric::Imag => u.diff(s),
-        //         Numeric::Complex => todo!("We're still developing the funny"),
-        //     },
-        //     Node::Sign(_) => 0.0.into(),
-        //     Node::Add(terms) => {
-        //         Node::Add(terms.iter().map(|expr| expr.diff(s)).collect())
-        //             .into()
-        //     }
-        //     Node::Mul(terms) => Node::Add(
-        //         terms
-        //             .iter()
-        //             .enumerate()
-        //             .map(|(i, expr)| {
-        //                 let mut factors = Vec::with_capacity(terms.len());
-        //                 factors.push(expr.diff(s));
-        //                 factors.extend(terms.iter().enumerate().filter_map(
-        //                     |(j, x)| (i != j).then_some(x.clone()),
-        //                 ));
-        //                 Node::Mul(factors.into_boxed_slice()).into()
-        //             })
-        //             .collect(),
-        //     )
-        //     .into(),
-        //     Node::Pow { box base, box exp } => {
-        //         if exp.diff(s) == 0 {
-        //             exp * base.pow(exp - 1) * base.diff(s)
-        //         } else {
-        //             base.pow(exp)
-        //                 * (base.diff(s) * exp / base + exp.diff(s) * ln(base))
-        //         }
-        //     }
-        //     Node::Log { box base, box arg } => {
-        //         if base == e {
-        //             arg.diff(s) / arg
-        //         } else if base.diff(s) == 0 {
-        //             arg.diff(s) / (arg * ln(base))
-        //         } else {
-        //             ((arg.diff(s) / arg) * ln(base)
-        //                 - (base.diff(s) / base) * ln(arg))
-        //                 / ln(base).pow(2)
-        //         }
-        //     }
-        //     Node::Atan2 { box a, box b } => {
-        //         (b * a.diff(s) - a * b.diff(s)) / (a.pow(2) + b.pow(2))
-        //     }
-        // }
-        // .normalize()
+        simp
     }
 }

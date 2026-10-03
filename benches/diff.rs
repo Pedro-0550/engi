@@ -2,7 +2,6 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use engi::{
-    diff::Differentiable,
     expr::{cos, cosh, ln, log, sin, sinh, tan},
     symbol::Symbol,
     symbols,

@@ -47,7 +47,7 @@ pub struct Symbol(pub(crate) Handle<SymbolInfo>);
 macro_rules! symbols {
     ($($sym:ident),+) => {
         $(
-            let $sym = Symbol::new(stringify!($sym));
+            let $sym = engi::symbol::Symbol::new(stringify!($sym));
         )+
     };
 }

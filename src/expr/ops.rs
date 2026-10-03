@@ -9,7 +9,7 @@ use num::{complex::Complex64, pow::Pow};
 use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{
-        Expr, ExprNode, NodeId,
+        EditContext, Expr, ExprNode, NodeId,
         tree::{Branch, Leaf, Node},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
@@ -173,154 +173,164 @@ where
     }
 }
 
-impl Expr {
-    pub fn qty(&mut self, val: impl Into<Quantity>) -> NodeId {
+impl EditContext<'_> {
+    fn push(&self, node: ExprNode) -> NodeId {
+        let expr =
+            self.expr.take().expect("Context used recursively or panicked");
+
+        let result = expr.push(node);
+
+        self.expr.set(Some(expr));
+        result
+    }
+
+    pub fn qty(&self, val: impl Into<Quantity>) -> NodeId {
         self.push(Node::Leaf(Leaf::Quantity(val.into())))
     }
 
-    pub fn symbol(&mut self, symbol: Symbol) -> NodeId {
+    pub fn symbol(&self, symbol: Symbol) -> NodeId {
         self.push(Node::Leaf(Leaf::Symbol(symbol)))
     }
 
-    pub fn constant(&mut self, constant: Constant) -> NodeId {
+    pub fn constant(&self, constant: Constant) -> NodeId {
         self.push(Node::Leaf(Leaf::Constant(constant)))
     }
 
-    pub fn zero(&mut self) -> NodeId {
+    pub fn zero(&self) -> NodeId {
         self.qty(0)
     }
 
-    pub fn one(&mut self) -> NodeId {
+    pub fn one(&self) -> NodeId {
         self.qty(1)
     }
 
-    pub fn neg_one(&mut self) -> NodeId {
+    pub fn neg_one(&self) -> NodeId {
         self.qty(-1)
     }
 
-    pub fn add(&mut self, a: NodeId, b: NodeId) -> NodeId {
+    pub fn add(&self, a: NodeId, b: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Add([a, b])))
     }
 
-    pub fn mul(&mut self, a: NodeId, b: NodeId) -> NodeId {
+    pub fn mul(&self, a: NodeId, b: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Mul([a, b])))
     }
 
-    pub fn max(&mut self, a: NodeId, b: NodeId) -> NodeId {
+    pub fn max(&self, a: NodeId, b: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Max([a, b])))
     }
 
-    pub fn min(&mut self, a: NodeId, b: NodeId) -> NodeId {
+    pub fn min(&self, a: NodeId, b: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Min([a, b])))
     }
 
-    pub fn neg(&mut self, a: NodeId) -> NodeId {
+    pub fn neg(&self, a: NodeId) -> NodeId {
         let neg_1 = self.neg_one();
         self.mul(neg_1, a)
     }
 
-    pub fn sub(&mut self, a: NodeId, b: NodeId) -> NodeId {
+    pub fn sub(&self, a: NodeId, b: NodeId) -> NodeId {
         let neg_b = self.neg(b);
         self.add(a, neg_b)
     }
 
-    pub fn pow(&mut self, base: NodeId, exp: NodeId) -> NodeId {
+    pub fn pow(&self, base: NodeId, exp: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Pow { base, exp }))
     }
 
-    pub fn div(&mut self, num: NodeId, den: NodeId) -> NodeId {
+    pub fn div(&self, num: NodeId, den: NodeId) -> NodeId {
         let neg_one = self.neg_one();
         let inv_den = self.pow(den, neg_one);
         self.mul(num, inv_den)
     }
 
-    pub fn sqrt(&mut self, u: NodeId) -> NodeId {
+    pub fn sqrt(&self, u: NodeId) -> NodeId {
         let half = self.qty(0.5);
         self.pow(u, half)
     }
 
-    pub fn log(&mut self, base: NodeId, arg: NodeId) -> NodeId {
+    pub fn log(&self, base: NodeId, arg: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Log { base, arg }))
     }
 
-    pub fn ln(&mut self, arg: NodeId) -> NodeId {
+    pub fn ln(&self, arg: NodeId) -> NodeId {
         let base_e = self.constant(e);
         self.log(base_e, arg)
     }
 
-    pub fn atan2(&mut self, a: NodeId, b: NodeId) -> NodeId {
+    pub fn atan2(&self, a: NodeId, b: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Atan2 { a, b }))
     }
 
-    pub fn sin(&mut self, u: NodeId) -> NodeId {
+    pub fn sin(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Sin(u)))
     }
 
-    pub fn cos(&mut self, u: NodeId) -> NodeId {
+    pub fn cos(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Cos(u)))
     }
 
-    pub fn tan(&mut self, u: NodeId) -> NodeId {
+    pub fn tan(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Tan(u)))
     }
 
-    pub fn asin(&mut self, u: NodeId) -> NodeId {
+    pub fn asin(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Asin(u)))
     }
 
-    pub fn acos(&mut self, u: NodeId) -> NodeId {
+    pub fn acos(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Acos(u)))
     }
 
-    pub fn atan(&mut self, u: NodeId) -> NodeId {
+    pub fn atan(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Atan(u)))
     }
 
-    pub fn sinh(&mut self, u: NodeId) -> NodeId {
+    pub fn sinh(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Sinh(u)))
     }
 
-    pub fn cosh(&mut self, u: NodeId) -> NodeId {
+    pub fn cosh(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Cosh(u)))
     }
 
-    pub fn tanh(&mut self, u: NodeId) -> NodeId {
+    pub fn tanh(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Tanh(u)))
     }
 
-    pub fn asinh(&mut self, u: NodeId) -> NodeId {
+    pub fn asinh(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Asinh(u)))
     }
 
-    pub fn acosh(&mut self, u: NodeId) -> NodeId {
+    pub fn acosh(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Acosh(u)))
     }
 
-    pub fn atanh(&mut self, u: NodeId) -> NodeId {
+    pub fn atanh(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Atanh(u)))
     }
 
-    pub fn transpose(&mut self, u: NodeId) -> NodeId {
+    pub fn transpose(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Transpose(u)))
     }
 
-    pub fn conj(&mut self, u: NodeId) -> NodeId {
+    pub fn conj(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Conj(u)))
     }
 
-    pub fn real(&mut self, u: NodeId) -> NodeId {
+    pub fn real(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Real(u)))
     }
 
-    pub fn imag(&mut self, u: NodeId) -> NodeId {
+    pub fn imag(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Imag(u)))
     }
 
-    pub fn sign(&mut self, u: NodeId) -> NodeId {
+    pub fn sign(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Sign(u)))
     }
 
-    pub fn trace(&mut self, u: NodeId) -> NodeId {
+    pub fn trace(&self, u: NodeId) -> NodeId {
         self.push(Node::Branch(Branch::Trace(u)))
     }
 }
