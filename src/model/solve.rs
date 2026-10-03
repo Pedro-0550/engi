@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, fmt::Debug};
 
+use ahash::AHashMap;
 use faer::Mat;
 use itertools::Itertools;
 use nlopt::{Algorithm, Nlopt, Target};
@@ -24,7 +25,7 @@ pub trait Solver {
     fn solve(
         &self,
         residuals: Vec<Expr>,
-        guesses: &HashMap<Variable, Value>,
+        guesses: &AHashMap<Variable, Value>,
     ) -> Result<Vec<(Variable, Value)>, Self::Error>;
 }
 
@@ -49,7 +50,7 @@ impl Solver for NloptSolver {
         &self,
         residuals: Vec<Expr>,
         // constraints: Vec<Constraint>,
-        guesses: &HashMap<Variable, Value>,
+        guesses: &AHashMap<Variable, Value>,
     ) -> Result<Vec<(Variable, Value)>, Self::Error> {
         let mut symbols = residuals
             .iter()

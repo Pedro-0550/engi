@@ -16,8 +16,10 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 crabtime = "1.1.4"
 faer = "0.24"
 nlopt = "0.8"
+ahash = "*"
 cranelift = {version = "0.135", features = ["jit", "module", "native"]}
 kinded = "*"
+rayon = "*"
 
 engi-macros = { path = "./macros" }
 
@@ -33,3 +35,10 @@ itertools = "0.15"
 [[bench]]
 name = "diff"
 harness = false
+
+[profile.bench]
+debug = true
+
+[profile.samply]
+inherits = "release"
+debug = true

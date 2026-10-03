@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, ops::Neg, rc::Rc};
 
+use ahash::AHashMap;
 // use cranelift::codegen::ir::Constant;
 use kinded::Kinded;
 use num::{complex::Complex64, pow::Pow};
@@ -12,7 +13,7 @@ use crate::{
         Expr,
         domain::Domain,
         shape::Shape,
-        tree::{Branch, Node},
+        tree::{Branch, Node, NodeKind},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::{
@@ -34,7 +35,7 @@ pub struct Wildcard(pub(crate) usize);
 
 pub struct Program {
     code: Vec<Instruction>,
-    allocations: HashMap<Wildcard, Reg>,
+    allocations: AHashMap<Wildcard, Reg>,
     register_count: usize,
 }
 
@@ -56,12 +57,12 @@ pub struct Rule {
 struct CompilerState {
     instructions: Vec<Instruction>,
     next: Reg,
-    allocations: HashMap<Wildcard, Reg>,
+    allocations: AHashMap<Wildcard, Reg>,
 }
 
 pub struct ConditionContext<'a> {
     registers: &'a [ClassId],
-    allocations: &'a HashMap<Wildcard, Reg>,
+    allocations: &'a AHashMap<Wildcard, Reg>,
     graph: &'a EquivalencyGraph,
 }
 
@@ -96,11 +97,18 @@ impl<'a> ConditionContext<'a> {
 }
 
 impl Pattern {
+    pub(crate) fn kind(&self) -> Option<NodeKind> {
+        match self {
+            Pattern::Wildcard(_) => None,
+            Pattern::Node(n) => Some(n.kind()),
+        }
+    }
+
     pub(crate) fn compile(&self, conditions: &[Condition]) -> Program {
         let mut state = CompilerState {
             instructions: Vec::new(),
             next: Reg(1),
-            allocations: HashMap::new(),
+            allocations: AHashMap::new(),
         };
 
         Self::compile_inner(
@@ -155,8 +163,8 @@ impl Pattern {
                 },
                 Node::Branch(branch) => {
                     let out = state.next;
-                    let mut children = node.children();
-                    state.next.0 += node.children().count();
+                    let children = node.children();
+                    state.next.0 += node.children().len();
 
                     state.instructions.push(Instruction::Bind {
                         structure: EquivalencyNodeStructure::Branch(
@@ -166,7 +174,7 @@ impl Pattern {
                         out,
                     });
 
-                    for (i, child) in children.enumerate() {
+                    for (i, child) in children.iter().enumerate() {
                         child.compile_inner(Reg(out.0 + i), conditions, state);
                     }
                 }
@@ -182,10 +190,15 @@ impl Machine {
         root: ClassId,
         out: &mut Vec<Substitution>,
     ) {
-        let initial_regs = vec![root; program.register_count];
-        let mut stack = vec![(0, initial_regs)];
+        let mut registers = vec![root; program.register_count];
 
-        while let Some((pc, registers)) = stack.pop() {
+        fn execute_inner(
+            pc: usize,
+            registers: &mut [ClassId],
+            graph: &EquivalencyGraph,
+            program: &Program,
+            out: &mut Vec<Substitution>,
+        ) {
             if pc >= program.code.len() {
                 out.push(Substitution {
                     bindings: program
@@ -196,52 +209,61 @@ impl Machine {
                         })
                         .collect(),
                 });
-
-                continue;
+                return;
             }
 
             match &program.code[pc] {
-                Instruction::Bind { structure, target, out } => {
+                Instruction::Bind { structure, target, out: bind_out } => {
                     let target_id = registers[target.0];
                     let target_class = &graph.classes[graph.find(target_id).0];
 
-                    for node_id in &target_class.exprs {
-                        let expr = &graph.exprs[node_id.0];
+                    if let Some(exprs) =
+                        target_class.exprs_by_kind.get(&structure.kind())
+                    {
+                        for expr_id in exprs {
+                            let expr = &graph.exprs[expr_id.0];
 
-                        if expr.node.structure() == *structure {
-                            let mut regs = registers.clone();
+                            if expr.node.structure() == *structure {
+                                for (i, &child_class) in
+                                    expr.node.children().into_iter().enumerate()
+                                {
+                                    registers[bind_out.0 + i] = child_class;
+                                }
 
-                            for (i, &child_class) in
-                                expr.node.children().enumerate()
-                            {
-                                regs[out.0 + i] = child_class;
+                                execute_inner(
+                                    pc + 1,
+                                    registers,
+                                    graph,
+                                    program,
+                                    out,
+                                );
                             }
-
-                            stack.push((pc + 1, regs));
                         }
-                    }
+                    };
                 }
                 Instruction::Compare { a, b } => {
-                    let a = registers[a.0];
-                    let b = registers[b.0];
+                    let a_id = registers[a.0];
+                    let b_id = registers[b.0];
 
-                    if graph.find(a) == graph.find(b) {
-                        stack.push((pc + 1, registers))
+                    if graph.find(a_id) == graph.find(b_id) {
+                        execute_inner(pc + 1, registers, graph, program, out);
                     }
                 }
                 Instruction::If { f } => {
                     let ctx = ConditionContext {
                         allocations: &program.allocations,
                         graph,
-                        registers: &registers,
+                        registers,
                     };
 
                     if f(ctx) {
-                        stack.push((pc + 1, registers))
+                        execute_inner(pc + 1, registers, graph, program, out);
                     }
                 }
             }
         }
+
+        execute_inner(0, &mut registers, graph, program, out);
     }
 }
 

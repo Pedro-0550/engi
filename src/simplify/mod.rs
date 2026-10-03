@@ -1,7 +1,7 @@
 use std::{
     array,
     cell::{Cell, OnceCell},
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{BuildHasher, Hash, RandomState},
     iter::once,
     mem,
@@ -11,6 +11,7 @@ use std::{
     time::Duration,
 };
 
+use ahash::AHashMap;
 use itertools::Itertools;
 use kinded::Kinded;
 use nlopt::Algorithm::Newuoa;
@@ -26,7 +27,7 @@ use crate::{
         Expr, NodeId,
         domain::Domain,
         shape::Shape,
-        tree::{Branch, BranchKind, Leaf, Node},
+        tree::{Branch, BranchKind, Leaf, Node, NodeKind},
     },
     simplify::pattern::{Machine, Pattern, Program, Rule, Wildcard},
     symbol::{Symbol, constants::Constant},
@@ -50,12 +51,12 @@ pub struct ClassId(usize);
 pub struct ExprId(usize);
 
 pub struct Substitution {
-    bindings: HashMap<Wildcard, ClassId>,
+    bindings: AHashMap<Wildcard, ClassId>,
 }
 
 #[derive(Default)]
 pub struct EquivalencyGraph {
-    cons: HashMap<Key, ClassId>,
+    cons: AHashMap<Key, ClassId>,
     exprs: Vec<EquivalencyExpr>,
     classes: Vec<EquivalencyClass>,
     root: ClassId,
@@ -63,6 +64,7 @@ pub struct EquivalencyGraph {
 
 pub struct EquivalencyClass {
     exprs: Vec<ExprId>,
+    exprs_by_kind: AHashMap<NodeKind, Vec<ExprId>>,
     parent: Cell<ClassId>,
     domain: Domain,
     shape: Shape,
@@ -92,6 +94,15 @@ impl EquivalencyClass {
 
     pub fn shape(&self) -> Shape {
         self.shape
+    }
+}
+
+impl EquivalencyNodeStructure {
+    fn kind(&self) -> NodeKind {
+        match self {
+            EquivalencyNodeStructure::Leaf(leaf) => NodeKind::Leaf(leaf.kind()),
+            EquivalencyNodeStructure::Branch(b) => NodeKind::Branch(*b),
+        }
     }
 }
 
@@ -171,28 +182,30 @@ impl EquivalencyGraph {
         if let Some(existing) = self.cons.get(&expr.key()) {
             return self.find(*existing);
         } else {
-            let node_id = ExprId(self.exprs.len());
+            let expr_id = ExprId(self.exprs.len());
             let class_id = ClassId(self.classes.len());
             self.cons.insert(expr.key(), class_id);
 
             let class = EquivalencyClass {
                 parent: Cell::new(class_id),
-                exprs: vec![node_id],
+                exprs: vec![expr_id],
+                exprs_by_kind: [(expr.node.kind(), vec![expr_id])].into(),
                 domain: expr.node.domain(),
                 shape: expr.node.shape(),
             };
 
             self.exprs.push(expr);
             self.classes.push(class);
+            // self.pending.insert(class_id);
 
             class_id
         }
     }
 
     pub fn rewrite(&mut self, rules: &[Rule]) {
-        const CLASS_LIMIT: usize = 10_000;
-        const MATCH_LIMIT: usize = 10_000;
-        const PER_RULE_MATCH_LIMIT: usize = 1_000;
+        const CLASS_LIMIT: usize = 5000;
+        const MATCH_LIMIT: usize = 5000;
+        const PER_RULE_MATCH_LIMIT: usize = 500;
 
         #[derive(Default, Clone, Copy)]
         struct Productivity {
@@ -206,7 +219,7 @@ impl EquivalencyGraph {
 
         let compiled = rules
             .iter()
-            .map(|r| (r.from.compile(&r.conds), &r.to))
+            .map(|r| (r.from.kind(), r.from.compile(&r.conds), &r.to))
             .collect_vec();
 
         let mut prod = vec![Productivity::default(); compiled.len()];
@@ -216,16 +229,18 @@ impl EquivalencyGraph {
 
             // Search
 
-            for (rule_idx, (program, to)) in compiled.iter().enumerate() {
+            for (rule_idx, (root_kind, program, to)) in
+                compiled.iter().enumerate()
+            {
                 let prod = &mut prod[rule_idx];
                 if prod.banned_for > 0 {
                     prod.banned_for -= 1;
                     continue;
                 }
 
-                if prod.matched > 12 && prod.matched > prod.merged * 5 {
+                if prod.matched > 10 && prod.matched > prod.merged * 2 {
                     prod.banned_for += prod.ban_length;
-                    prod.ban_length *= 2;
+                    prod.ban_length *= 3;
                     prod.merged = 0;
                     prod.matched = 0;
                     continue;
@@ -235,10 +250,20 @@ impl EquivalencyGraph {
                 prod.matched = 0;
 
                 for class_id in 0..self.classes.len() {
-                    let id = ClassId(class_id);
+                    // why even bother matching if this class
+                    // dosent even contain any nodes with that kind
+                    if let Some(root_kind) = root_kind
+                        && !self.classes[class_id]
+                            .exprs_by_kind
+                            .contains_key(root_kind)
+                    {
+                        continue;
+                    }
+
+                    let class_id = ClassId(class_id);
 
                     let mut subs = Vec::new();
-                    Machine::execute(self, &program, id, &mut subs);
+                    Machine::execute(self, &program, class_id, &mut subs);
 
                     for sub in subs {
                         prod.matched += 1;
@@ -248,7 +273,7 @@ impl EquivalencyGraph {
                             break;
                         }
 
-                        matches.push((rule_idx, id, to, sub));
+                        matches.push((rule_idx, class_id, to, sub));
                     }
                 }
             }
@@ -261,6 +286,7 @@ impl EquivalencyGraph {
 
                 if self.find(id) != self.find(found) {
                     self.union(id, found);
+                    // self.pending.insert(id);
                     prod[rule_idx].merged += 1;
                     graph_changed = true;
                 }
@@ -276,50 +302,101 @@ impl EquivalencyGraph {
     }
 
     fn rebuild(&mut self) {
-        let mut converged = false;
+        loop {
+            let mut changed_roots = Vec::new();
 
-        while !converged {
-            converged = true;
-            let mut unions = HashMap::new();
+            let mut unions = Vec::with_capacity(self.classes.len());
+            for i in 0..self.classes.len() {
+                unions.push(self.find(ClassId(i)));
+            }
 
-            for id in 0..self.classes.len() {
-                let id = ClassId(id);
-                let parent = self.find(id);
-                unions.insert(id, parent);
+            for i in 0..self.classes.len() {
+                let id = ClassId(i);
+                let root = unions[i];
 
-                let class = &mut self.classes[id.0];
-                if parent != id {
-                    let mut exprs = mem::take(&mut class.exprs);
-                    let parent = &mut self.classes[parent.0];
-                    parent.exprs.append(&mut exprs);
+                if id != root {
+                    let class = &mut self.classes[id.0];
+
+                    if !class.exprs.is_empty() {
+                        let mut exprs = mem::take(&mut class.exprs);
+                        let exprs_by_kind = mem::take(&mut class.exprs_by_kind);
+
+                        let parent_class = &mut self.classes[root.0];
+                        parent_class.exprs.append(&mut exprs);
+
+                        for (kind, mut ids) in exprs_by_kind {
+                            parent_class
+                                .exprs_by_kind
+                                .entry(kind)
+                                .or_default()
+                                .append(&mut ids);
+                        }
+
+                        changed_roots.push(root);
+                    }
+                }
+            }
+
+            changed_roots.sort_unstable_by_key(|x| x.0);
+            changed_roots.dedup();
+
+            for root in changed_roots {
+                let class = &mut self.classes[root.0];
+                class.exprs.sort_unstable_by_key(|x| x.0);
+                class.exprs.dedup();
+                for entry in class.exprs_by_kind.values_mut() {
+                    entry.sort_unstable_by_key(|x| x.0);
+                    entry.dedup();
                 }
             }
 
             self.cons.clear();
+            let mut converged = true;
 
             for class_id in 0..self.classes.len() {
+                let id = ClassId(class_id);
+
+                if unions[class_id] != id {
+                    continue;
+                }
+
                 let class = &self.classes[class_id];
 
-                for expr_id in &class.exprs {
-                    let expr = &mut self.exprs[expr_id.0];
+                for &expr_id in &class.exprs {
+                    let key = {
+                        let expr = &mut self.exprs[expr_id.0];
 
-                    for child in expr.node.children_mut() {
-                        *child = unions[&*child]
-                    }
-                    expr.key = OnceCell::new();
+                        let mut changed = false;
+                        for child in expr.node.children_mut() {
+                            let root = unions[child.0];
+                            if *child != root {
+                                *child = root;
+                                changed = true;
+                            }
+                        }
 
-                    if let Some(existing) = self.cons.get(&expr.key()) {
-                        let root_a = self.find(*existing);
-                        let root_b = self.find(ClassId(class_id));
+                        if changed {
+                            expr.key = OnceCell::new();
+                        }
+
+                        expr.key()
+                    };
+                    if let Some(&existing) = self.cons.get(&key) {
+                        let root_a = self.find(existing);
+                        let root_b = self.find(id);
 
                         if root_a != root_b {
                             self.union(root_a, root_b);
                             converged = false;
                         }
                     } else {
-                        self.cons.insert(expr.key(), ClassId(class_id));
+                        self.cons.insert(key, id);
                     }
                 }
+            }
+
+            if converged {
+                break;
             }
         }
     }
@@ -353,7 +430,7 @@ impl EquivalencyGraph {
     pub(crate) fn extract(&self) -> Expr {
         fn calculate_cost(
             node: &EquivalencyNode,
-            best_nodes: &HashMap<ClassId, (usize, EquivalencyNode)>,
+            best_nodes: &AHashMap<ClassId, (usize, EquivalencyNode)>,
         ) -> Option<usize> {
             let mut node_cost = match node {
                 Node::Leaf(leaf) => match leaf {
@@ -407,7 +484,7 @@ impl EquivalencyGraph {
         }
 
         let mut best_nodes =
-            HashMap::<ClassId, (usize, EquivalencyNode)>::new();
+            AHashMap::<ClassId, (usize, EquivalencyNode)>::new();
         let mut converged = false;
 
         while !converged {
@@ -446,7 +523,7 @@ impl EquivalencyGraph {
         fn build_extracted(
             class_id: ClassId,
             graph: &EquivalencyGraph,
-            best_nodes: &HashMap<ClassId, (usize, EquivalencyNode)>,
+            best_nodes: &AHashMap<ClassId, (usize, EquivalencyNode)>,
             into: &mut Expr,
         ) -> NodeId {
             let (_, node) = &best_nodes[&class_id];

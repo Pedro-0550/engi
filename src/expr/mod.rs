@@ -16,6 +16,7 @@ use std::{
     slice,
 };
 
+use ahash::AHashMap;
 use derive_more::IsVariant;
 use faer::linalg::svd::ComputeSvdVectors::No;
 use itertools::Itertools;
@@ -53,7 +54,7 @@ pub struct ExprKey(u128);
 #[derive(Eq, Clone)]
 pub struct Expr {
     nodes: Vec<(NodeKey, ExprNode)>,
-    cons: HashMap<NodeKey, NodeId>,
+    cons: AHashMap<NodeKey, NodeId>,
     root: NodeId,
 }
 
@@ -155,7 +156,7 @@ impl Expr {
 
                 Some((symbol_node_id, expr_node_id))
             })
-            .collect::<HashMap<_, _>>();
+            .collect::<AHashMap<_, _>>();
 
         for (_, node) in &mut self.nodes {
             for child_id in node.children_mut() {
@@ -229,7 +230,7 @@ impl Expr {
             }
 
             if *order == Order::In {
-                let mut children = node.children();
+                let mut children = node.children().into_iter();
                 match (children.next(), children.next()) {
                     (Some(left), Some(right)) => {
                         dfs_inner(expr, *left, into, order);
@@ -264,7 +265,7 @@ impl Expr {
         &self,
         mut f: impl FnMut(NodeId, &Node<NodeId>, Node<T>) -> T,
     ) -> T {
-        let mut mapped = HashMap::<NodeId, T>::with_capacity(self.nodes.len());
+        let mut mapped = AHashMap::<NodeId, T>::with_capacity(self.nodes.len());
 
         for id in self.dfs(Order::Post) {
             if mapped.contains_key(&id) {
@@ -289,13 +290,13 @@ impl Expr {
 
     /// Imports an entire node's subtree from another expr, mapping IDs appropriately
     pub fn import(&mut self, src: &Expr, src_id: NodeId) -> NodeId {
-        let mut cache = HashMap::new();
+        let mut cache = AHashMap::new();
 
         fn import_inner(
             expr: &mut Expr,
             src: &Expr,
             src_id: NodeId,
-            mapped: &mut HashMap<NodeId, NodeId>,
+            mapped: &mut AHashMap<NodeId, NodeId>,
         ) -> NodeId {
             if let Some(&remapped) = mapped.get(&src_id) {
                 return remapped;
@@ -434,13 +435,11 @@ impl Expr {
                                 | Branch::Min(children) => {
                                     let this_node = self.node(id);
                                     let [mut a_acc, mut b_acc] = children;
-                                    let [a_id, b_id] = old
-                                        .children()
-                                        .copied()
-                                        .collect_array()
-                                        .unwrap();
+                                    let [a_id, b_id] = *old.children() else {
+                                        unreachable!()
+                                    };
 
-                                    // There is no order for complex numbers (although we still allow it elementwise), matrices, and sets.
+                                    // There is no order for complex numbers (although we still allow them elementwise), matrices, and sets
                                     if this_node.as_branch().is_some_and(|b| {
                                         b.is_max() || b.is_min()
                                     }) && !(a_acc
@@ -456,8 +455,8 @@ impl Expr {
                                         return Accumulated::symbolic(new_id);
                                     }
 
-                                    let a_node = self.node(a_id);
-                                    let b_node = self.node(b_id);
+                                    let a_node = self.node(*a_id);
+                                    let b_node = self.node(*b_id);
 
                                     let foldable_a = a_node.kind()
                                         == this_node.kind()
@@ -611,7 +610,7 @@ impl Expr {
     }
 
     pub fn new() -> Self {
-        Self { cons: HashMap::new(), nodes: Vec::new(), root: NodeId(0) }
+        Self { cons: AHashMap::new(), nodes: Vec::new(), root: NodeId(0) }
     }
 
     pub fn symbols(&self) -> impl Iterator<Item = Symbol> {

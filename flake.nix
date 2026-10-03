@@ -51,6 +51,7 @@
               openssl.dev
               pkgs.llvmPackages.bintools
               git
+              samply
             ]
             ++ [ pkgs-tracy.tracy ];
           LIBCLANG_PATH = "${pkgs.libclang}/lib";

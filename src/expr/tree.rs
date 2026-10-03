@@ -1,6 +1,5 @@
 use std::{
     hash::{Hash, Hasher},
-    iter::empty,
     num::NonZero,
     ops::{Index, IndexMut},
 };
@@ -135,17 +134,15 @@ impl<N> Node<N> {
         }
     }
 
-    pub fn children(&self) -> Box<dyn DoubleEndedIterator<Item = &N> + '_>
-    where
-        N: 'static, {
+    pub fn children(&self) -> Box<[&N]> {
         match self {
-            Node::Leaf(_) => Box::new(empty()),
+            Node::Leaf(_) => Box::new([]),
 
             Node::Branch(branch) => match branch {
                 Branch::Add(ns)
                 | Branch::Mul(ns)
                 | Branch::Min(ns)
-                | Branch::Max(ns) => Box::new(ns.iter()),
+                | Branch::Max(ns) => Box::new(ns.each_ref()),
 
                 Branch::Sin(n)
                 | Branch::Cos(n)
@@ -168,38 +165,36 @@ impl<N> Node<N> {
                 | Branch::Transpose(n)
                 | Branch::Det(n)
                 | Branch::Rank(n)
-                | Branch::Trace(n) => Box::new(std::iter::once(n)),
+                | Branch::Trace(n) => Box::new([n]),
 
                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-                    Box::new([base, exp].into_iter())
+                    Box::new([base, exp])
                 }
 
-                Branch::Atan2 { a, b } => Box::new([a, b].into_iter()),
+                Branch::Atan2 { a, b } => Box::new([a, b]),
 
-                Branch::Matrix(matrix) => Box::new(matrix.elements().iter()),
+                Branch::Matrix(matrix) => matrix.elements().iter().collect(),
 
-                Branch::Conditional { cond, pass, fail } => Box::new(
-                    cond.children()
-                        .chain(std::iter::once(pass))
-                        .chain(std::iter::once(fail)),
-                ),
+                Branch::Conditional { cond, pass, fail } => {
+                    let mut out = Vec::new();
+                    cond.push_children(&mut out);
+                    out.push(pass);
+                    out.push(fail);
+                    out.into_boxed_slice()
+                }
             },
         }
     }
 
-    pub fn children_mut(
-        &mut self,
-    ) -> Box<dyn DoubleEndedIterator<Item = &mut N> + '_>
-    where
-        N: 'static, {
+    pub fn children_mut(&mut self) -> Box<[&mut N]> {
         match self {
-            Node::Leaf(_) => Box::new(empty()),
+            Node::Leaf(_) => Box::new([]),
 
             Node::Branch(branch) => match branch {
                 Branch::Add(ns)
                 | Branch::Mul(ns)
                 | Branch::Min(ns)
-                | Branch::Max(ns) => Box::new(ns.iter_mut()),
+                | Branch::Max(ns) => Box::new(ns.each_mut()),
 
                 Branch::Sin(n)
                 | Branch::Cos(n)
@@ -222,23 +217,25 @@ impl<N> Node<N> {
                 | Branch::Transpose(n)
                 | Branch::Det(n)
                 | Branch::Rank(n)
-                | Branch::Trace(n) => Box::new(std::iter::once(n)),
+                | Branch::Trace(n) => Box::new([n]),
 
                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-                    Box::new([base, exp].into_iter())
+                    Box::new([base, exp])
                 }
 
-                Branch::Atan2 { a, b } => Box::new([a, b].into_iter()),
+                Branch::Atan2 { a, b } => Box::new([a, b]),
 
                 Branch::Matrix(matrix) => {
-                    Box::new(matrix.elements_mut().iter_mut())
+                    matrix.elements_mut().iter_mut().collect()
                 }
 
-                Branch::Conditional { cond, pass, fail } => Box::new(
-                    cond.children_mut()
-                        .chain(std::iter::once(pass))
-                        .chain(std::iter::once(fail)),
-                ),
+                Branch::Conditional { cond, pass, fail } => {
+                    let mut out = Vec::new();
+                    cond.push_children_mut(&mut out);
+                    out.push(pass);
+                    out.push(fail);
+                    out.into_boxed_slice()
+                }
             },
         }
     }
@@ -283,17 +280,15 @@ impl<N> Node<N> {
         }
     }
 
-    pub fn into_children(self) -> Box<dyn DoubleEndedIterator<Item = N>>
-    where
-        N: 'static, {
+    pub fn into_children(self) -> Box<[N]> {
         match self {
-            Node::Leaf(_) => Box::new(empty()),
+            Node::Leaf(_) => Box::new([]),
 
             Node::Branch(branch) => match branch {
                 Branch::Add(ns)
                 | Branch::Mul(ns)
                 | Branch::Min(ns)
-                | Branch::Max(ns) => Box::new(ns.into_iter()),
+                | Branch::Max(ns) => Box::new(ns),
 
                 Branch::Sin(n)
                 | Branch::Cos(n)
@@ -316,23 +311,23 @@ impl<N> Node<N> {
                 | Branch::Transpose(n)
                 | Branch::Det(n)
                 | Branch::Rank(n)
-                | Branch::Trace(n) => Box::new(std::iter::once(n)),
+                | Branch::Trace(n) => Box::new([n]),
 
                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-                    Box::new([base, exp].into_iter())
+                    Box::new([base, exp])
                 }
 
-                Branch::Atan2 { a, b } => Box::new([a, b].into_iter()),
+                Branch::Atan2 { a, b } => Box::new([a, b]),
 
-                Branch::Matrix(matrix) => {
-                    Box::new(matrix.into_elements().into_iter())
+                Branch::Matrix(matrix) => matrix.into_elements(),
+
+                Branch::Conditional { cond, pass, fail } => {
+                    let mut out = Vec::new();
+                    cond.push_into_children(&mut out);
+                    out.push(pass);
+                    out.push(fail);
+                    out.into_boxed_slice()
                 }
-
-                Branch::Conditional { cond, pass, fail } => Box::new(
-                    cond.into_children()
-                        .chain(std::iter::once(pass))
-                        .chain(std::iter::once(fail)),
-                ),
             },
         }
     }
@@ -449,62 +444,90 @@ impl<N> Condition<N> {
         }
     }
 
-    pub fn children(&self) -> Box<dyn DoubleEndedIterator<Item = &N> + '_>
-    where
-        N: 'static, {
+    pub fn children(&self) -> Box<[&N]> {
+        let mut out = Vec::new();
+        self.push_children(&mut out);
+        out.into_boxed_slice()
+    }
+
+    pub fn children_mut(&mut self) -> Box<[&mut N]> {
+        let mut out = Vec::new();
+        self.push_children_mut(&mut out);
+        out.into_boxed_slice()
+    }
+
+    pub fn into_children(self) -> Box<[N]> {
+        let mut out = Vec::new();
+        self.push_into_children(&mut out);
+        out.into_boxed_slice()
+    }
+
+    // The `push_*` helpers write into a single shared buffer so that nested
+    // And/Or/Not conditions don't allocate an intermediate slice per level.
+
+    fn push_children<'a>(&'a self, out: &mut Vec<&'a N>) {
         match self {
             Condition::Eq(a, b)
             | Condition::Ne(a, b)
             | Condition::Lt(a, b)
             | Condition::Le(a, b)
             | Condition::Gt(a, b)
-            | Condition::Ge(a, b) => Box::new([a, b].into_iter()),
-
-            Condition::And(conditions) | Condition::Or(conditions) => {
-                Box::new(conditions.iter().flat_map(|c| c.children()))
+            | Condition::Ge(a, b) => {
+                out.push(a);
+                out.push(b);
             }
 
-            Condition::Not(condition) => condition.children(),
+            Condition::And(conditions) | Condition::Or(conditions) => {
+                for c in conditions.iter() {
+                    c.push_children(out);
+                }
+            }
+
+            Condition::Not(condition) => condition.push_children(out),
         }
     }
 
-    pub fn children_mut(
-        &mut self,
-    ) -> Box<dyn DoubleEndedIterator<Item = &mut N> + '_>
-    where
-        N: 'static, {
+    fn push_children_mut<'a>(&'a mut self, out: &mut Vec<&'a mut N>) {
         match self {
             Condition::Eq(a, b)
             | Condition::Ne(a, b)
             | Condition::Lt(a, b)
             | Condition::Le(a, b)
             | Condition::Gt(a, b)
-            | Condition::Ge(a, b) => Box::new([a, b].into_iter()),
-
-            Condition::And(conditions) | Condition::Or(conditions) => {
-                Box::new(conditions.iter_mut().flat_map(|c| c.children_mut()))
+            | Condition::Ge(a, b) => {
+                out.push(a);
+                out.push(b);
             }
 
-            Condition::Not(condition) => condition.children_mut(),
+            Condition::And(conditions) | Condition::Or(conditions) => {
+                for c in conditions.iter_mut() {
+                    c.push_children_mut(out);
+                }
+            }
+
+            Condition::Not(condition) => condition.push_children_mut(out),
         }
     }
 
-    pub fn into_children(self) -> Box<dyn DoubleEndedIterator<Item = N>>
-    where
-        N: 'static, {
+    fn push_into_children(self, out: &mut Vec<N>) {
         match self {
             Condition::Eq(a, b)
             | Condition::Ne(a, b)
             | Condition::Lt(a, b)
             | Condition::Le(a, b)
             | Condition::Gt(a, b)
-            | Condition::Ge(a, b) => Box::new([a, b].into_iter()),
-
-            Condition::And(conditions) | Condition::Or(conditions) => {
-                Box::new(conditions.into_iter().flat_map(|c| c.into_children()))
+            | Condition::Ge(a, b) => {
+                out.push(a);
+                out.push(b);
             }
 
-            Condition::Not(condition) => condition.into_children(),
+            Condition::And(conditions) | Condition::Or(conditions) => {
+                for c in conditions.into_vec() {
+                    c.push_into_children(out);
+                }
+            }
+
+            Condition::Not(condition) => (*condition).push_into_children(out),
         }
     }
 

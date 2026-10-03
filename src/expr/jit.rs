@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, mem};
 
+use ahash::AHashMap;
 use cranelift::{
     codegen::{
         ir::{
@@ -175,7 +176,7 @@ impl Expr {
 
         let symbols_ptr = bcx.block_params(block)[0];
         let output_ptr = bcx.block_params(block)[1];
-        let symbols: HashMap<_, _> = args
+        let symbols: AHashMap<_, _> = args
             .iter()
             .enumerate()
             .map(|(i, s)| {
@@ -193,7 +194,7 @@ impl Expr {
 
         fn compile_realized_expr(
             expr: &Expr,
-            symbols: &HashMap<Symbol, Value>,
+            symbols: &AHashMap<Symbol, Value>,
             bcx: &mut FunctionBuilder<'_>,
             fns: &MathFns,
         ) -> Value {
@@ -293,7 +294,7 @@ impl Expr {
 }
 
 impl CompiledExpr {
-    pub fn eval(&self, bindings: &HashMap<Symbol, Complex64>) -> value::Value {
+    pub fn eval(&self, bindings: &AHashMap<Symbol, Complex64>) -> value::Value {
         let assembled_args = self
             .args
             .iter()
@@ -318,7 +319,7 @@ impl CompiledExpr {
 
     pub fn eval_realized(
         &self,
-        bindings: &HashMap<Symbol, f64>,
+        bindings: &AHashMap<Symbol, f64>,
     ) -> value::Value {
         let assembled_args =
             self.args.iter().map(|s| *bindings.get(s).unwrap()).collect_vec();

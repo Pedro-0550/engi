@@ -13,6 +13,7 @@ use std::{
     },
 };
 
+use ahash::{AHashMap, AHashSet};
 use derive_more::From;
 use engi_macros::{relation, relations};
 use itertools::{Either, Itertools};
@@ -166,9 +167,9 @@ pub struct ModelPath(Vec<usize>);
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct System {
     models: RefCell<Vec<AssembledModel>>,
-    adjacency: RefCell<HashMap<InterfaceId, HashSet<InterfaceId>>>,
-    conn_association: RefCell<HashMap<ConnectorId, Associated>>,
-    var_association: RefCell<HashMap<VariableId, Associated>>,
+    adjacency: RefCell<AHashMap<InterfaceId, AHashSet<InterfaceId>>>,
+    conn_association: RefCell<AHashMap<ConnectorId, Associated>>,
+    var_association: RefCell<AHashMap<VariableId, Associated>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -609,8 +610,8 @@ impl System {
         //     })
         //     .collect();
 
-        let mut knowns = HashMap::new();
-        let mut guesses = HashMap::new();
+        let mut knowns = AHashMap::new();
+        let mut guesses = AHashMap::new();
 
         for (id, assoc) in self.var_association.borrow().iter() {
             let var = self.model(&id.path).variables[id.idx];

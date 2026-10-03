@@ -3,16 +3,18 @@ use std::{
     hash::Hash,
 };
 
+use ahash::{AHashMap, AHashSet};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BipartiteGraph<L: Hash + Eq, R: Hash + Eq> {
-    left_adj: HashMap<L, HashSet<R>>,
-    right_adj: HashMap<R, HashSet<L>>,
+    left_adj: AHashMap<L, HashSet<R>>,
+    right_adj: AHashMap<R, HashSet<L>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Matching<L: Hash + Eq, R: Hash + Eq> {
-    left_to_right: HashMap<L, R>,
-    right_to_left: HashMap<R, L>,
+    left_to_right: AHashMap<L, R>,
+    right_to_left: AHashMap<R, L>,
 }
 
 impl<L, R> Matching<L, R>
@@ -21,7 +23,7 @@ where
     R: Eq + Hash + Clone,
 {
     pub fn new() -> Self {
-        Self { left_to_right: HashMap::new(), right_to_left: HashMap::new() }
+        Self { left_to_right: AHashMap::new(), right_to_left: AHashMap::new() }
     }
 
     pub fn size(&self) -> usize {
@@ -99,7 +101,7 @@ where
     R: Eq + Hash + Clone,
 {
     pub fn new() -> Self {
-        Self { left_adj: HashMap::new(), right_adj: HashMap::new() }
+        Self { left_adj: AHashMap::new(), right_adj: AHashMap::new() }
     }
 
     pub fn add_left(&mut self, left: L) {
@@ -246,9 +248,9 @@ where
     }
 
     pub fn maximum_matching(&self) -> Matching<L, R> {
-        let mut pair_left: HashMap<L, R> = HashMap::new();
-        let mut pair_right: HashMap<R, L> = HashMap::new();
-        let mut distance: HashMap<L, usize> = HashMap::new();
+        let mut pair_left: AHashMap<L, R> = AHashMap::new();
+        let mut pair_right: AHashMap<R, L> = AHashMap::new();
+        let mut distance: AHashMap<L, usize> = AHashMap::new();
 
         while self.hopcroft_karp_bfs(&pair_left, &pair_right, &mut distance) {
             for left in self.left_nodes() {
@@ -268,9 +270,9 @@ where
 
     fn hopcroft_karp_bfs(
         &self,
-        pair_left: &HashMap<L, R>,
-        pair_right: &HashMap<R, L>,
-        distance: &mut HashMap<L, usize>,
+        pair_left: &AHashMap<L, R>,
+        pair_right: &AHashMap<R, L>,
+        distance: &mut AHashMap<L, usize>,
     ) -> bool {
         let mut queue = VecDeque::new();
 
@@ -317,9 +319,9 @@ where
     fn hopcroft_karp_dfs(
         &self,
         left: &L,
-        pair_left: &mut HashMap<L, R>,
-        pair_right: &mut HashMap<R, L>,
-        distance: &mut HashMap<L, usize>,
+        pair_left: &mut AHashMap<L, R>,
+        pair_right: &mut AHashMap<R, L>,
+        distance: &mut AHashMap<L, usize>,
     ) -> bool {
         let Some(neighbors) = self.left_adj.get(left) else {
             return false;
@@ -362,7 +364,7 @@ where
 
 #[derive(Debug, Clone)]
 pub struct DirectedGraph<T> {
-    edges: HashMap<T, HashSet<T>>,
+    edges: AHashMap<T, AHashSet<T>>,
 }
 
 impl<T> DirectedGraph<T>
@@ -370,7 +372,7 @@ where
     T: Eq + std::hash::Hash + Clone,
 {
     pub fn new() -> Self {
-        Self { edges: HashMap::new() }
+        Self { edges: AHashMap::new() }
     }
 
     pub fn add_node(&mut self, node: T) {
@@ -385,8 +387,8 @@ where
     pub fn sccs(&self) -> Vec<Vec<T>> {
         struct State<T> {
             index: usize,
-            indices: HashMap<T, usize>,
-            lowlink: HashMap<T, usize>,
+            indices: AHashMap<T, usize>,
+            lowlink: AHashMap<T, usize>,
             stack: Vec<T>,
             on_stack: HashSet<T>,
             result: Vec<Vec<T>>,
@@ -435,8 +437,8 @@ where
 
         let mut state = State {
             index: 0,
-            indices: HashMap::new(),
-            lowlink: HashMap::new(),
+            indices: AHashMap::new(),
+            lowlink: AHashMap::new(),
             stack: Vec::new(),
             on_stack: HashSet::new(),
             result: Vec::new(),
