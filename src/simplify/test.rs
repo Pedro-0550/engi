@@ -14,5 +14,8 @@ use crate::{
 #[test]
 fn simple() {
     symbols!(x);
-    panic!("{}", (sin(x).pow(2) + cos(x).pow(2) + 2 * x + 3 * x).simplified());
+    assert_eq!(
+        (sin(x).pow(2) + cos(x).pow(2) + 2 * x + 3 * x).simplified(),
+        1 + x * 5
+    );
 }

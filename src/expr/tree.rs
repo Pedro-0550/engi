@@ -7,6 +7,7 @@ use std::{
 use derive_more::IsVariant;
 use kinded::Kinded;
 use num::complex::Complex64;
+use smallvec::{SmallVec, smallvec};
 
 use crate::{
     core::{util::impl_as_variant, value::Value},
@@ -134,15 +135,18 @@ impl<N> Node<N> {
         }
     }
 
-    pub fn children(&self) -> Box<[&N]> {
+    #[inline]
+    pub fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a N)) {
         match self {
-            Node::Leaf(_) => Box::new([]),
-
+            Node::Leaf(_) => {}
             Node::Branch(branch) => match branch {
                 Branch::Add(ns)
                 | Branch::Mul(ns)
                 | Branch::Min(ns)
-                | Branch::Max(ns) => Box::new(ns.each_ref()),
+                | Branch::Max(ns) => {
+                    f(&ns[0]);
+                    f(&ns[1]);
+                }
 
                 Branch::Sin(n)
                 | Branch::Cos(n)
@@ -165,36 +169,44 @@ impl<N> Node<N> {
                 | Branch::Transpose(n)
                 | Branch::Det(n)
                 | Branch::Rank(n)
-                | Branch::Trace(n) => Box::new([n]),
+                | Branch::Trace(n) => f(n),
 
                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-                    Box::new([base, exp])
+                    f(base);
+                    f(exp);
+                }
+                Branch::Atan2 { a, b } => {
+                    f(a);
+                    f(b);
                 }
 
-                Branch::Atan2 { a, b } => Box::new([a, b]),
-
-                Branch::Matrix(matrix) => matrix.elements().iter().collect(),
-
+                Branch::Matrix(m) => {
+                    for n in m.elements() {
+                        f(n)
+                    }
+                }
                 Branch::Conditional { cond, pass, fail } => {
-                    let mut out = Vec::new();
-                    cond.push_children(&mut out);
-                    out.push(pass);
-                    out.push(fail);
-                    out.into_boxed_slice()
+                    cond.for_each_child(&mut f);
+                    f(pass);
+                    f(fail);
                 }
             },
         }
     }
 
-    pub fn children_mut(&mut self) -> Box<[&mut N]> {
+    #[inline]
+    pub fn for_each_child_mut<'a>(&'a mut self, mut f: impl FnMut(&'a mut N)) {
         match self {
-            Node::Leaf(_) => Box::new([]),
-
+            Node::Leaf(_) => {}
             Node::Branch(branch) => match branch {
                 Branch::Add(ns)
                 | Branch::Mul(ns)
                 | Branch::Min(ns)
-                | Branch::Max(ns) => Box::new(ns.each_mut()),
+                | Branch::Max(ns) => {
+                    for n in ns.iter_mut() {
+                        f(n)
+                    }
+                }
 
                 Branch::Sin(n)
                 | Branch::Cos(n)
@@ -217,24 +229,132 @@ impl<N> Node<N> {
                 | Branch::Transpose(n)
                 | Branch::Det(n)
                 | Branch::Rank(n)
-                | Branch::Trace(n) => Box::new([n]),
+                | Branch::Trace(n) => f(n),
 
                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-                    Box::new([base, exp])
+                    f(base);
+                    f(exp);
+                }
+                Branch::Atan2 { a, b } => {
+                    f(a);
+                    f(b);
                 }
 
-                Branch::Atan2 { a, b } => Box::new([a, b]),
+                Branch::Matrix(m) => {
+                    for n in m.elements_mut() {
+                        f(n)
+                    }
+                }
+                Branch::Conditional { cond, pass, fail } => {
+                    cond.for_each_child_mut(&mut f);
+                    f(pass);
+                    f(fail);
+                }
+            },
+        }
+    }
+
+    pub fn children(&self) -> SmallVec<[&N; 2]> {
+        match self {
+            Node::Leaf(_) => SmallVec::new(),
+
+            Node::Branch(branch) => match branch {
+                Branch::Add(ns)
+                | Branch::Mul(ns)
+                | Branch::Min(ns)
+                | Branch::Max(ns) => SmallVec::from_buf(ns.each_ref()),
+
+                Branch::Sin(n)
+                | Branch::Cos(n)
+                | Branch::Tan(n)
+                | Branch::Asin(n)
+                | Branch::Acos(n)
+                | Branch::Atan(n)
+                | Branch::Sinh(n)
+                | Branch::Cosh(n)
+                | Branch::Tanh(n)
+                | Branch::Asinh(n)
+                | Branch::Acosh(n)
+                | Branch::Atanh(n)
+                | Branch::Arg(n)
+                | Branch::Conj(n)
+                | Branch::Norm(n)
+                | Branch::Sign(n)
+                | Branch::Real(n)
+                | Branch::Imag(n)
+                | Branch::Transpose(n)
+                | Branch::Det(n)
+                | Branch::Rank(n)
+                | Branch::Trace(n) => smallvec![n],
+
+                Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
+                    smallvec![base, exp]
+                }
+
+                Branch::Atan2 { a, b } => smallvec![a, b],
+
+                Branch::Matrix(matrix) => matrix.elements().iter().collect(),
+
+                Branch::Conditional { cond, pass, fail } => {
+                    let mut out = SmallVec::new();
+                    cond.push_children(&mut out);
+                    out.push(pass);
+                    out.push(fail);
+                    out
+                }
+            },
+        }
+    }
+
+    pub fn children_mut(&mut self) -> SmallVec<[&mut N; 2]> {
+        match self {
+            Node::Leaf(_) => SmallVec::new(),
+
+            Node::Branch(branch) => match branch {
+                Branch::Add(ns)
+                | Branch::Mul(ns)
+                | Branch::Min(ns)
+                | Branch::Max(ns) => SmallVec::from_buf(ns.each_mut()),
+
+                Branch::Sin(n)
+                | Branch::Cos(n)
+                | Branch::Tan(n)
+                | Branch::Asin(n)
+                | Branch::Acos(n)
+                | Branch::Atan(n)
+                | Branch::Sinh(n)
+                | Branch::Cosh(n)
+                | Branch::Tanh(n)
+                | Branch::Asinh(n)
+                | Branch::Acosh(n)
+                | Branch::Atanh(n)
+                | Branch::Arg(n)
+                | Branch::Conj(n)
+                | Branch::Norm(n)
+                | Branch::Sign(n)
+                | Branch::Real(n)
+                | Branch::Imag(n)
+                | Branch::Transpose(n)
+                | Branch::Det(n)
+                | Branch::Rank(n)
+                | Branch::Trace(n) => smallvec![n],
+
+                Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
+                    smallvec![base, exp]
+                }
+
+                Branch::Atan2 { a, b } => smallvec![a, b],
 
                 Branch::Matrix(matrix) => {
                     matrix.elements_mut().iter_mut().collect()
                 }
 
                 Branch::Conditional { cond, pass, fail } => {
-                    let mut out = Vec::new();
+                    let mut out = SmallVec::new();
                     cond.push_children_mut(&mut out);
                     out.push(pass);
                     out.push(fail);
-                    out.into_boxed_slice()
+                    out
                 }
             },
         }
@@ -280,15 +400,15 @@ impl<N> Node<N> {
         }
     }
 
-    pub fn into_children(self) -> Box<[N]> {
+    pub fn into_children(self) -> SmallVec<[N; 2]> {
         match self {
-            Node::Leaf(_) => Box::new([]),
+            Node::Leaf(_) => SmallVec::new(),
 
             Node::Branch(branch) => match branch {
                 Branch::Add(ns)
                 | Branch::Mul(ns)
                 | Branch::Min(ns)
-                | Branch::Max(ns) => Box::new(ns),
+                | Branch::Max(ns) => SmallVec::from_buf(ns),
 
                 Branch::Sin(n)
                 | Branch::Cos(n)
@@ -311,22 +431,24 @@ impl<N> Node<N> {
                 | Branch::Transpose(n)
                 | Branch::Det(n)
                 | Branch::Rank(n)
-                | Branch::Trace(n) => Box::new([n]),
+                | Branch::Trace(n) => smallvec![n],
 
                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-                    Box::new([base, exp])
+                    smallvec![base, exp]
                 }
 
-                Branch::Atan2 { a, b } => Box::new([a, b]),
+                Branch::Atan2 { a, b } => smallvec![a, b],
 
-                Branch::Matrix(matrix) => matrix.into_elements(),
+                Branch::Matrix(matrix) => {
+                    SmallVec::from_vec(matrix.into_elements().into_vec())
+                }
 
                 Branch::Conditional { cond, pass, fail } => {
-                    let mut out = Vec::new();
+                    let mut out = SmallVec::new();
                     cond.push_into_children(&mut out);
                     out.push(pass);
                     out.push(fail);
-                    out.into_boxed_slice()
+                    out
                 }
             },
         }
@@ -421,6 +543,46 @@ impl<N> Branch<N> {
 }
 
 impl<N> Condition<N> {
+    pub fn for_each_child<'a>(&'a self, f: &mut impl FnMut(&'a N)) {
+        match self {
+            Condition::Eq(a, b)
+            | Condition::Ne(a, b)
+            | Condition::Lt(a, b)
+            | Condition::Le(a, b)
+            | Condition::Gt(a, b)
+            | Condition::Ge(a, b) => {
+                f(a);
+                f(b);
+            }
+            Condition::And(cs) | Condition::Or(cs) => {
+                for c in cs.iter() {
+                    c.for_each_child(f)
+                }
+            }
+            Condition::Not(c) => c.for_each_child(f),
+        }
+    }
+
+    pub fn for_each_child_mut<'a>(&'a mut self, f: &mut impl FnMut(&'a mut N)) {
+        match self {
+            Condition::Eq(a, b)
+            | Condition::Ne(a, b)
+            | Condition::Lt(a, b)
+            | Condition::Le(a, b)
+            | Condition::Gt(a, b)
+            | Condition::Ge(a, b) => {
+                f(a);
+                f(b);
+            }
+            Condition::And(cs) | Condition::Or(cs) => {
+                for c in cs.iter_mut() {
+                    c.for_each_child_mut(f)
+                }
+            }
+            Condition::Not(c) => c.for_each_child_mut(f),
+        }
+    }
+
     pub fn map<T>(self, f: &mut impl FnMut(N) -> T) -> Condition<T> {
         match self {
             Condition::Eq(a, b) => Condition::Eq(f(a), f(b)),
@@ -444,28 +606,28 @@ impl<N> Condition<N> {
         }
     }
 
-    pub fn children(&self) -> Box<[&N]> {
-        let mut out = Vec::new();
+    pub fn children(&self) -> SmallVec<[&N; 2]> {
+        let mut out = SmallVec::new();
         self.push_children(&mut out);
-        out.into_boxed_slice()
+        out
     }
 
-    pub fn children_mut(&mut self) -> Box<[&mut N]> {
-        let mut out = Vec::new();
+    pub fn children_mut(&mut self) -> SmallVec<[&mut N; 2]> {
+        let mut out = SmallVec::new();
         self.push_children_mut(&mut out);
-        out.into_boxed_slice()
+        out
     }
 
-    pub fn into_children(self) -> Box<[N]> {
-        let mut out = Vec::new();
+    pub fn into_children(self) -> SmallVec<[N; 2]> {
+        let mut out = SmallVec::new();
         self.push_into_children(&mut out);
-        out.into_boxed_slice()
+        out
     }
 
     // The `push_*` helpers write into a single shared buffer so that nested
-    // And/Or/Not conditions don't allocate an intermediate slice per level.
+    // And/Or/Not conditions don't allocate an intermediate collection per level.
 
-    fn push_children<'a>(&'a self, out: &mut Vec<&'a N>) {
+    fn push_children<'a>(&'a self, out: &mut SmallVec<[&'a N; 2]>) {
         match self {
             Condition::Eq(a, b)
             | Condition::Ne(a, b)
@@ -487,7 +649,7 @@ impl<N> Condition<N> {
         }
     }
 
-    fn push_children_mut<'a>(&'a mut self, out: &mut Vec<&'a mut N>) {
+    fn push_children_mut<'a>(&'a mut self, out: &mut SmallVec<[&'a mut N; 2]>) {
         match self {
             Condition::Eq(a, b)
             | Condition::Ne(a, b)
@@ -509,7 +671,7 @@ impl<N> Condition<N> {
         }
     }
 
-    fn push_into_children(self, out: &mut Vec<N>) {
+    fn push_into_children(self, out: &mut SmallVec<[N; 2]>) {
         match self {
             Condition::Eq(a, b)
             | Condition::Ne(a, b)

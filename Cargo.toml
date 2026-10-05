@@ -20,6 +20,7 @@ ahash = "*"
 cranelift = {version = "0.135", features = ["jit", "module", "native"]}
 kinded = "*"
 rayon = "*"
+smallvec = "1.16"
 
 engi-macros = { path = "./macros" }
 

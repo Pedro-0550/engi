@@ -198,7 +198,7 @@ impl Expr {
             bcx: &mut FunctionBuilder<'_>,
             fns: &MathFns,
         ) -> Value {
-            expr.clone().fold_dfs(|_, _, node| match node {
+            expr.clone().fold(|_, _, node| match node {
                 Node::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => {
                         symbols.get(&symbol).copied().unwrap()

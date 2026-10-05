@@ -1,11 +1,4 @@
-use std::{
-    fmt::Display,
-    hash::Hash,
-    sync::{
-        LazyLock,
-        atomic::{AtomicBool, Ordering},
-    },
-};
+use std::{fmt::Display, hash::Hash};
 
 use num::complex::Complex64;
 

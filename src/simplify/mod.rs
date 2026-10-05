@@ -156,9 +156,10 @@ impl EquivalencyExpr {
 
             self.node.structure().hash(&mut hasher);
 
-            for child in self.node.children() {
-                child.hash(&mut hasher);
-            }
+            // for child in self.node.children() {
+            //     child.hash(&mut hasher);
+            // }
+            self.node.for_each_child(|child| child.hash(&mut hasher));
 
             Key(hasher.digest128())
         })
@@ -367,13 +368,13 @@ impl EquivalencyGraph {
                         let expr = &mut self.exprs[expr_id.0];
 
                         let mut changed = false;
-                        for child in expr.node.children_mut() {
+                        expr.node.for_each_child_mut(|child| {
                             let root = unions[child.0];
                             if *child != root {
                                 *child = root;
                                 changed = true;
                             }
-                        }
+                        });
 
                         if changed {
                             expr.key = OnceCell::new();
@@ -473,14 +474,18 @@ impl EquivalencyGraph {
                 },
             };
 
-            for child_id in node.children() {
-                if let Some((child_cost, _)) = best_nodes.get(&child_id) {
+            let mut has_cost = true;
+            node.for_each_child(|child_id| {
+                if let Some((child_cost, _)) = best_nodes.get(&child_id)
+                    && has_cost
+                {
                     node_cost = node_cost + *child_cost;
                 } else {
-                    return None;
+                    has_cost = false;
                 }
-            }
-            Some(node_cost)
+            });
+
+            if has_cost { Some(node_cost) } else { None }
         }
 
         let mut best_nodes =
@@ -543,7 +548,7 @@ impl EquivalencyGraph {
     pub(crate) fn build(expr: &Expr) -> Self {
         let mut graph = Self::default();
 
-        let root = expr.fold_dfs(|_, _, node| {
+        let root = expr.fold(|_, _, node| {
             let expr = EquivalencyExpr { node, key: OnceCell::new() };
             graph.add(expr)
         });

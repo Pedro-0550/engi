@@ -121,10 +121,10 @@ impl Expr {
             }
         }
 
-        for child_id in node.children() {
+        node.for_each_child(|child_id| {
             let (child_key, _) = self.nodes[child_id.0];
             child_key.hash(&mut hasher);
-        }
+        });
 
         NodeKey(hasher.digest128())
     }
@@ -159,11 +159,11 @@ impl Expr {
             .collect::<AHashMap<_, _>>();
 
         for (_, node) in &mut self.nodes {
-            for child_id in node.children_mut() {
+            node.for_each_child_mut(|child_id| {
                 if let Some(new_id) = symbol_to_expr.get(&*child_id) {
                     *child_id = *new_id;
                 }
-            }
+            });
         }
     }
 
@@ -182,9 +182,9 @@ impl Expr {
             if processed {
                 let (key, mut node) = other_nodes[id.0].take().unwrap();
 
-                for child in node.children_mut() {
-                    *child = remapped[child.0].unwrap();
-                }
+                node.for_each_child_mut(|child_id| {
+                    *child_id = remapped[child_id.0].unwrap();
+                });
 
                 let new_id = self.push_with_key(key, node);
                 remapped[id.0] = Some(new_id);
@@ -192,11 +192,11 @@ impl Expr {
                 stack.push((id, true));
 
                 if let Some((_, node)) = &other_nodes[id.0] {
-                    for child in node.children() {
+                    node.for_each_child(|child| {
                         if remapped[child.0].is_none() {
                             stack.push((*child, false));
                         }
-                    }
+                    });
                 }
             }
         }
@@ -230,16 +230,16 @@ impl Expr {
             }
 
             if *order == Order::In {
-                let mut children = node.children().into_iter();
-                match (children.next(), children.next()) {
+                let children = node.children();
+                match (children.get(0), children.get(1)) {
                     (Some(left), Some(right)) => {
-                        dfs_inner(expr, *left, into, order);
+                        dfs_inner(expr, **left, into, order);
                         into.push(current);
-                        dfs_inner(expr, *right, into, order);
+                        dfs_inner(expr, **right, into, order);
                     }
                     (Some(child), None) => {
                         into.push(current);
-                        dfs_inner(expr, *child, into, order);
+                        dfs_inner(expr, **child, into, order);
                     }
                     (None, _) => {
                         into.push(current);
@@ -247,9 +247,9 @@ impl Expr {
                 }
             } else {
                 // Pre and Post rely on standard order
-                for child in node.children() {
+                node.for_each_child(|child| {
                     dfs_inner(expr, *child, into, order);
-                }
+                });
             }
 
             if *order == Order::Post {
@@ -261,8 +261,16 @@ impl Expr {
         visit
     }
 
-    pub fn fold_dfs<T: Clone>(
+    pub fn fold<T: Clone>(
         &self,
+        f: impl FnMut(NodeId, &Node<NodeId>, Node<T>) -> T,
+    ) -> T {
+        self.fold_from(self.root, f)
+    }
+
+    pub fn fold_from<T: Clone>(
+        &self,
+        root: NodeId,
         mut f: impl FnMut(NodeId, &Node<NodeId>, Node<T>) -> T,
     ) -> T {
         let mut mapped = AHashMap::<NodeId, T>::with_capacity(self.nodes.len());
@@ -285,7 +293,7 @@ impl Expr {
             mapped.insert(id, result);
         }
 
-        mapped.remove(&self.root).expect("root node should be folded")
+        mapped.remove(&root).expect("root node should be folded")
     }
 
     /// Imports an entire node's subtree from another expr, mapping IDs appropriately
@@ -413,36 +421,36 @@ impl Expr {
         let mut new_expr = Expr::new();
 
         let acc =
-            self.fold_dfs(
-                &mut |id, old: &Node<NodeId>, new: Node<Accumulated>| {
-                    match new {
-                        Node::Leaf(leaf) => match leaf {
-                            Leaf::Quantity(quantity) => {
-                                Accumulated::value(quantity.into_value())
-                            }
-                            _ => {
-                                let new_id = new_expr.push(old.clone());
-                                Accumulated::symbolic(new_id)
-                            }
-                        },
-                        Node::Branch(branch) => {
-                            let branch_kind = branch.kind();
+            self.fold(&mut |id, old: &Node<NodeId>, new: Node<Accumulated>| {
+                match new {
+                    Node::Leaf(leaf) => match leaf {
+                        Leaf::Quantity(quantity) => {
+                            Accumulated::value(quantity.into_value())
+                        }
+                        _ => {
+                            let new_id = new_expr.push(old.clone());
+                            Accumulated::symbolic(new_id)
+                        }
+                    },
+                    Node::Branch(branch) => {
+                        let branch_kind = branch.kind();
 
-                            match branch {
-                                Branch::Add(children)
-                                | Branch::Mul(children)
-                                | Branch::Max(children)
-                                | Branch::Min(children) => {
-                                    let this_node = self.node(id);
-                                    let [mut a_acc, mut b_acc] = children;
-                                    let [a_id, b_id] = *old.children() else {
-                                        unreachable!()
-                                    };
+                        match branch {
+                            Branch::Add(children)
+                            | Branch::Mul(children)
+                            | Branch::Max(children)
+                            | Branch::Min(children) => {
+                                let this_node = self.node(id);
+                                let [mut a_acc, mut b_acc] = children;
+                                let [a_id, b_id] = *old.children() else {
+                                    unreachable!()
+                                };
 
-                                    // There is no order for complex numbers (although we still allow them elementwise), matrices, and sets
-                                    if this_node.as_branch().is_some_and(|b| {
-                                        b.is_max() || b.is_min()
-                                    }) && !(a_acc
+                                // There is no order for complex numbers (although we still allow them elementwise), matrices, and sets
+                                if this_node
+                                    .as_branch()
+                                    .is_some_and(|b| b.is_max() || b.is_min())
+                                    && !(a_acc
                                         .value
                                         .as_ref()
                                         .is_none_or(|v| v.is_scalar())
@@ -450,104 +458,107 @@ impl Expr {
                                             .value
                                             .as_ref()
                                             .is_none_or(|v| v.is_scalar()))
-                                    {
-                                        let new_id = new_expr.push(old.clone());
-                                        return Accumulated::symbolic(new_id);
-                                    }
+                                {
+                                    let new_id = new_expr.push(old.clone());
+                                    return Accumulated::symbolic(new_id);
+                                }
 
-                                    let a_node = self.node(*a_id);
-                                    let b_node = self.node(*b_id);
+                                let a_node = self.node(*a_id);
+                                let b_node = self.node(*b_id);
 
-                                    let foldable_a = a_node.kind()
-                                        == this_node.kind()
-                                        || a_node.is_leaf();
-                                    let foldable_b = b_node.kind()
-                                        == this_node.kind()
-                                        || b_node.is_leaf();
+                                let foldable_a = a_node.kind()
+                                    == this_node.kind()
+                                    || a_node.is_leaf();
+                                let foldable_b = b_node.kind()
+                                    == this_node.kind()
+                                    || b_node.is_leaf();
 
-                                    if foldable_a && foldable_b {
-                                        Accumulated::fold_binary(
-                                            a_acc,
-                                            b_acc,
-                                            branch_kind,
-                                        )
-                                    } else if foldable_a {
-                                        let b_kind =
-                                            b_node.as_branch().unwrap().kind();
-                                        let new_b_id = b_acc
-                                            .push_into(b_kind, &mut new_expr);
+                                if foldable_a && foldable_b {
+                                    Accumulated::fold_binary(
+                                        a_acc,
+                                        b_acc,
+                                        branch_kind,
+                                    )
+                                } else if foldable_a {
+                                    let b_kind =
+                                        b_node.as_branch().unwrap().kind();
+                                    let new_b_id =
+                                        b_acc.push_into(b_kind, &mut new_expr);
 
-                                        a_acc.symbolic.push(new_b_id);
-                                        Accumulated::symbolic(a_acc.push_into(
-                                            branch_kind,
-                                            &mut new_expr,
-                                        ))
-                                    } else if foldable_b {
-                                        let a_kind =
-                                            a_node.as_branch().unwrap().kind();
-                                        let new_a_id = a_acc
-                                            .push_into(a_kind, &mut new_expr);
-
-                                        b_acc.symbolic.push(new_a_id);
-                                        Accumulated::symbolic(b_acc.push_into(
+                                    a_acc.symbolic.push(new_b_id);
+                                    Accumulated::symbolic(
+                                        a_acc.push_into(
                                             branch_kind,
                                             &mut new_expr,
-                                        ))
-                                    } else {
-                                        let a_kind =
-                                            a_node.as_branch().unwrap().kind();
-                                        let b_kind =
-                                            b_node.as_branch().unwrap().kind();
+                                        ),
+                                    )
+                                } else if foldable_b {
+                                    let a_kind =
+                                        a_node.as_branch().unwrap().kind();
+                                    let new_a_id =
+                                        a_acc.push_into(a_kind, &mut new_expr);
 
-                                        let new_a_id = a_acc
-                                            .push_into(a_kind, &mut new_expr);
-                                        let new_b_id = b_acc
-                                            .push_into(b_kind, &mut new_expr);
+                                    b_acc.symbolic.push(new_a_id);
+                                    Accumulated::symbolic(
+                                        b_acc.push_into(
+                                            branch_kind,
+                                            &mut new_expr,
+                                        ),
+                                    )
+                                } else {
+                                    let a_kind =
+                                        a_node.as_branch().unwrap().kind();
+                                    let b_kind =
+                                        b_node.as_branch().unwrap().kind();
 
-                                        let curr_acc = Accumulated {
-                                            value: None,
-                                            symbolic: vec![new_a_id, new_b_id],
-                                        };
+                                    let new_a_id =
+                                        a_acc.push_into(a_kind, &mut new_expr);
+                                    let new_b_id =
+                                        b_acc.push_into(b_kind, &mut new_expr);
 
-                                        Accumulated::symbolic(
-                                            curr_acc.push_into(
-                                                branch_kind,
-                                                &mut new_expr,
-                                            ),
-                                        )
-                                    }
+                                    let curr_acc = Accumulated {
+                                        value: None,
+                                        symbolic: vec![new_a_id, new_b_id],
+                                    };
+
+                                    Accumulated::symbolic(
+                                        curr_acc.push_into(
+                                            branch_kind,
+                                            &mut new_expr,
+                                        ),
+                                    )
                                 }
-                                Branch::Pow { base, exp } => {
-                                    if let Some(base) = base.into_value()
-                                        && let Some(exp) = exp.into_value()
-                                    {
-                                        Accumulated::value(base.pow(exp))
-                                    } else {
-                                        Accumulated::symbolic(
-                                            new_expr.import(self, id),
-                                        )
-                                    }
+                            }
+                            Branch::Pow { base, exp } => {
+                                if let Some(base) = base.into_value()
+                                    && let Some(exp) = exp.into_value()
+                                {
+                                    Accumulated::value(base.pow(exp))
+                                } else {
+                                    Accumulated::symbolic(
+                                        new_expr.import(self, id),
+                                    )
                                 }
-                                Branch::Log { base, arg } => {
-                                    if let Some(base) = base.into_value()
-                                        && let Some(arg) = arg.into_value()
-                                    {
-                                        Accumulated::value(arg.ln() / base.ln())
-                                    } else {
-                                        Accumulated::symbolic(
-                                            new_expr.import(self, id),
-                                        )
-                                    }
+                            }
+                            Branch::Log { base, arg } => {
+                                if let Some(base) = base.into_value()
+                                    && let Some(arg) = arg.into_value()
+                                {
+                                    Accumulated::value(arg.ln() / base.ln())
+                                } else {
+                                    Accumulated::symbolic(
+                                        new_expr.import(self, id),
+                                    )
                                 }
+                            }
 
-                                _ => Accumulated::symbolic(
-                                    new_expr.import(self, id),
-                                ),
+                            _ => {
+                                Accumulated::symbolic(new_expr.import(self, id))
                             }
                         }
                     }
-                },
-            );
+                }
+            });
 
         let root_node = self.node(self.root());
         let root_id = match root_node {

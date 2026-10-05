@@ -224,11 +224,12 @@ impl Machine {
                             let expr = &graph.exprs[expr_id.0];
 
                             if expr.node.structure() == *structure {
-                                for (i, &child_class) in
-                                    expr.node.children().into_iter().enumerate()
-                                {
-                                    registers[bind_out.0 + i] = child_class;
-                                }
+                                let mut i = 0;
+                                expr.node.for_each_child(|child_id| {
+                                    registers[bind_out.0 + i] = *child_id;
+
+                                    i += 1;
+                                });
 
                                 execute_inner(
                                     pc + 1,

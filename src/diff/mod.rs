@@ -30,7 +30,7 @@ impl Expr {
     pub fn diff(&self, s: Symbol) -> Expr {
         let mut dx = Expr::new();
 
-        let (u, du) = self.fold_dfs(|id, _, node| {
+        let (u, du) = self.fold(|id, _, node| {
             (
                 id,
                 match node {
@@ -62,7 +62,6 @@ impl Expr {
                         Branch::Min(_) => todo!(),
                         Branch::Max(_) => todo!(),
 
-                        // Trigonometric
                         Branch::Sin((u, du)) => {
                             let u = dx.import(self, u);
                             let ctx = dx.edit();
@@ -79,7 +78,6 @@ impl Expr {
                             ctx.div(du, ctx.pow(ctx.cos(u), ctx.qty(2)))
                         }
 
-                        // Inverse Trigonometric
                         Branch::Asin((u, du)) => {
                             let u = dx.import(self, u);
                             let ctx = dx.edit();
@@ -109,7 +107,6 @@ impl Expr {
                             )
                         }
 
-                        // Hyperbolic
                         Branch::Sinh((u, du)) => {
                             let u = dx.import(self, u);
                             let ctx = dx.edit();
@@ -126,7 +123,6 @@ impl Expr {
                             ctx.div(du, ctx.pow(ctx.cosh(u), ctx.qty(2)))
                         }
 
-                        // Inverse Hyperbolic
                         Branch::Asinh((u, du)) => {
                             let u = dx.import(self, u);
                             let ctx = dx.edit();
@@ -156,18 +152,23 @@ impl Expr {
                             )
                         }
 
-                        // Complex & Structural Unaries
                         Branch::Arg(_) => todo!(),
                         Branch::Conj(_) => todo!(),
                         Branch::Norm(_) => todo!(),
-                        Branch::Sign(_) => {
-                            let ctx = dx.edit();
-                            ctx.zero()
-                        }
-                        Branch::Real(_) => todo!(),
-                        Branch::Imag(_) => todo!(),
+                        Branch::Sign(_) => dx.edit().zero(),
+                        Branch::Real((u, du)) => match self.domain_of(u).numeric() {
+                            Numeric::Real => du,
+                            Numeric::Imag => dx.edit().zero(),
+                            Numeric::Complex => unimplemented!("Cannot take derivative of Re{{z}} when z is a complex number"),
+                        },
 
-                        // Power & Exponential
+                        Branch::Imag((u, du)) => match self.domain_of(u).numeric() {
+                            Numeric::Imag => du,
+                            Numeric::Real => dx.edit().zero(),
+                            Numeric::Complex => unimplemented!("Cannot take derivative of Re{{z}} when z is a complex number"),
+                        },
+
+
                         Branch::Pow {
                             base: (base, d_base),
                             exp: (exp, d_exp),
@@ -194,7 +195,6 @@ impl Expr {
                             }
                         }
 
-                        // Logarithmic
                         Branch::Log {
                             base: (base, d_base),
                             arg: (arg, d_arg),
@@ -221,7 +221,6 @@ impl Expr {
                             }
                         }
 
-                        // Multivariable / Geometric
                         Branch::Atan2 { a: (a, da), b: (b, db) } => {
                             let a = dx.import(self, a);
                             let b = dx.import(self, b);
@@ -235,13 +234,12 @@ impl Expr {
                             )
                         }
 
-                        // Matrix Operations & Control Flow
                         Branch::Matrix(_) => todo!(),
                         Branch::Transpose(_) => todo!(),
                         Branch::Det(_) => todo!(),
                         Branch::Rank(_) => todo!(),
                         Branch::Trace(_) => todo!(),
-                        Branch::Conditional { cond: _, pass: _, fail: _ } => {
+                        Branch::Conditional { cond, pass: (pass, d_pass), fail: (_, d_fail) } => {
                             todo!()
                         }
                     },
@@ -250,9 +248,9 @@ impl Expr {
         });
 
         dx.set_root(du);
-        println!("non simp: {}", dx.len());
+        // println!("non simp: {}", dx.len());
         let simp = dx.simplified();
-        println!("simp: {}", simp.len());
+        // println!("simp: {}", simp.len());
 
         simp
     }

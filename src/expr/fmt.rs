@@ -136,7 +136,11 @@ impl Display for Expr {
                     }
                     Branch::Min(_) => todo!(),
                     Branch::Max(_) => todo!(),
-                    Branch::Sin(_) => todo!(),
+                    Branch::Sin(u) => {
+                        f.write_str("sin(")?;
+                        fmt_inner(expr, f, *u)?;
+                        f.write_char(')')?;
+                    }
                     Branch::Cos(_) => todo!(),
                     Branch::Tan(_) => todo!(),
                     Branch::Asin(_) => todo!(),

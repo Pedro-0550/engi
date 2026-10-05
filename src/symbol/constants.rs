@@ -1,12 +1,8 @@
 #![allow(non_upper_case_globals)]
 
-use std::{fmt::Display, sync::LazyLock};
+use std::fmt::Display;
 
-use crate::{
-    core::value::Value,
-    symbol::Symbol,
-    units::{Quantity, Unit, si::*},
-};
+use crate::units::{Quantity, Unit, si::*};
 
 macro_rules! constants {
     (
@@ -75,10 +71,16 @@ constants! {
     // TODO: add more useful constants
 }
 
-#[derive(Hash, Debug, PartialEq, Copy)]
+#[derive(Hash, Debug, Copy)]
 pub struct Constant {
     name: &'static str,
     value: fn() -> Quantity,
+}
+
+impl PartialEq for Constant {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && (self.value)() == (other.value)()
+    }
 }
 
 impl Constant {

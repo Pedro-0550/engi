@@ -134,6 +134,12 @@ impl Quantity {
 
     pub const ZERO: Self = Self(Value::ZERO, Unit::Unitless);
 
+    pub fn realize(&self) -> [Quantity; 2] {
+        let [re, im] = self.0.realize();
+
+        [re * self.unit(), im * self.unit()]
+    }
+
     /// Normalizes this quantity to its non-scaled form.
     /// If this quantity is given in a scaled unit such as eV, it will convert to Joule and scale its value appropriately.
     /// This will be done recursively until a non-scaled unit is reached.
