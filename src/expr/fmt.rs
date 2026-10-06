@@ -4,6 +4,7 @@ use super::tree::{Branch, Leaf, Node};
 use crate::{
     core::value::ComplexExt,
     expr::{Expr, NodeId, Order, fmt::Joinabability::WithParens},
+    symbol::constants,
     units::Unit::Unitless,
 };
 
@@ -78,7 +79,7 @@ impl Display for Expr {
                         }
                     }
                     Branch::Log { base, arg } => Joinabability::Disjoint,
-                    Branch::Atan2 { a, b } => Joinabability::Disjoint,
+                    Branch::Atan2 { x: a, y: b } => Joinabability::Disjoint,
                     Branch::Matrix(matrix) => todo!(),
                     Branch::Transpose(_) => todo!(),
                     Branch::Det(_) => todo!(),
@@ -112,27 +113,15 @@ impl Display for Expr {
                         let (ja, jb) =
                             (joinability(expr, *a), joinability(expr, *b));
 
-                        if ja.min(jb) >= WithParens {
-                            if ja == WithParens {
-                                f.write_char('(')?;
-                                fmt_inner(expr, f, *a)?;
-                                f.write_char(')')?;
-                            } else {
-                                fmt_inner(expr, f, *a)?;
-                            }
+                        f.write_char('(')?;
+                        fmt_inner(expr, f, *a)?;
+                        f.write_char(')')?;
 
-                            if jb == WithParens {
-                                f.write_char('(')?;
-                                fmt_inner(expr, f, *b)?;
-                                f.write_char(')')?;
-                            } else {
-                                fmt_inner(expr, f, *b)?;
-                            }
-                        } else {
-                            fmt_inner(expr, f, *a)?;
-                            f.write_char('·')?;
-                            fmt_inner(expr, f, *b)?;
-                        }
+                        f.write_str("·")?;
+
+                        f.write_char('(')?;
+                        fmt_inner(expr, f, *b)?;
+                        f.write_char(')')?;
                     }
                     Branch::Min(_) => todo!(),
                     Branch::Max(_) => todo!(),
@@ -141,7 +130,11 @@ impl Display for Expr {
                         fmt_inner(expr, f, *u)?;
                         f.write_char(')')?;
                     }
-                    Branch::Cos(_) => todo!(),
+                    Branch::Cos(u) => {
+                        f.write_str("cos(")?;
+                        fmt_inner(expr, f, *u)?;
+                        f.write_char(')')?;
+                    }
                     Branch::Tan(_) => todo!(),
                     Branch::Asin(_) => todo!(),
                     Branch::Acos(_) => todo!(),
@@ -158,9 +151,49 @@ impl Display for Expr {
                     Branch::Sign(_) => todo!(),
                     Branch::Real(_) => todo!(),
                     Branch::Imag(_) => todo!(),
-                    Branch::Pow { base, exp } => todo!(),
-                    Branch::Log { base, arg } => todo!(),
-                    Branch::Atan2 { a, b } => todo!(),
+                    Branch::Pow { base, exp } => {
+                        if joinability(expr, *base) <= Joinabability::WithParens
+                        {
+                            f.write_str("(")?;
+                            fmt_inner(expr, f, *base)?;
+                            f.write_char(')')?;
+                        } else {
+                            fmt_inner(expr, f, *base)?;
+                        }
+
+                        f.write_char('^')?;
+
+                        if joinability(expr, *exp) <= Joinabability::WithParens
+                        {
+                            f.write_str("(")?;
+                            fmt_inner(expr, f, *exp)?;
+                            f.write_char(')')?;
+                        } else {
+                            fmt_inner(expr, f, *exp)?;
+                        }
+                    }
+                    Branch::Log { base, arg } => {
+                        if try { expr.node(*base).as_leaf()?.as_constant()? }
+                            .is_some_and(|x| *x == constants::e)
+                        {
+                            f.write_str("ln(")?;
+                            fmt_inner(expr, f, *arg)?;
+                            f.write_char(')')?;
+                        } else {
+                            f.write_str("log(")?;
+                            fmt_inner(expr, f, *base)?;
+                            f.write_str(", ")?;
+                            fmt_inner(expr, f, *arg)?;
+                            f.write_char(')')?;
+                        }
+                    }
+                    Branch::Atan2 { x, y } => {
+                        f.write_str("atan2(")?;
+                        fmt_inner(expr, f, *x)?;
+                        f.write_str(", ")?;
+                        fmt_inner(expr, f, *y)?;
+                        f.write_char(')')?;
+                    }
                     Branch::Matrix(matrix) => todo!(),
                     Branch::Transpose(_) => todo!(),
                     Branch::Det(_) => todo!(),

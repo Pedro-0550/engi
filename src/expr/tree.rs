@@ -51,7 +51,7 @@ pub enum Branch<N> {
 
     Pow { base: N, exp: N },
     Log { base: N, arg: N },
-    Atan2 { a: N, b: N },
+    Atan2 { x: N, y: N },
 
     Matrix(Matrix<N>),
     Transpose(N),
@@ -175,7 +175,7 @@ impl<N> Node<N> {
                     f(base);
                     f(exp);
                 }
-                Branch::Atan2 { a, b } => {
+                Branch::Atan2 { x: a, y: b } => {
                     f(a);
                     f(b);
                 }
@@ -235,7 +235,7 @@ impl<N> Node<N> {
                     f(base);
                     f(exp);
                 }
-                Branch::Atan2 { a, b } => {
+                Branch::Atan2 { x: a, y: b } => {
                     f(a);
                     f(b);
                 }
@@ -291,7 +291,7 @@ impl<N> Node<N> {
                     smallvec![base, exp]
                 }
 
-                Branch::Atan2 { a, b } => smallvec![a, b],
+                Branch::Atan2 { x: a, y: b } => smallvec![a, b],
 
                 Branch::Matrix(matrix) => matrix.elements().iter().collect(),
 
@@ -343,7 +343,7 @@ impl<N> Node<N> {
                     smallvec![base, exp]
                 }
 
-                Branch::Atan2 { a, b } => smallvec![a, b],
+                Branch::Atan2 { x: a, y: b } => smallvec![a, b],
 
                 Branch::Matrix(matrix) => {
                     matrix.elements_mut().iter_mut().collect()
@@ -389,7 +389,7 @@ impl<N> Node<N> {
                 Branch::Imag(_) => 1,
                 Branch::Pow { base, exp } => 4,
                 Branch::Log { base, arg } => 4,
-                Branch::Atan2 { a, b } => 3,
+                Branch::Atan2 { x: a, y: b } => 3,
                 Branch::Matrix(matrix) => todo!(),
                 Branch::Transpose(_) => todo!(),
                 Branch::Det(_) => todo!(),
@@ -437,7 +437,7 @@ impl<N> Node<N> {
                     smallvec![base, exp]
                 }
 
-                Branch::Atan2 { a, b } => smallvec![a, b],
+                Branch::Atan2 { x: a, y: b } => smallvec![a, b],
 
                 Branch::Matrix(matrix) => {
                     SmallVec::from_vec(matrix.into_elements().into_vec())
@@ -496,7 +496,9 @@ impl<N> Node<N> {
                     Branch::Log { base: f(base), arg: f(arg) }
                 }
 
-                Branch::Atan2 { a, b } => Branch::Atan2 { a: f(a), b: f(b) },
+                Branch::Atan2 { x: a, y: b } => {
+                    Branch::Atan2 { x: f(a), y: f(b) }
+                }
 
                 Branch::Matrix(matrix) => Branch::Matrix(Matrix {
                     shape: matrix.shape,
@@ -868,7 +870,7 @@ impl From<ConnectorBuilder<'_>> for Leaf {
     }
 }
 
-impl<T> From<&T> for Leaf
+impl<T: Clone> From<&T> for Leaf
 where
     Leaf: From<T>,
 {

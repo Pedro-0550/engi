@@ -25,7 +25,7 @@ use crate::{
     core::value,
     expr::{
         Expr, Node,
-        domain::Domain,
+        domain::{Domain, Realized},
         tree::{Branch, Leaf},
     },
     symbol::{
@@ -119,8 +119,8 @@ macro_rules! impl_math_fns {
 
 impl_math_fns!(sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh, exp, ln, sqrt, abs, signum; powf, atan2);
 
-impl Expr {
-    pub fn compile(&self) -> CompiledExpr {
+impl Realized {
+    pub fn compile(self) -> CompiledExpr {
         let mut flag_builder = settings::builder();
         flag_builder.set("use_colocated_libcalls", "false").unwrap();
         flag_builder.set("is_pic", "false").unwrap();
@@ -156,11 +156,7 @@ impl Expr {
         ctx.func.signature = eval_sig;
         ctx.func.name = UserFuncName::user(0, eval_func.as_u32());
 
-        println!("Compiling base expr: {}", self);
-
-        let [re_expr, im_expr] = self.clone().realize();
-
-        println!("Compiling ({}) + i * ({})", re_expr, im_expr);
+        let Realized { re: re_expr, im: im_expr } = self;
 
         let mut args = re_expr.symbols().chain(im_expr.symbols()).collect_vec();
         args.sort();
@@ -253,7 +249,7 @@ impl Expr {
 
                         bcx.ins().fdiv(a, b)
                     }
-                    Branch::Atan2 { a, b } => fns.atan2(bcx, a, b),
+                    Branch::Atan2 { x: a, y: b } => fns.atan2(bcx, a, b),
                     Branch::Matrix(matrix) => todo!(),
                     Branch::Transpose(_) => todo!(),
                     Branch::Det(_) => todo!(),
@@ -279,7 +275,6 @@ impl Expr {
         bcx.finalize(module.target_config());
 
         module.define_function(eval_func, &mut ctx).unwrap();
-        println!("--- CRANELIFT IR ---\n{}", ctx.func.display());
         module.clear_context(&mut ctx);
         module.finalize_definitions().unwrap();
 

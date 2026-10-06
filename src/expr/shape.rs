@@ -150,7 +150,7 @@ impl Expr {
                         Shape::SCALAR
                     }
                 },
-                Branch::Atan2 { a, b } => {
+                Branch::Atan2 { x: a, y: b } => {
                     assert!(a.is_scalar() && b.is_scalar(), "Atan arguments must be scalar");
                     Shape::SCALAR
                 },

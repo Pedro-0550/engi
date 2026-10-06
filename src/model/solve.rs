@@ -8,10 +8,11 @@ use itertools::Itertools;
 use nlopt::{Algorithm, Nlopt, Target};
 use num::{Complex, complex::Complex64};
 use ordered_float::Pow;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     core::value::{EQ_ABS_TOL, Value},
-    expr::Expr,
+    expr::{Expr, domain::Realized},
     model::{
         Variable,
         eq::{Constraint, Equation},
@@ -52,11 +53,13 @@ impl Solver for NloptSolver {
         // constraints: Vec<Constraint>,
         guesses: &AHashMap<Variable, Value>,
     ) -> Result<Vec<(Variable, Value)>, Self::Error> {
-        let mut symbols = residuals
-            .iter()
-            .flat_map(|eq| eq.symbols())
-            .flat_map(|s| [s.real().unwrap(), s.imag().unwrap()])
+        let realized_residuals = residuals
+            .into_iter()
+            .flat_map(|resid| resid.realize().unpack())
             .collect_vec();
+
+        let mut symbols =
+            realized_residuals.iter().flat_map(|eq| eq.symbols()).collect_vec();
 
         symbols.sort();
         symbols.dedup();
@@ -64,10 +67,12 @@ impl Solver for NloptSolver {
         let scale_bindings = symbols
             .iter()
             .map(|s| {
+                let primary = s.as_primary().unwrap();
                 let scale = guesses
-                    .get(&Variable(*s))
+                    .get(&Variable(primary))
                     .and_then(|x| x.as_scalar().copied())
                     .unwrap_or(Complex::ONE);
+
                 (
                     *s,
                     match s.realization() {
@@ -77,31 +82,36 @@ impl Solver for NloptSolver {
                     },
                 )
             })
-            .collect_vec();
+            .collect();
 
-        let residuals = residuals
+        let residuals = realized_residuals
             .into_iter()
-            .flat_map(|resid| resid.realize())
-            .map(|mut resid: Expr| {
-                resid.substitute(&scale_bindings);
-                resid.normalize();
-                resid.folded()
-            })
+            .map(|resid| resid.substituted(&scale_bindings).folded())
             .collect_vec();
 
         let objective = residuals
             .iter()
             .fold(Expr::from(0.0), |acc, resid| acc + resid.pow(2))
-            .folded();
+            .simplified();
 
-        let gradient =
-            symbols.iter().map(|s| objective.diff(*s).compile()).collect_vec();
-        let objective = objective.compile();
+        println!("OBJ -> {}\n\n", objective);
+
+        let gradient: Vec<_> = symbols
+            .par_iter()
+            .map(|s| {
+                let d = objective.diff(*s);
+                println!("GRAD -> {}\n\n", d);
+                Realized::from_real(objective.diff(*s)).compile()
+            })
+            .collect();
+        let objective = Realized::from_real(objective).compile();
 
         let mut optimizer = Nlopt::new(
             self.algo,
             symbols.len(),
             |x, grad, _| {
+                println!("iter x = [{}]", x.iter().join(", "));
+
                 let bindings = symbols
                     .iter()
                     .enumerate()
@@ -119,6 +129,7 @@ impl Solver for NloptSolver {
                     objective.eval_realized(&bindings).as_scalar().unwrap().re;
 
                 println!("iter f = {}", f);
+                print!("\n");
 
                 f
             },

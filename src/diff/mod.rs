@@ -30,7 +30,7 @@ impl Expr {
     pub fn diff(&self, s: Symbol) -> Expr {
         let mut dx = Expr::new();
 
-        let (u, du) = self.fold(|id, _, node| {
+        let (_, du) = self.fold(|id, _, node| {
             (
                 id,
                 match node {
@@ -221,7 +221,7 @@ impl Expr {
                             }
                         }
 
-                        Branch::Atan2 { a: (a, da), b: (b, db) } => {
+                        Branch::Atan2 { x: (a, da), y: (b, db) } => {
                             let a = dx.import(self, a);
                             let b = dx.import(self, b);
                             let ctx = dx.edit();
@@ -248,10 +248,6 @@ impl Expr {
         });
 
         dx.set_root(du);
-        // println!("non simp: {}", dx.len());
-        let simp = dx.simplified();
-        // println!("simp: {}", simp.len());
-
-        simp
+        dx.simplified()
     }
 }

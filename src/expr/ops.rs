@@ -196,6 +196,17 @@ impl EditContext<'_> {
         self.push(Node::Leaf(Leaf::Constant(constant)))
     }
 
+    pub fn import(&self, src: &EditContext<'_>, id: NodeId) -> NodeId {
+        let expr = self.expr.take().expect("Context used recursively");
+        let src_expr = src.expr.take().expect("Context used recursively");
+
+        let result = expr.import(src_expr, id);
+
+        src.expr.set(Some(src_expr));
+        self.expr.set(Some(expr));
+        result
+    }
+
     pub fn zero(&self) -> NodeId {
         self.qty(0)
     }
@@ -258,8 +269,8 @@ impl EditContext<'_> {
         self.log(base_e, arg)
     }
 
-    pub fn atan2(&self, a: NodeId, b: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Atan2 { a, b }))
+    pub fn atan2(&self, x: NodeId, y: NodeId) -> NodeId {
+        self.push(Node::Branch(Branch::Atan2 { x, y }))
     }
 
     pub fn sin(&self, u: NodeId) -> NodeId {

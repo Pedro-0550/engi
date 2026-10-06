@@ -7,9 +7,12 @@ use super::{
     Node,
     tree::{Branch, Leaf},
 };
-use crate::expr::{
-    Expr, NodeId,
-    domain::Endpoint::{Neg, Pos, Zero},
+use crate::{
+    expr::{
+        Expr, NodeId,
+        domain::Endpoint::{Neg, Pos, Zero},
+    },
+    symbol::constants::e,
 };
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
@@ -116,6 +119,21 @@ impl Interval {
         to: Edge::Closed(Zero),
         over: Universe::Integer,
     };
+}
+
+pub struct Realized {
+    pub re: Expr,
+    pub im: Expr,
+}
+
+impl Realized {
+    pub fn unpack(self) -> [Expr; 2] {
+        [self.re, self.im]
+    }
+
+    pub fn from_real(re: Expr) -> Self {
+        Self { re, im: Expr::from(0) }
+    }
 }
 
 impl Interval {
@@ -328,10 +346,10 @@ impl Expr {
                 Branch::Norm(_) => Domain::new(Interval::R_NN, Interval::ZERO),
                 Branch::Sign(_) => todo!(),
                 Branch::Real(x) => x.real(),
-                Branch::Imag(x) => x.imag(),
+                Branch::Imag(x) => Domain::new(x.im, Interval::ZERO),
                 Branch::Pow { base, exp } => todo!(),
                 Branch::Log { base, arg } => todo!(),
-                Branch::Atan2 { a, b } => Domain::REAL,
+                Branch::Atan2 { x: a, y: b } => Domain::REAL,
                 Branch::Matrix(matrix) => matrix
                     .elements()
                     .iter()
@@ -355,67 +373,67 @@ impl Expr {
         self.domain_of(self.root)
     }
 
-    pub fn realize(&self) -> [Expr; 2] {
-        let (mut re, mut im) = (Expr::new(), Expr::new());
+    pub fn realize(&self) -> Realized {
+        let mut working = Expr::new();
 
-        let (re_id, im_id) = self.fold(|_, _, node| {
-            let re = re.edit();
-            let im = im.edit();
+        let (re_id, im_id) = self.fold(|_, old, node| {
+            let ctx = working.edit();
+
             match node {
                 Node::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => (
                         symbol
                             .real()
-                            .map_or_else(|| re.zero(), |s| re.symbol(s)),
+                            .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
                         symbol
                             .imag()
-                            .map_or_else(|| im.zero(), |s| im.symbol(s)),
+                            .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
                     ),
                     Leaf::Constant(constant) => {
                         let [re_qty, im_qty] = constant.quantity().realize();
 
-                        (re.qty(re_qty), im.qty(im_qty))
+                        (ctx.qty(re_qty), ctx.qty(im_qty))
                     }
                     Leaf::Quantity(quantity) => {
                         let [re_qty, im_qty] = quantity.realize();
 
-                        (re.qty(re_qty), im.qty(im_qty))
+                        (ctx.qty(re_qty), ctx.qty(im_qty))
                     }
                 },
                 Node::Branch(branch) => match branch {
-                    Branch::Add([(a_re, b_re), (a_im, b_im)]) => {
-                        (re.add(a_re, b_re), im.add(a_im, b_im))
+                    Branch::Add([(a_re, a_im), (b_re, b_im)]) => {
+                        (ctx.add(a_re, b_re), ctx.add(a_im, b_im))
                     }
-                    Branch::Mul([(a_re, b_re), (a_im, b_im)]) => (
-                        re.sub(re.mul(a_re, b_re), re.mul(a_im, b_im)),
-                        re.add(re.mul(a_re, b_im), re.mul(a_im, b_re)),
+                    Branch::Mul([(a_re, a_im), (b_re, b_im)]) => (
+                        ctx.sub(ctx.mul(a_re, b_re), ctx.mul(a_im, b_im)),
+                        ctx.add(ctx.mul(a_re, b_im), ctx.mul(a_im, b_re)),
                     ),
-                    Branch::Min([(a_re, b_re), (a_im, b_im)]) => {
-                        (re.min(a_re, b_re), im.min(a_im, b_im))
+                    Branch::Min([(a_re, a_im), (b_re, b_im)]) => {
+                        (ctx.min(a_re, b_re), ctx.min(a_im, b_im))
                     }
-                    Branch::Max([(a_re, b_re), (a_im, b_im)]) => {
-                        (re.max(a_re, b_re), im.max(a_im, b_im))
+                    Branch::Max([(a_re, a_im), (b_re, b_im)]) => {
+                        (ctx.max(a_re, b_re), ctx.max(a_im, b_im))
                     }
                     Branch::Sin((u_re, u_im)) => (
-                        re.mul(re.sin(u_re), re.cosh(u_im)),
-                        re.mul(re.cos(u_re), re.sinh(u_im)),
+                        ctx.mul(ctx.sin(u_re), ctx.cosh(u_im)),
+                        ctx.mul(ctx.cos(u_re), ctx.sinh(u_im)),
                     ),
                     Branch::Cos((u_re, u_im)) => (
-                        re.mul(re.cos(u_re), re.cosh(u_im)),
-                        re.neg(re.mul(re.sin(u_re), re.sinh(u_im))),
+                        ctx.mul(ctx.cos(u_re), ctx.cosh(u_im)),
+                        ctx.neg(ctx.mul(ctx.sin(u_re), ctx.sinh(u_im))),
                     ),
                     Branch::Tan((u_re, u_im)) => {
-                        let u2_re = re.mul(re.qty(2), u_re);
-                        let u2_im = re.mul(re.qty(2), u_im);
+                        let u2_re = ctx.mul(ctx.qty(2), u_re);
+                        let u2_im = ctx.mul(ctx.qty(2), u_im);
 
                         (
-                            re.div(
-                                re.sin(u2_re),
-                                re.add(re.cos(u2_re), re.cosh(u2_im)),
+                            ctx.div(
+                                ctx.sin(u2_re),
+                                ctx.add(ctx.cos(u2_re), ctx.cosh(u2_im)),
                             ),
-                            re.div(
-                                re.sinh(u2_im),
-                                re.add(re.cos(u2_re), re.cosh(u2_im)),
+                            ctx.div(
+                                ctx.sinh(u2_im),
+                                ctx.add(ctx.cos(u2_re), ctx.cosh(u2_im)),
                             ),
                         )
                     }
@@ -434,9 +452,67 @@ impl Expr {
                     Branch::Sign(_) => todo!(),
                     Branch::Real(_) => todo!(),
                     Branch::Imag(_) => todo!(),
-                    Branch::Pow { base, exp } => todo!(),
-                    Branch::Log { base, arg } => todo!(),
-                    Branch::Atan2 { a, b } => todo!(),
+                    Branch::Pow {
+                        base: (b_re, b_im),
+                        exp: (exp_re, exp_im),
+                    } => {
+                        let two = ctx.qty(2);
+                        let euler = ctx.constant(e);
+
+                        let ln_r = ctx.div(
+                            ctx.ln(
+                                ctx.add(ctx.pow(b_re, two), ctx.pow(b_im, two))
+                            ),
+                            two,
+                        );
+
+                        let tetha = ctx.atan2(b_re, b_im);
+
+                        let a = ctx
+                            .sub(ctx.mul(exp_re, ln_r), ctx.mul(exp_im, tetha));
+                        let b = ctx
+                            .add(ctx.mul(exp_im, ln_r), ctx.mul(exp_re, tetha));
+
+                        (
+                            ctx.mul(ctx.pow(euler, a), ctx.cos(b)),
+                            ctx.mul(ctx.pow(euler, a), ctx.sin(b)),
+                        )
+                    }
+                    Branch::Log {
+                        base: (base_re, base_im),
+                        arg: (arg_re, arg_im),
+                    } => {
+                        let two = ctx.qty(2);
+
+                        let ln_z = |re: NodeId, im: NodeId| {
+                            let r2 =
+                                ctx.add(ctx.pow(re, two), ctx.pow(im, two));
+                            (ctx.div(ctx.ln(r2), two), ctx.atan2(re, im))
+                        };
+
+                        let (p, q) = ln_z(arg_re, arg_im);
+
+                        if try { *old.as_leaf()?.as_constant()? == e }
+                            .unwrap_or(false)
+                        {
+                            (p, q)
+                        } else {
+                            let (r, s) = ln_z(base_re, base_im);
+                            let den = ctx.add(ctx.pow(r, two), ctx.pow(s, two));
+
+                            (
+                                ctx.div(
+                                    ctx.add(ctx.mul(p, r), ctx.mul(q, s)),
+                                    den,
+                                ),
+                                ctx.div(
+                                    ctx.sub(ctx.mul(q, r), ctx.mul(p, s)),
+                                    den,
+                                ),
+                            )
+                        }
+                    }
+                    Branch::Atan2 { x, y } => todo!(),
                     Branch::Matrix(matrix) => todo!(),
                     Branch::Transpose(_) => todo!(),
                     Branch::Det(_) => todo!(),
@@ -447,9 +523,14 @@ impl Expr {
             }
         });
 
-        re.set_root(re_id);
-        im.set_root(im_id);
+        let (mut re, mut im) = (Expr::new(), Expr::new());
 
-        [re, im]
+        let re_root = re.import(&working, re_id);
+        re.set_root(re_root);
+
+        let im_root = im.import(&working, im_id);
+        im.set_root(im_root);
+
+        Realized { re: re.simplified(), im: im.simplified() }
     }
 }

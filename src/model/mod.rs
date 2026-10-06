@@ -18,6 +18,7 @@ use derive_more::From;
 use engi_macros::{relation, relations};
 use itertools::{Either, Itertools};
 use num::complex::Complex;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     self as engi,
@@ -376,7 +377,7 @@ impl System {
         M::builder(assembled_path, self)
     }
 
-    pub fn model(&self, path: &ModelPath) -> Ref<AssembledModel> {
+    pub fn model<'s>(&'s self, path: &ModelPath) -> Ref<'s, AssembledModel> {
         let mut current = self.models.borrow();
         let mut iter = path.0.iter();
 
@@ -472,7 +473,7 @@ impl System {
         let bindings = var_assoc
             .into_iter()
             .filter_map(|(var_id, assoc)| match assoc {
-                Associated::Binding(mut expr) => Some((
+                Associated::Binding(expr) => Some((
                     self.model(&var_id.path).variables[var_id.idx].symbol(),
                     expr.simplified(),
                 )),
@@ -480,7 +481,7 @@ impl System {
             })
             .chain(conn_assoc.into_iter().filter_map(|(conn_id, assoc)| {
                 match assoc {
-                    Associated::Binding(mut expr) => Some((
+                    Associated::Binding(expr) => Some((
                         self.model(&conn_id.interface.path).interfaces
                             [conn_id.interface.idx]
                             .connectors[conn_id.idx]
@@ -491,24 +492,28 @@ impl System {
                     _ => None,
                 }
             }))
-            .collect_vec();
+            .collect();
 
-        let residuals = equations.iter().filter_map(|eq| {
-            let mut resid = eq.residual();
+        let residuals: Vec<_> = equations
+            .par_iter()
+            .filter_map(|eq| {
+                let mut resid = eq.residual();
 
-            loop {
-                let step = resid.clone();
-                resid.substitute(&bindings);
-                if step == resid {
-                    break;
+                loop {
+                    let step = resid.substituted(&bindings);
+                    if step == resid {
+                        break;
+                    }
+                    resid = step;
                 }
-                resid = step
-            }
 
-            resid = resid.simplified();
+                resid = resid.simplified();
 
-            if resid == 0 { None } else { Some(resid) }
-        });
+                println!("{}", resid);
+
+                if resid == 0 { None } else { Some(resid) }
+            })
+            .collect();
 
         let mut incidence = BipartiteGraph::new();
 
@@ -525,8 +530,10 @@ impl System {
 
         if matching.size() != incidence.left_count() {
             panic!(
-                "Not every equation can be assigned a variable: {} equations, {} matched
-                Unmatched equations: {:#?}",
+                "Not every equation could be assigned to a variable: {} equations, {} matched
+                Unmatched equations: {:#?}
+                This indicates the system is overdetermined.
+                You need to unbind a variable so the system has a new degree of freedom.",
                 incidence.left_count(),
                 matching.size(),
                 matching.unmatched_left(incidence.left_nodes()).map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
@@ -535,8 +542,10 @@ impl System {
 
         if matching.size() != incidence.right_count() {
             panic!(
-                "Not every variable can be assigned an equation: {} variables, {} matched
-                Unmatched variables: {:#?}",
+                "Not every variable could be assigned to an equation: {} variables, {} matched
+                Unmatched variables: {:#?}
+                This indicates the system is underdetermined.
+                You should verify if you entered all the equations, or bind a constant value to another variable.",
                 incidence.right_count(),
                 matching.size(),
                 matching.unmatched_right(incidence.right_nodes()).map(|x| x.symbol().to_string()).collect::<Vec<_>>().join(", ")
@@ -560,56 +569,6 @@ impl System {
     }
 
     pub fn solve(self, solver: impl Solver) -> AssembledModelSolution {
-        // let mut knowns = self
-        //     .var_bindings
-        //     .borrow()
-        //     .iter()
-        //     .filter_map(|(from, to)| {
-        //         let var = self.model(&from.path).variables[from.idx];
-
-        //         to.node()
-        //             .as_quantity()
-        //             .and_then(|qty| Some((var, qty.value().clone())))
-        //             .or(to.node().as_constant().and_then(|c| {
-        //                 Some((var, c.quantity().value().clone()))
-        //             }))
-        //     })
-        //     .collect_vec();
-
-        // let mut knowns = var_assoc
-        //     .iter()
-        //     .filter_map(|(var_id, assoc)| match assoc {
-        //         Associated::Binding(expr) => Some(Binding::new(
-        //             self.model(&var_id.path).variables[var_id.idx].symbol(),
-        //             expr.simplify(&mut SimplifyContext::new()),
-        //         )),
-        //         _ => None,
-        //     })
-        //     .chain(conn_assoc.iter().filter_map(|(conn_id, assoc)| {
-        //         match assoc {
-        //             Associated::Binding(expr) => Some(Binding::new(
-        //                 self.model(&conn_id.interface.path).interfaces
-        //                     [conn_id.interface.idx]
-        //                     .connectors[conn_id.idx]
-        //                     .variable()
-        //                     .symbol(),
-        //                 expr.simplify(&mut SimplifyContext::new()),
-        //             )),
-        //             _ => None,
-        //         }
-        //     }))
-        //     .collect_vec();
-
-        // let guesses = self
-        //     .var_guesses
-        //     .borrow()
-        //     .iter()
-        //     .map(|(var, qty)| {
-        //         let var = self.model(&var.path).variables[var.idx];
-        //         (var, qty.value().clone())
-        //     })
-        //     .collect();
-
         let mut knowns = AHashMap::new();
         let mut guesses = AHashMap::new();
 
@@ -631,7 +590,6 @@ impl System {
                         knowns.insert(var, qty.value().clone());
                     }
                 }
-                _ => (),
             }
         }
 
@@ -658,7 +616,6 @@ impl System {
                         knowns.insert(conn.variable, qty.value().clone());
                     }
                 }
-                _ => (),
             }
         }
 
@@ -668,10 +625,10 @@ impl System {
             let bindings = knowns
                 .iter()
                 .map(|(var, val)| (var.0, val.clone().into()))
-                .collect_vec();
+                .collect();
 
             for resid in &mut block {
-                resid.substitute(&bindings);
+                *resid = resid.substituted(&bindings);
             }
 
             println!(
@@ -947,7 +904,7 @@ mod test {
         v_c.v.bind(12 * V);
 
         r_c.z.bind(10e3 * Ω);
-        q1.v_ce.bind(v_c.v / 2);
+        q1.v_ce.bind(6 * V);
         q1.v_be.guess(0.4 * V);
         q1.v_t.guess(25e-3 * V);
         q1.β_f.bind(100);
@@ -961,8 +918,8 @@ mod test {
         q1_thermal.t_c.guess(350 * K);
         q1.thermal.t.guess(360 * K);
 
-        let solution =
-            system.solve(NloptSolver::new(nlopt::Algorithm::TNewtonPrecond));
+        let solution = system
+            .solve(NloptSolver::new(nlopt::Algorithm::TNewtonPrecondRestart));
         // panic!("{:#?}", compiled)
         // println!("{}", solution.get(bjt))
     }

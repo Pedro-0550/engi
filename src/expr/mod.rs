@@ -130,10 +130,7 @@ impl Expr {
     }
 
     pub fn push(&mut self, node: ExprNode) -> NodeId {
-        self.push_with_key(self.key_of(&node), node)
-    }
-
-    fn push_with_key(&mut self, key: NodeKey, node: ExprNode) -> NodeId {
+        let key = self.key_of(&node);
         if let Some(&id) = self.cons.get(&key) {
             return id;
         }
@@ -146,25 +143,44 @@ impl Expr {
         id
     }
 
-    pub fn substitute(&mut self, bindings: &[(Symbol, Expr)]) {
-        let symbol_to_expr = bindings
-            .iter()
-            .filter_map(|(symbol, expr)| {
-                let node_key = self.key_of(&Node::Leaf(Leaf::Symbol(*symbol)));
-                let symbol_node_id = *self.cons.get(&node_key)?;
-                let expr_node_id = self.append(expr.clone());
-
-                Some((symbol_node_id, expr_node_id))
-            })
-            .collect::<AHashMap<_, _>>();
-
-        for (_, node) in &mut self.nodes {
-            node.for_each_child_mut(|child_id| {
-                if let Some(new_id) = symbol_to_expr.get(&*child_id) {
-                    *child_id = *new_id;
-                }
-            });
+    pub fn substituted(&self, bindings: &AHashMap<Symbol, Expr>) -> Expr {
+        if bindings.is_empty() {
+            return self.clone();
         }
+
+        fn rebuild(
+            src: &Expr,
+            id: NodeId,
+            bindings: &AHashMap<Symbol, Expr>,
+            out: &mut Expr,
+            memo: &mut AHashMap<NodeId, NodeId>,
+        ) -> NodeId {
+            if let Some(&done) = memo.get(&id) {
+                return done;
+            }
+
+            let new_id = match src.node(id) {
+                Node::Leaf(Leaf::Symbol(s)) if bindings.contains_key(s) => {
+                    let bound = &bindings[s];
+                    out.import(bound, bound.root())
+                }
+                node => {
+                    let remapped = node.clone().map(&mut |child: NodeId| {
+                        rebuild(src, child, bindings, out, memo)
+                    });
+                    out.push(remapped)
+                }
+            };
+
+            memo.insert(id, new_id);
+            new_id
+        }
+
+        let mut out = Expr::new();
+        let mut memo = AHashMap::new();
+        let root = rebuild(self, self.root, bindings, &mut out, &mut memo);
+        out.set_root(root);
+        out
     }
 
     /// Appends the given expr to the current expr, moving all of its nodes, changing IDs.
@@ -180,13 +196,13 @@ impl Expr {
             }
 
             if processed {
-                let (key, mut node) = other_nodes[id.0].take().unwrap();
+                let (_, mut node) = other_nodes[id.0].take().unwrap();
 
                 node.for_each_child_mut(|child_id| {
                     *child_id = remapped[child_id.0].unwrap();
                 });
 
-                let new_id = self.push_with_key(key, node);
+                let new_id = self.push(node);
                 remapped[id.0] = Some(new_id);
             } else {
                 stack.push((id, true));
@@ -246,7 +262,6 @@ impl Expr {
                     }
                 }
             } else {
-                // Pre and Post rely on standard order
                 node.for_each_child(|child| {
                     dfs_inner(expr, *child, into, order);
                 });
@@ -356,7 +371,7 @@ impl Expr {
                 Self { symbolic: vec![node], value: None }
             }
 
-            fn push_into(self, op: BranchKind, into: &mut Expr) -> NodeId {
+            fn build(self, op: BranchKind, into: &mut Expr) -> NodeId {
                 let mut iter = self.symbolic.iter().copied();
                 let init = self
                     .value
@@ -483,27 +498,21 @@ impl Expr {
                                     let b_kind =
                                         b_node.as_branch().unwrap().kind();
                                     let new_b_id =
-                                        b_acc.push_into(b_kind, &mut new_expr);
+                                        b_acc.build(b_kind, &mut new_expr);
 
                                     a_acc.symbolic.push(new_b_id);
                                     Accumulated::symbolic(
-                                        a_acc.push_into(
-                                            branch_kind,
-                                            &mut new_expr,
-                                        ),
+                                        a_acc.build(branch_kind, &mut new_expr),
                                     )
                                 } else if foldable_b {
                                     let a_kind =
                                         a_node.as_branch().unwrap().kind();
                                     let new_a_id =
-                                        a_acc.push_into(a_kind, &mut new_expr);
+                                        a_acc.build(a_kind, &mut new_expr);
 
                                     b_acc.symbolic.push(new_a_id);
                                     Accumulated::symbolic(
-                                        b_acc.push_into(
-                                            branch_kind,
-                                            &mut new_expr,
-                                        ),
+                                        b_acc.build(branch_kind, &mut new_expr),
                                     )
                                 } else {
                                     let a_kind =
@@ -512,9 +521,9 @@ impl Expr {
                                         b_node.as_branch().unwrap().kind();
 
                                     let new_a_id =
-                                        a_acc.push_into(a_kind, &mut new_expr);
+                                        a_acc.build(a_kind, &mut new_expr);
                                     let new_b_id =
-                                        b_acc.push_into(b_kind, &mut new_expr);
+                                        b_acc.build(b_kind, &mut new_expr);
 
                                     let curr_acc = Accumulated {
                                         value: None,
@@ -522,10 +531,8 @@ impl Expr {
                                     };
 
                                     Accumulated::symbolic(
-                                        curr_acc.push_into(
-                                            branch_kind,
-                                            &mut new_expr,
-                                        ),
+                                        curr_acc
+                                            .build(branch_kind, &mut new_expr),
                                     )
                                 }
                             }
@@ -571,7 +578,7 @@ impl Expr {
                         | BranchKind::Max
                 ) =>
             {
-                acc.push_into(b.kind(), &mut new_expr)
+                acc.build(b.kind(), &mut new_expr)
             }
             _ => {
                 if let Some(v) = acc.value {
@@ -590,8 +597,6 @@ impl Expr {
         new_expr.set_root(root_id);
         new_expr
     }
-
-    pub fn clean(&mut self) {}
 
     pub fn normalize(&mut self) {
         for id in self.dfs(Order::Post) {
@@ -613,6 +618,7 @@ impl Expr {
 
                     mem::swap(a, b);
                     let new_key = self.key_of(self.node(id));
+                    self.nodes[id.0].0 = new_key;
                     self.cons.insert(new_key, id);
                     // We keep the old key because why not, its the same thing anyway
                 }
@@ -757,19 +763,19 @@ impl_unary_fn!(
     "Norm of the given number, or Frobenius norm for matrices"
 );
 
-pub fn atan2(a: impl Into<Expr>, b: impl Into<Expr>) -> Expr {
-    let mut expr = a.into();
-    let b = b.into();
+pub fn atan2(x: impl Into<Expr>, y: impl Into<Expr>) -> Expr {
+    let mut expr = x.into();
+    let y = y.into();
 
     assert!(
-        expr.shape().is_scalar() && b.shape().is_scalar(),
+        expr.shape().is_scalar() && y.shape().is_scalar(),
         "atan2 is only defined for scalars"
     );
 
-    let a = expr.root();
-    let b = expr.append(b);
+    let x = expr.root();
+    let y = expr.append(y);
 
-    expr.push_root(Node::Branch(Branch::Atan2 { a, b }));
+    expr.push_root(Node::Branch(Branch::Atan2 { x, y }));
     expr
 }
 

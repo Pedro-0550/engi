@@ -475,16 +475,16 @@ impl_unary_fn!(
     "Norm of the given number, or Frobenius norm for matrices"
 );
 
-pub fn atan2(a: impl Into<Pattern>, b: impl Into<Pattern>) -> Pattern {
-    let a = Box::new(a.into());
-    let b = Box::new(b.into());
+pub fn atan2(x: impl Into<Pattern>, y: impl Into<Pattern>) -> Pattern {
+    let x = Box::new(x.into());
+    let y = Box::new(y.into());
 
     // assert!(
     //     a.shape().is_scalar() && b.shape().is_scalar(),
     //     "atan2 is only defined for scalars"
     // );
 
-    Pattern::Node(Node::Branch(Branch::Atan2 { a, b }).into())
+    Pattern::Node(Node::Branch(Branch::Atan2 { x, y }).into())
 }
 
 pub fn log(base: impl Into<Pattern>, x: impl Into<Pattern>) -> Pattern {

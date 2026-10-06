@@ -206,7 +206,7 @@ impl EquivalencyGraph {
     pub fn rewrite(&mut self, rules: &[Rule]) {
         const CLASS_LIMIT: usize = 5000;
         const MATCH_LIMIT: usize = 5000;
-        const PER_RULE_MATCH_LIMIT: usize = 500;
+        const PER_RULE_MATCH_LIMIT: usize = 1000;
 
         #[derive(Default, Clone, Copy)]
         struct Productivity {
@@ -239,7 +239,7 @@ impl EquivalencyGraph {
                     continue;
                 }
 
-                if prod.matched > 10 && prod.matched > prod.merged * 2 {
+                if prod.matched > 50 && prod.matched > prod.merged * 2 {
                     prod.banned_for += prod.ban_length;
                     prod.ban_length *= 3;
                     prod.merged = 0;
