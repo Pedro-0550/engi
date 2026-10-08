@@ -6,8 +6,14 @@ use num::{
 };
 
 use crate::{
-    core::{util::impl_op_permutations, value::Value},
-    units::{COMPOSITIONS, Dimension, Quantity, Unit},
+    core::{
+        util::impl_op_permutations,
+        value::{ComplexExt, Value},
+    },
+    units::{
+        COMPOSITIONS, DIMENSIONLESS, Dimension, Dimensioned, Quantity, Unit,
+        si::rad,
+    },
 };
 
 impl Dimension {
@@ -173,6 +179,91 @@ macro_rules! impl_qty_from_scalar {
 
 impl_qty_from_scalar!(i64, f64, Complex64, Value);
 
+macro_rules! impl_qty_trig_fn {
+    ($ident:ident) => {
+        pub fn $ident(self) -> Quantity {
+            assert_eq!(self.1.dimension().unwrap(), DIMENSIONLESS, "Trig functions are transcedental, so they can only take dimensionless arguments");
+
+            self.0.sin() * self.1
+        }
+    };
+}
+
+impl Quantity {
+    impl_qty_trig_fn!(sin);
+    impl_qty_trig_fn!(cos);
+    impl_qty_trig_fn!(tan);
+    impl_qty_trig_fn!(asin);
+    impl_qty_trig_fn!(acos);
+    impl_qty_trig_fn!(atan);
+    impl_qty_trig_fn!(sinh);
+    impl_qty_trig_fn!(cosh);
+    impl_qty_trig_fn!(tanh);
+    impl_qty_trig_fn!(asinh);
+    impl_qty_trig_fn!(acosh);
+    impl_qty_trig_fn!(atanh);
+
+    pub fn real(self) -> Quantity {
+        let [re, _] = self.0.realize();
+        re * self.1
+    }
+
+    pub fn imag(self) -> Quantity {
+        let [_, im] = self.0.realize();
+        im * self.1
+    }
+
+    pub fn log(self, base: Quantity) -> Quantity {
+        assert_eq!(base.1, Unit::Unitless, "Log base must be unitless");
+        assert_eq!(self.1, Unit::Unitless, "Log arg must be unitless");
+
+        (self.0.ln() / base.0.ln()) * Unit::Unitless
+    }
+
+    pub fn atan2(&self, y: &Quantity) -> Quantity {
+        assert_eq!(
+            self.1, y.1,
+            "atan2(x, y)'s arguments must have the same unit"
+        );
+
+        self.0.atan2(&y.0) * rad
+    }
+
+    pub fn max(&self, b: &Quantity) -> Quantity {
+        assert_eq!(
+            self.1, b.1,
+            "max(a, b)'s arguments must have the same unit"
+        );
+
+        self.0.max(&b.0) * self.1
+    }
+
+    pub fn min(&self, b: &Quantity) -> Quantity {
+        assert_eq!(
+            self.1, b.1,
+            "min(a, b)'s arguments must have the same unit"
+        );
+
+        self.0.min(&b.0) * self.1
+    }
+
+    pub fn sign(self) -> Quantity {
+        self.0.sign() * self.1
+    }
+
+    pub fn norm(self) -> Quantity {
+        self.0.norm() * self.1
+    }
+
+    pub fn conj(self) -> Quantity {
+        self.0.conj() * self.1
+    }
+
+    pub fn arg(self) -> Quantity {
+        self.0.arg() * rad
+    }
+}
+
 impl From<Unit> for Quantity {
     fn from(unit: Unit) -> Self {
         Quantity(1.0.into(), unit)
@@ -206,8 +297,14 @@ impl_op_permutations! {
     },
 
     add = {
-        assert!(lhs.unit().repr_eq(rhs.unit()), "cannot add two quantities with different units");
-        Quantity(lhs.value().clone() + rhs.value().clone(), lhs.unit())
+        if lhs.value().is_zero() {
+            rhs
+        } else if rhs.value().is_zero() {
+            lhs
+        } else {
+            assert!(lhs.unit().repr_eq(rhs.unit()), "cannot add two quantities with different units: {} + {}", lhs, rhs);
+            Quantity(lhs.value().clone() + rhs.value().clone(), lhs.unit())
+        }
     },
 
     sub = {
@@ -224,7 +321,12 @@ impl_op_permutations! {
     },
 
     pow = {
-        todo!();
+        if lhs.1 != Unit::Unitless {
+            let exp = try { rhs.value().as_scalar()?.as_integer()? }.expect("Non unitless quantities can only be raised to integer powers for now");
+            Quantity(lhs.0.pow(exp), lhs.1.pow(exp))
+        } else {
+            Quantity(lhs.0.pow(rhs.0), Unit::Unitless)
+        }
     },
 
     partial_eq = {

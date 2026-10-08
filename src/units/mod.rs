@@ -61,7 +61,7 @@ pub trait Dimensioned {
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(PartialEq, Clone, Debug, Hash, Default)]
+#[derive(Clone, Debug, Hash, Default)]
 pub struct Quantity(Value, Unit);
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
@@ -526,3 +526,13 @@ impl Display for Quantity {
 }
 
 impl Eq for Quantity {}
+
+impl PartialEq for Quantity {
+    fn eq(&self, other: &Self) -> bool {
+        if self.0.is_zero() && other.0.is_zero() {
+            true
+        } else {
+            self.0 == other.0 && self.1 == other.1
+        }
+    }
+}

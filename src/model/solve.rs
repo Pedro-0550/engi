@@ -86,7 +86,7 @@ impl Solver for NloptSolver {
 
         let residuals = realized_residuals
             .into_iter()
-            .map(|resid| resid.substituted(&scale_bindings).folded())
+            .map(|resid| resid.substituted(&scale_bindings).simplified())
             .collect_vec();
 
         let objective = residuals

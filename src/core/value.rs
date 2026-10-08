@@ -14,7 +14,7 @@ use faer::{
 use float_eq::{FloatEq, float_eq};
 use num::{
     Complex, Float, Zero,
-    complex::{Complex32, Complex64, ComplexFloat},
+    complex::{Complex32, Complex64, ComplexFloat, c64},
     pow::Pow,
 };
 use ordered_float::OrderedFloat;
@@ -53,7 +53,7 @@ pub struct Set;
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
-#[derive(Clone, PartialEq, Debug, IsVariant)]
+#[derive(Clone, Debug, IsVariant)]
 pub enum Value {
     Set(Arc<Set>),
     Matrix(Arc<Mat<Complex64>>),
@@ -266,6 +266,47 @@ impl Value {
         self.as_scalar()?.as_imag()
     }
 
+    pub fn max(&self, other: &Self) -> Self {
+        let a =
+            self.as_scalar().expect("max(a, b) is only defined for scalars");
+        let b =
+            other.as_scalar().expect("max(a, b) is only defined for scalars");
+
+        c64(a.re.max(b.re), a.im.max(b.im)).into()
+    }
+
+    pub fn min(&self, other: &Self) -> Self {
+        let a =
+            self.as_scalar().expect("max(a, b) is only defined for scalars");
+        let b =
+            other.as_scalar().expect("max(a, b) is only defined for scalars");
+
+        c64(a.re.min(b.re), a.im.min(b.im)).into()
+    }
+
+    pub fn atan2(&self, other: &Self) -> Self {
+        let x = self
+            .as_scalar_real()
+            .expect("atan2(x, y) is only defined for real scalars");
+        let y = other
+            .as_scalar_real()
+            .expect("atan2(x, y) is only defined for real scalars");
+
+        y.atan2(x).into()
+    }
+
+    pub fn conj(&self) -> Self {
+        let z = self.as_scalar().expect("conj(z) is only defined for scalars");
+
+        z.conj().into()
+    }
+
+    pub fn arg(&self) -> Self {
+        let z = self.as_scalar().expect("arg(z) is only defined for scalars");
+
+        z.arg().into()
+    }
+
     pub fn norm(&self) -> Self {
         match self {
             Value::Set(set) => todo!(),
@@ -468,6 +509,17 @@ impl_op_permutations! {
 
     partial_eq = {
         lhs == rhs
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Set(_), Value::Set(_)) => todo!(),
+            (Value::Matrix(_), Value::Matrix(_)) => todo!(),
+            (Value::Scalar(lhs), Value::Scalar(rhs)) => lhs.eq_approx(*rhs),
+            _ => false,
+        }
     }
 }
 

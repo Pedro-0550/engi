@@ -216,31 +216,29 @@ impl Machine {
                 Instruction::Bind { structure, target, out: bind_out } => {
                     let target_id = registers[target.0];
                     let target_class = &graph.classes[graph.find(target_id).0];
+                    let exprs =
+                        &target_class.exprs_by_kind[structure.kind().id()];
 
-                    if let Some(exprs) =
-                        target_class.exprs_by_kind.get(&structure.kind())
-                    {
-                        for expr_id in exprs {
-                            let expr = &graph.exprs[expr_id.0];
+                    for expr_id in exprs {
+                        let expr = &graph.exprs[expr_id.0];
 
-                            if expr.node.structure() == *structure {
-                                let mut i = 0;
-                                expr.node.for_each_child(|child_id| {
-                                    registers[bind_out.0 + i] = *child_id;
+                        if expr.node.structure() == *structure {
+                            let mut i = 0;
+                            expr.node.for_each_child(|child_id| {
+                                registers[bind_out.0 + i] = *child_id;
 
-                                    i += 1;
-                                });
+                                i += 1;
+                            });
 
-                                execute_inner(
-                                    pc + 1,
-                                    registers,
-                                    graph,
-                                    program,
-                                    out,
-                                );
-                            }
+                            execute_inner(
+                                pc + 1,
+                                registers,
+                                graph,
+                                program,
+                                out,
+                            );
                         }
-                    };
+                    }
                 }
                 Instruction::Compare { a, b } => {
                     let a_id = registers[a.0];

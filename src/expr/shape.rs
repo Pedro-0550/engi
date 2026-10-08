@@ -83,7 +83,15 @@ impl Expr {
                     );
                     a
                 }
-                Branch::Mul(_) => todo!(),
+                Branch::Mul([a, b]) => {
+                    if a.cols == b.rows {
+                        Shape::rect(a.rows.get(), b.cols.get())
+                    } else if a.is_vec() && b.is_vec() {
+                        Shape::SCALAR
+                    } else {
+                        panic!("a * b must satisfy cols(a) == rows(b) for matrix multiplication, unless a and b are vectors, in which case it will be the dot product instead")
+                    }
+                },
                 Branch::Min([a, b]) | Branch::Max([a, b]) => {
                     assert!(
                         a.is_scalar() && b.is_scalar(),

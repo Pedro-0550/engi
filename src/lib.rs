@@ -16,7 +16,7 @@
 #![feature(box_patterns)]
 #![feature(macro_metavar_expr)]
 #![feature(try_blocks)]
-
+#![feature(variant_count)]
 pub mod core {
     pub mod graph;
     pub mod interned;

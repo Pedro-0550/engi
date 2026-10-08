@@ -135,12 +135,24 @@ impl Display for Expr {
                         fmt_inner(expr, f, *u)?;
                         f.write_char(')')?;
                     }
-                    Branch::Tan(_) => todo!(),
+                    Branch::Tan(u) => {
+                        f.write_str("tan(")?;
+                        fmt_inner(expr, f, *u)?;
+                        f.write_char(')')?;
+                    }
                     Branch::Asin(_) => todo!(),
                     Branch::Acos(_) => todo!(),
                     Branch::Atan(_) => todo!(),
-                    Branch::Sinh(_) => todo!(),
-                    Branch::Cosh(_) => todo!(),
+                    Branch::Sinh(u) => {
+                        f.write_str("sinh(")?;
+                        fmt_inner(expr, f, *u)?;
+                        f.write_char(')')?;
+                    }
+                    Branch::Cosh(u) => {
+                        f.write_str("cosh(")?;
+                        fmt_inner(expr, f, *u)?;
+                        f.write_char(')')?;
+                    }
                     Branch::Tanh(_) => todo!(),
                     Branch::Asinh(_) => todo!(),
                     Branch::Acosh(_) => todo!(),
