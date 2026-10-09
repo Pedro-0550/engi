@@ -235,6 +235,8 @@ impl Interval {
 
     // Why do these take self? well uhh
     // well maybe we want actual intervals one day and then we will be able to have more precise bounds
+    // without changing anything else
+    #[inline(always)]
     pub fn sin(&self) -> Self {
         Self::R
     }
@@ -243,11 +245,13 @@ impl Interval {
         Self::R
     }
 
+    #[inline(always)]
     pub fn sinh(&self) -> Self {
         // Sinh is positive when arg is positive, negative when arg is negative.
         self.clone()
     }
 
+    #[inline(always)]
     pub fn cosh(&self) -> Self {
         Self::R_P
     }
@@ -299,11 +303,9 @@ impl Mul<Interval> for Interval {
     }
 }
 
-impl Expr {
-    /// Returns the domain of this expression.
-    /// The possible values of this expression are guaranteed to be contained in its domain, but are not required to cover all of it.
-    pub fn domain_of(&self, node: NodeId) -> Domain {
-        self.fold_from(node, |_, _, node: Node<Domain>| match node {
+impl Node<Domain> {
+    pub fn domain(&self) -> Domain {
+        match self {
             Node::Leaf(leaf) => match leaf {
                 Leaf::Symbol(symbol) => symbol.domain(),
                 Leaf::Constant(constant) => {
@@ -323,15 +325,23 @@ impl Expr {
                 Branch::Max([a, b]) => {
                     Domain::new(a.re.max(b.re), a.im.max(b.im))
                 }
-                Branch::Sin(a) => Domain::new(
-                    a.re.sin() * a.im.cosh(),
-                    a.re.cos() * a.im.sinh(),
+                Branch::Sin(u) => Domain::new(
+                    u.re.sin() * u.im.cosh(),
+                    u.re.cos() * u.im.sinh(),
                 ),
-                Branch::Cos(a) => Domain::new(
-                    a.re.cos() * a.im.cosh(),
-                    -(a.re.sin() * a.im.sinh()),
+                Branch::Cos(u) => Domain::new(
+                    u.re.cos() * u.im.cosh(),
+                    -(u.re.sin() * u.im.sinh()),
                 ),
-                Branch::Tan(_) => todo!(),
+                Branch::Tan(u) => {
+                    let u2_re: Interval = u.re * 2;
+                    let u2_im: Interval = u.im * 2;
+
+                    Domain::new(
+                        (u2_re).sin() / (u2_re.cos() + u2_im.cosh()),
+                        (u2_im).sinh() / (u2_re.cos() + u2_im.cosh()),
+                    )
+                }
                 Branch::Asin(_) => todo!(),
                 Branch::Acos(_) => todo!(),
                 Branch::Atan(_) => todo!(),
@@ -358,7 +368,7 @@ impl Expr {
                         Domain::new(a.re.union(b.re), a.im.union(b.im))
                     })
                     .unwrap(),
-                Branch::Transpose(x) => x,
+                Branch::Transpose(x) => *x,
                 Branch::Det(_) => todo!(),
                 Branch::Rank(_) => todo!(),
                 Branch::Trace(_) => todo!(),
@@ -366,7 +376,15 @@ impl Expr {
                     Domain::new(pass.re.union(fail.re), pass.im.union(fail.im))
                 }
             },
-        })
+        }
+    }
+}
+
+impl Expr {
+    /// Returns the domain of this expression.
+    /// The possible values of this expression are guaranteed to be contained in its domain, but are not required to cover all of it.
+    pub fn domain_of(&self, node: NodeId) -> Domain {
+        self.fold_from(node, |_, _, node: Node<Domain>| node.domain())
     }
 
     pub fn domain(&self) -> Domain {

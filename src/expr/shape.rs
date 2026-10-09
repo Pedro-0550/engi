@@ -63,13 +63,9 @@ impl Shape {
     }
 }
 
-impl Expr {
+impl Node<Shape> {
     pub fn shape(&self) -> Shape {
-        self.shape_of(self.root())
-    }
-
-    pub fn shape_of(&self, id: NodeId) -> Shape {
-        self.fold_from(id, |_, _, node: Node<Shape>| match node {
+        match self {
             Node::Leaf(leaf) => match leaf {
                 Leaf::Symbol(symbol) => symbol.shape(),
                 Leaf::Constant(constant) => constant.quantity().value().shape(),
@@ -81,7 +77,7 @@ impl Expr {
                         a, b,
                         "Cannot add two values of different shapes",
                     );
-                    a
+                    *a
                 }
                 Branch::Mul([a, b]) => {
                     if a.cols == b.rows {
@@ -89,9 +85,11 @@ impl Expr {
                     } else if a.is_vec() && b.is_vec() {
                         Shape::SCALAR
                     } else {
-                        panic!("a * b must satisfy cols(a) == rows(b) for matrix multiplication, unless a and b are vectors, in which case it will be the dot product instead")
+                        panic!(
+                            "a * b must satisfy cols(a) == rows(b) for matrix multiplication, unless a and b are vectors, in which case it will be the dot product instead"
+                        )
                     }
-                },
+                }
                 Branch::Min([a, b]) | Branch::Max([a, b]) => {
                     assert!(
                         a.is_scalar() && b.is_scalar(),
@@ -117,62 +115,97 @@ impl Expr {
                         "Function only defined for scalars and square matrices"
                     );
 
-                    u
+                    *u
                 }
                 Branch::Arg(u) => {
                     assert_eq!(
-                        u,
+                        *u,
                         Shape::SCALAR,
                         "Arg(z) is only defined for scalar z",
                     );
 
                     Shape::SCALAR
                 }
-                Branch::Conj(u) | Branch::Sign(u) | Branch::Real(u) | Branch::Imag(u) => u,
+                Branch::Conj(u)
+                | Branch::Sign(u)
+                | Branch::Real(u)
+                | Branch::Imag(u) => *u,
                 Branch::Norm(_) => Shape::SCALAR,
                 Branch::Pow { base, exp } => {
-                    assert!(base.is_scalar() || base.is_square_mat(), "Pow base must be a scalar or square matrix");
-                    assert!(exp.is_scalar() || exp.is_square_mat(), "Pow exponent must be a scalar or square matrix");
+                    assert!(
+                        base.is_scalar() || base.is_square_mat(),
+                        "Pow base must be a scalar or square matrix"
+                    );
+                    assert!(
+                        exp.is_scalar() || exp.is_square_mat(),
+                        "Pow exponent must be a scalar or square matrix"
+                    );
 
                     if base.is_square_mat() && exp.is_square_mat() {
-                        todo!("A^B where A and B are matrices is not implemented yet");
+                        todo!(
+                            "A^B where A and B are matrices is not implemented yet"
+                        );
                     } else if base.is_square_mat() {
-                        base
+                        *base
                     } else if exp.is_square_mat() {
-                        exp
+                        *exp
                     } else {
                         Shape::SCALAR
                     }
-                },
+                }
                 Branch::Log { base, arg } => {
-                    assert!(base.is_scalar() || base.is_square_mat(), "Log base must be a scalar or square matrix");
-                    assert!(arg.is_scalar() || arg.is_square_mat(), "Log argument must be a scalar or square matrix");
+                    assert!(
+                        base.is_scalar() || base.is_square_mat(),
+                        "Log base must be a scalar or square matrix"
+                    );
+                    assert!(
+                        arg.is_scalar() || arg.is_square_mat(),
+                        "Log argument must be a scalar or square matrix"
+                    );
 
                     if base.is_square_mat() && arg.is_square_mat() {
-                        todo!("log_A(B) where A and B are matrices is not implemented yet");
+                        todo!(
+                            "log_A(B) where A and B are matrices is not implemented yet"
+                        );
                     } else if base.is_square_mat() {
-                        base
+                        *base
                     } else if arg.is_square_mat() {
-                        arg
+                        *arg
                     } else {
                         Shape::SCALAR
                     }
-                },
+                }
                 Branch::Atan2 { x: a, y: b } => {
-                    assert!(a.is_scalar() && b.is_scalar(), "Atan arguments must be scalar");
+                    assert!(
+                        a.is_scalar() && b.is_scalar(),
+                        "Atan arguments must be scalar"
+                    );
                     Shape::SCALAR
-                },
+                }
                 Branch::Matrix(matrix) => matrix.shape(),
                 Branch::Transpose(u) => u.transpose(),
                 Branch::Det(_) => todo!(),
                 Branch::Rank(_) => todo!(),
                 Branch::Trace(_) => todo!(),
                 Branch::Conditional { pass, fail, .. } => {
-                    assert_eq!(pass, fail, "Both branches of a conditional must be of the same shape");
-                    pass
-                },
+                    assert_eq!(
+                        pass, fail,
+                        "Both branches of a conditional must be of the same shape"
+                    );
+                    *pass
+                }
             },
-        })
+        }
+    }
+}
+
+impl Expr {
+    pub fn shape(&self) -> Shape {
+        self.shape_of(self.root())
+    }
+
+    pub fn shape_of(&self, id: NodeId) -> Shape {
+        self.fold_from(id, |_, _, node: Node<Shape>| node.shape())
     }
 
     pub fn scalarize(self) -> Matrix<Expr> {

@@ -208,7 +208,7 @@ impl EquivalencyGraph {
             let class_id = ClassId(self.classes.len());
             self.cons.insert(expr.key(), class_id);
 
-            let qty = self.evaluate_expr(&expr);
+            // let qty = self.evaluate_expr(&expr);
 
             let class = EquivalencyClass {
                 parent: Cell::new(class_id),
@@ -220,9 +220,9 @@ impl EquivalencyGraph {
                         vec![]
                     }
                 }),
-                domain: expr.node.domain(),
-                shape: expr.node.shape(),
-                qty,
+                domain: self.domain(&expr),
+                shape: self.shape(&expr),
+                qty: None,
             };
 
             self.pending_match.push(class_id);
@@ -249,7 +249,7 @@ impl EquivalencyGraph {
                 Branch::Add([a, b]) => {
                     if a.as_ref()?.value().is_zero() {
                         return b;
-                    } else if a.as_ref()?.value().is_zero() {
+                    } else if b.as_ref()?.value().is_zero() {
                         return a;
                     }
 
@@ -259,7 +259,13 @@ impl EquivalencyGraph {
                         return None;
                     }
                 }
-                Branch::Mul([a, b]) => a? * b?,
+                Branch::Mul([a, b]) => {
+                    if a.as_ref().or(b.as_ref())?.value().is_zero() {
+                        0.0.into()
+                    } else {
+                        a? * b?
+                    }
+                }
                 Branch::Min([a, b]) => a?.max(&b?),
                 Branch::Max([a, b]) => a?.min(&b?),
                 Branch::Pow { base, exp } => base?.pow(exp?),
@@ -295,8 +301,8 @@ impl EquivalencyGraph {
 
     pub fn rewrite(&mut self, rules: &[Rule]) {
         const CLASS_LIMIT: usize = 5000;
-        const MATCH_LIMIT: usize = 5000;
-        const PER_RULE_MATCH_LIMIT: usize = 500;
+        const MATCH_LIMIT: usize = 1000;
+        const PER_RULE_MATCH_LIMIT: usize = 100;
 
         #[derive(Default, Clone, Copy)]
         struct Productivity {
@@ -314,7 +320,7 @@ impl EquivalencyGraph {
             .collect_vec();
 
         let mut prod = vec![Productivity::default(); compiled.len()];
-        let mut i = 0;
+
         loop {
             let mut matches = Vec::new();
 
@@ -405,7 +411,6 @@ impl EquivalencyGraph {
             //     self.classes.len(),
             //     self.exprs.len()
             // );
-            i += 1;
         }
     }
 
@@ -731,14 +736,12 @@ impl EquivalencyGraph {
 
         graph
     }
-}
 
-impl EquivalencyNode {
-    fn domain(&self) -> Domain {
-        Domain::REAL
+    fn domain(&self, expr: &EquivalencyExpr) -> Domain {
+        expr.node.clone().map(&mut |id| self.classes[id.0].domain).domain()
     }
 
-    fn shape(&self) -> Shape {
-        Shape::SCALAR
+    fn shape(&self, expr: &EquivalencyExpr) -> Shape {
+        expr.node.clone().map(&mut |id| self.classes[id.0].shape).shape()
     }
 }
