@@ -6,9 +6,9 @@ use crate::{
     core::value::{EQ_ABS_TOL, Set},
     expr::{
         self, Expr, NodeId, cos, cosh,
+        dag::{Branch, Leaf, Node},
         domain::{Domain, Numeric},
         ln, sin, sinh, sqrt,
-        tree::{Branch, Leaf, Node},
     },
     symbol::{Symbol, constants::e},
 };

@@ -221,9 +221,9 @@ impl Quantity {
     }
 
     pub fn atan2(&self, y: &Quantity) -> Quantity {
-        assert_eq!(
-            self.1, y.1,
-            "atan2(x, y)'s arguments must have the same unit"
+        assert!(
+            self.1 == y.1 || self.0.is_zero() || y.0.is_zero(),
+            "atan2(x, y)'s arguments must have the same unit: x = {self}, y = {y}"
         );
 
         self.0.atan2(&y.0) * rad

@@ -13,7 +13,7 @@ use crate::{
         Expr,
         domain::Domain,
         shape::Shape,
-        tree::{Branch, Node, NodeKind},
+        dag::{Branch, Node, NodeKind},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::{

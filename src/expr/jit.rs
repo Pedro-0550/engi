@@ -25,8 +25,8 @@ use crate::{
     core::value,
     expr::{
         Expr, Node,
+        dag::{Branch, Leaf},
         domain::{Domain, Realized},
-        tree::{Branch, Leaf},
     },
     symbol::{
         Realization::{self, Imag, Primary, Real},

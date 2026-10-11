@@ -1,6 +1,6 @@
 use std::fmt::{self, Debug, Display, Formatter, Pointer, Write};
 
-use super::tree::{Branch, Leaf, Node};
+use super::dag::{Branch, Leaf, Node};
 use crate::{
     core::value::ComplexExt,
     expr::{Expr, NodeId, Order, fmt::Joinabability::WithParens},

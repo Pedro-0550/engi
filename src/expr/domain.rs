@@ -1,15 +1,19 @@
-use std::ops::{Add, Mul, Sub};
+use std::ops::{Add, Div, Mul, Sub};
 
+use float_eq::FloatEq;
 use num::{Complex, bigint::Sign};
 use ordered_float::Pow;
+use smallvec::SmallVec;
 
 use super::{
     Node,
-    tree::{Branch, Leaf},
+    dag::{Branch, Leaf},
 };
 use crate::{
+    core::value::EQ_ABS_TOL,
     expr::{
         Expr, NodeId,
+        dag::{Conditional, Matrix},
         domain::Endpoint::{Neg, Pos, Zero},
     },
     symbol::constants::e,
@@ -47,6 +51,8 @@ pub enum Numeric {
     Complex,
 }
 
+pub struct Set(SmallVec<[Interval; 3]>);
+
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct Domain {
     pub re: Interval,
@@ -57,7 +63,7 @@ impl Interval {
     pub const ZERO: Self = Self {
         from: Edge::Closed(Zero),
         to: Edge::Closed(Zero),
-        over: Universe::Real,
+        over: Universe::Integer,
     };
 
     const R: Self = Self {
@@ -255,13 +261,41 @@ impl Interval {
     pub fn cosh(&self) -> Self {
         Self::R_P
     }
-}
 
-impl Pow<Interval> for Interval {
-    type Output = Interval;
+    pub fn ln(&self) -> Self {
+        Self::R
+    }
 
-    fn pow(self, rhs: Interval) -> Self::Output {
-        todo!()
+    pub fn atan2(&self, y: &Self) -> Self {
+        Self::R
+    }
+
+    pub fn sign(&self) -> Self {
+        *self
+    }
+
+    pub fn singleton(val: f64) -> Self {
+        let universe = if val.round().eq_abs(&val, &EQ_ABS_TOL) {
+            Universe::Integer
+        } else {
+            Universe::Real
+        };
+
+        if val.eq_abs(&0.0, &EQ_ABS_TOL) {
+            Interval::ZERO
+        } else if val > EQ_ABS_TOL {
+            Interval {
+                from: Edge::Open(Endpoint::Zero),
+                to: Edge::Open(Endpoint::Pos),
+                over: universe,
+            }
+        } else {
+            Interval {
+                from: Edge::Open(Endpoint::Neg),
+                to: Edge::Open(Endpoint::Zero),
+                over: universe,
+            }
+        }
     }
 }
 
@@ -269,15 +303,43 @@ impl Add<Interval> for Interval {
     type Output = Interval;
 
     fn add(self, rhs: Interval) -> Self::Output {
-        todo!()
-    }
-}
+        let universe = if self.is_integer() && rhs.is_integer() {
+            Universe::Integer
+        } else {
+            Universe::Real
+        };
 
-impl Sub<Interval> for Interval {
-    type Output = Interval;
+        fn add_lower(a: Edge, b: Edge) -> Edge {
+            if a == Edge::Open(Endpoint::Neg) || b == Edge::Open(Endpoint::Neg)
+            {
+                Edge::Open(Endpoint::Neg)
+            } else if a == Edge::Open(Endpoint::Zero)
+                || b == Edge::Open(Endpoint::Zero)
+            {
+                Edge::Open(Endpoint::Zero)
+            } else {
+                Edge::Closed(Endpoint::Zero)
+            }
+        }
 
-    fn sub(self, rhs: Interval) -> Self::Output {
-        todo!()
+        fn add_upper(a: Edge, b: Edge) -> Edge {
+            if a == Edge::Open(Endpoint::Pos) || b == Edge::Open(Endpoint::Pos)
+            {
+                Edge::Open(Endpoint::Pos)
+            } else if a == Edge::Open(Endpoint::Zero)
+                || b == Edge::Open(Endpoint::Zero)
+            {
+                Edge::Open(Endpoint::Zero)
+            } else {
+                Edge::Closed(Endpoint::Zero)
+            }
+        }
+
+        Interval {
+            from: add_lower(self.from, rhs.from),
+            to: add_upper(self.to, rhs.to),
+            over: universe,
+        }
     }
 }
 
@@ -285,7 +347,71 @@ impl std::ops::Neg for Interval {
     type Output = Interval;
 
     fn neg(self) -> Self::Output {
-        todo!()
+        fn neg_endpoint(edge: Endpoint) -> Endpoint {
+            match edge {
+                Endpoint::Pos => Endpoint::Neg,
+                Endpoint::Neg => Endpoint::Pos,
+                Endpoint::Zero => Endpoint::Zero,
+            }
+        }
+
+        fn neg_edge(edge: Edge) -> Edge {
+            match edge {
+                Edge::Closed(ep) => Edge::Closed(neg_endpoint(ep)),
+                Edge::Open(ep) => Edge::Open(neg_endpoint(ep)),
+            }
+        }
+
+        Interval {
+            from: neg_edge(self.to),
+            to: neg_edge(self.from),
+            over: self.over,
+        }
+    }
+}
+
+impl Sub<Interval> for Interval {
+    type Output = Interval;
+
+    fn sub(self, rhs: Interval) -> Self::Output {
+        self + (-rhs)
+    }
+}
+
+impl Pow<Interval> for Interval {
+    type Output = Interval;
+
+    fn pow(self, rhs: Interval) -> Self::Output {
+        // x^0 = 1
+        if rhs.is_zero() {
+            return Interval::singleton(1.0);
+        }
+
+        // 0^y = 0 for y > 0
+        if self.is_zero() {
+            return if rhs.is_pos() { Interval::ZERO } else { Interval::R };
+        }
+
+        let is_integer_domain = self.is_integer() && rhs.is_integer();
+
+        if self.is_pos() {
+            // Strictly positive base always yields positive results
+            if is_integer_domain && !rhs.has_neg() {
+                Interval::Z_P
+            } else {
+                Interval::R_P
+            }
+        } else if !self.has_neg() {
+            // Non-negative base [0, +inf)
+            if is_integer_domain && !rhs.has_neg() {
+                Interval::Z_NN
+            } else {
+                Interval::R_NN
+            }
+        } else {
+            // Base contains negative numbers
+            if is_integer_domain { Interval::Z } else { Interval::R }
+        }
     }
 }
 
@@ -299,11 +425,137 @@ impl Mul<Interval> for Interval {
             Universe::Real
         };
 
-        todo!()
+        if self.is_zero() || rhs.is_zero() {
+            return Interval {
+                from: Edge::Closed(Endpoint::Zero),
+                to: Edge::Closed(Endpoint::Zero),
+                over: universe,
+            };
+        }
+
+        fn edge_val(edge: Edge) -> (Endpoint, bool) {
+            match edge {
+                Edge::Closed(x) => (x, true),
+                Edge::Open(x) => (x, false),
+            }
+        }
+
+        fn mul_val(
+            a: (Endpoint, bool),
+            b: (Endpoint, bool),
+        ) -> (Endpoint, bool) {
+            if a.0 == Endpoint::Zero && a.1 {
+                return (Endpoint::Zero, true);
+            }
+            if b.0 == Endpoint::Zero && b.1 {
+                return (Endpoint::Zero, true);
+            }
+
+            let ep = match (a.0, b.0) {
+                (Endpoint::Zero, _) | (_, Endpoint::Zero) => Endpoint::Zero,
+                (Endpoint::Pos, Endpoint::Pos)
+                | (Endpoint::Neg, Endpoint::Neg) => Endpoint::Pos,
+                _ => Endpoint::Neg,
+            };
+            (ep, a.1 && b.1)
+        }
+
+        fn lower_rank(v: &(Endpoint, bool)) -> i32 {
+            match v {
+                (Endpoint::Neg, _) => 0,
+                (Endpoint::Zero, true) => 1,
+                (Endpoint::Zero, false) => 2,
+                (Endpoint::Pos, _) => 3,
+            }
+        }
+
+        fn upper_rank(v: &(Endpoint, bool)) -> i32 {
+            match v {
+                (Endpoint::Neg, _) => 0,
+                (Endpoint::Zero, false) => 1,
+                (Endpoint::Zero, true) => 2,
+                (Endpoint::Pos, _) => 3,
+            }
+        }
+
+        let p1 = mul_val(edge_val(self.from), edge_val(rhs.from));
+        let p2 = mul_val(edge_val(self.from), edge_val(rhs.to));
+        let p3 = mul_val(edge_val(self.to), edge_val(rhs.from));
+        let p4 = mul_val(edge_val(self.to), edge_val(rhs.to));
+
+        let products = [p1, p2, p3, p4];
+
+        let min_val = *products.iter().min_by_key(|&x| lower_rank(x)).unwrap();
+        let max_val = *products.iter().max_by_key(|&x| upper_rank(x)).unwrap();
+
+        let from = if min_val.1 {
+            Edge::Closed(min_val.0)
+        } else {
+            Edge::Open(min_val.0)
+        };
+        let to = if max_val.1 {
+            Edge::Closed(max_val.0)
+        } else {
+            Edge::Open(max_val.0)
+        };
+
+        Interval { from, to, over: universe }
     }
 }
 
-impl Node<Domain> {
+impl Div<Interval> for Interval {
+    type Output = Interval;
+
+    fn div(self, rhs: Interval) -> Self::Output {
+        // Approximate 1 / rhs by looking at the bounds.
+        let inv_rhs = if rhs.is_pos()
+            || (rhs.from == Edge::Closed(Endpoint::Zero)
+                && rhs.to == Edge::Open(Endpoint::Pos))
+        {
+            Interval {
+                from: Edge::Open(Endpoint::Zero),
+                to: Edge::Open(Endpoint::Pos),
+                over: Universe::Real,
+            }
+        } else if rhs.is_neg()
+            || (rhs.from == Edge::Open(Endpoint::Neg)
+                && rhs.to == Edge::Closed(Endpoint::Zero))
+        {
+            Interval {
+                from: Edge::Open(Endpoint::Neg),
+                to: Edge::Open(Endpoint::Zero),
+                over: Universe::Real,
+            }
+        } else {
+            // Covers crossing zero, or division by zero, yielding the widest possible domain.
+            Interval {
+                from: Edge::Open(Endpoint::Neg),
+                to: Edge::Open(Endpoint::Pos),
+                over: Universe::Real,
+            }
+        };
+
+        let mut result = self * inv_rhs;
+        result.over = Universe::Real;
+        result
+    }
+}
+
+impl From<i64> for Interval {
+    fn from(value: i64) -> Self {
+        Interval::singleton(value as f64)
+    }
+}
+
+impl From<f64> for Interval {
+    fn from(value: f64) -> Self {
+        Interval::singleton(value)
+    }
+}
+
+type DomainNode = Node<Domain, Domain, Matrix<Domain>, ()>;
+
+impl DomainNode {
     pub fn domain(&self) -> Domain {
         match self {
             Node::Leaf(leaf) => match leaf {
@@ -334,8 +586,8 @@ impl Node<Domain> {
                     -(u.re.sin() * u.im.sinh()),
                 ),
                 Branch::Tan(u) => {
-                    let u2_re: Interval = u.re * 2;
-                    let u2_im: Interval = u.im * 2;
+                    let u2_re: Interval = u.re * Interval::singleton(2.0);
+                    let u2_im: Interval = u.im * Interval::singleton(2.0);
 
                     Domain::new(
                         (u2_re).sin() / (u2_re.cos() + u2_im.cosh()),
@@ -354,12 +606,40 @@ impl Node<Domain> {
                 Branch::Arg(_) => Domain::REAL,
                 Branch::Conj(x) => Domain::new(x.re, -x.im),
                 Branch::Norm(_) => Domain::new(Interval::R_NN, Interval::ZERO),
-                Branch::Sign(_) => todo!(),
+                Branch::Sign(x) => Domain::new(x.re.sign(), x.im.sign()),
                 Branch::Real(x) => x.real(),
                 Branch::Imag(x) => Domain::new(x.im, Interval::ZERO),
-                Branch::Pow { base, exp } => todo!(),
-                Branch::Log { base, arg } => todo!(),
-                Branch::Atan2 { x: a, y: b } => Domain::REAL,
+                Branch::Pow { base, exp } => {
+                    let two = Interval::singleton(2.0);
+                    let euler = Interval::singleton(std::f64::consts::E);
+                    let ln_r = (base.re.pow(two) + base.im.pow(two)).ln() / two;
+                    let θ = base.re.atan2(&base.im);
+                    let a = exp.re * ln_r - exp.im * θ;
+                    let b = exp.im * ln_r + exp.re * θ;
+
+                    Domain::new(euler.pow(a) * b.cos(), euler.pow(a) * b.sin())
+                }
+                Branch::Log { base, arg } => {
+                    let two = Interval::singleton(2.0);
+
+                    let ln_z = |x: Domain| {
+                        Domain::new(
+                            (x.re.pow(two) + x.im.pow(two)).ln() / two,
+                            x.re.atan2(&x.im),
+                        )
+                    };
+
+                    let ln_arg = ln_z(*arg);
+                    let ln_base = ln_z(*base);
+
+                    let den = ln_base.re.pow(two) + ln_base.im.pow(two);
+
+                    Domain::new(
+                        (ln_arg.re * ln_base.re + ln_arg.im * ln_base.im) / den,
+                        (ln_arg.im * ln_base.re - ln_arg.re * ln_base.im) / den,
+                    )
+                }
+                Branch::Atan2 { x, y } => Domain::REAL,
                 Branch::Matrix(matrix) => matrix
                     .elements()
                     .iter()
@@ -468,8 +748,8 @@ impl Expr {
                     Branch::Conj(_) => todo!(),
                     Branch::Norm(_) => todo!(),
                     Branch::Sign(_) => todo!(),
-                    Branch::Real(_) => todo!(),
-                    Branch::Imag(_) => todo!(),
+                    Branch::Real((u_re, _)) => (u_re, ctx.zero()),
+                    Branch::Imag((_, u_im)) => (ctx.zero(), u_im),
                     Branch::Pow {
                         base: (b_re, b_im),
                         exp: (exp_re, exp_im),
@@ -484,12 +764,12 @@ impl Expr {
                             two,
                         );
 
-                        let tetha = ctx.atan2(b_re, b_im);
+                        let θ = ctx.atan2(b_re, b_im);
 
-                        let a = ctx
-                            .sub(ctx.mul(exp_re, ln_r), ctx.mul(exp_im, tetha));
-                        let b = ctx
-                            .add(ctx.mul(exp_im, ln_r), ctx.mul(exp_re, tetha));
+                        let a =
+                            ctx.sub(ctx.mul(exp_re, ln_r), ctx.mul(exp_im, θ));
+                        let b =
+                            ctx.add(ctx.mul(exp_im, ln_r), ctx.mul(exp_re, θ));
 
                         (
                             ctx.mul(ctx.pow(euler, a), ctx.cos(b)),

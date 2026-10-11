@@ -10,7 +10,7 @@ use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{
         EditContext, Expr, ExprNode, NodeId,
-        tree::{Branch, Leaf, Node},
+        dag::{Branch, Leaf, Node},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     symbol::{

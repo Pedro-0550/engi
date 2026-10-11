@@ -25,10 +25,10 @@ use crate::{
         value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
-        Expr, NodeId,
+        Expr,
+        dag::{Branch, BranchKind, Leaf, LeafKind, Matrix, Node, NodeKind},
         domain::Domain,
         shape::Shape,
-        tree::{Branch, BranchKind, Leaf, LeafKind, Node, NodeKind},
     },
     simplify::pattern::{Machine, Pattern, Program, Rule, Wildcard},
     symbol::{Symbol, constants::Constant},
@@ -46,10 +46,19 @@ mod test;
 /* --------------------------------- STRUCTS -------------------------------- */
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Default, PartialOrd, Ord)]
-pub struct ClassId(usize);
+struct ClassId(usize);
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub struct ExprId(usize);
+struct NodeId(usize);
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct LeafId(usize);
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct MatrixId(usize);
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct ConditionalId(usize);
 
 pub struct Substitution {
     bindings: AHashMap<Wildcard, ClassId>,
@@ -57,44 +66,45 @@ pub struct Substitution {
 
 #[derive(Default)]
 pub struct EquivalencyGraph {
-    cons: AHashMap<Key, ClassId>,
-    exprs: Vec<EquivalencyExpr>,
+    node_cons: AHashMap<EquivalencyNode, ClassId>,
+    nodes: Vec<EquivalencyNode>,
+
+    leaf_cons: AHashMap<Leaf, LeafId>,
+    leaves: Vec<Leaf>,
+
+    matrix_cons: AHashMap<Matrix<ClassId>, MatrixId>,
+    matrices: Vec<Matrix<ClassId>>,
+
     classes: Vec<EquivalencyClass>,
-    pending_match: Vec<ClassId>,
-    pending_fold: Vec<ClassId>,
+    worklist: Vec<ClassId>,
+    matchlist: Vec<ClassId>,
+
     root: ClassId,
 }
 
 pub struct EquivalencyClass {
-    exprs: Vec<ExprId>,
     // while this does use a bit more memory, its 12% faster over a hashmap,
     // even though a hashmap would only need to hash NodeKind which is 2 bytes..
     // I guess its done so often that its worth it, at least thats what i got from profiling
-    exprs_by_kind: [Vec<ExprId>; {
+    nodes_by_kind: [Vec<NodeId>; {
         variant_count::<LeafKind>() + variant_count::<BranchKind>()
     }],
-    // parents: Vec<ExprId>,
+    nodes: Vec<NodeId>,
     parent: Cell<ClassId>,
+    child_of: Vec<NodeId>,
+    analysis: Analysis,
+}
+
+pub struct Analysis {
     domain: Domain,
     shape: Shape,
     qty: Option<Quantity>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Key(u128);
-
-type EquivalencyNode = Node<ClassId>;
-
-#[derive(PartialEq, Clone, Eq, Hash)]
-pub enum EquivalencyNodeStructure {
-    Leaf(Leaf),
-    Branch(BranchKind),
-}
-
-#[derive(Clone, Eq)]
-pub struct EquivalencyExpr {
-    node: EquivalencyNode,
-    key: OnceCell<Key>,
+#[derive(Clone, Eq, PartialEq)]
+enum EquivalencyNode {
+    Leaf(LeafKind, LeafId),
+    Branch(Branch<ClassId, MatrixId, ConditionalId>),
 }
 
 impl EquivalencyClass {
@@ -107,34 +117,12 @@ impl EquivalencyClass {
     }
 }
 
-impl EquivalencyNodeStructure {
-    fn kind(&self) -> NodeKind {
-        match self {
-            EquivalencyNodeStructure::Leaf(leaf) => NodeKind::Leaf(leaf.kind()),
-            EquivalencyNodeStructure::Branch(b) => NodeKind::Branch(*b),
-        }
-    }
-}
-
 impl NodeKind {
     fn id(&self) -> usize {
         match self {
             NodeKind::Leaf(kind) => *kind as usize,
             NodeKind::Branch(kind) => {
                 *kind as usize + variant_count::<LeafKind>()
-            }
-        }
-    }
-}
-
-impl EquivalencyNode {
-    fn structure(&self) -> EquivalencyNodeStructure {
-        match self {
-            EquivalencyNode::Branch(branch) => {
-                EquivalencyNodeStructure::Branch(branch.kind())
-            }
-            EquivalencyNode::Leaf(leaf) => {
-                EquivalencyNodeStructure::Leaf(leaf.clone())
             }
         }
     }
@@ -208,7 +196,7 @@ impl EquivalencyGraph {
             let class_id = ClassId(self.classes.len());
             self.cons.insert(expr.key(), class_id);
 
-            // let qty = self.evaluate_expr(&expr);
+            let qty = self.evaluate_expr(&expr);
 
             let class = EquivalencyClass {
                 parent: Cell::new(class_id),
@@ -222,14 +210,28 @@ impl EquivalencyGraph {
                 }),
                 domain: self.domain(&expr),
                 shape: self.shape(&expr),
-                qty: None,
+                qty: qty.clone(),
+                child_of: vec![],
             };
 
-            self.pending_match.push(class_id);
-            self.pending_fold.push(class_id);
+            expr.node.for_each_child(|child_id| {
+                let child = self.find(*child_id);
+                self.classes[child.0].child_of.push(expr_id);
+            });
+
+            self.matchlist.push(class_id);
             self.exprs.push(expr);
             self.classes.push(class);
-            // self.pending.insert(class_id);
+
+            if let Some(ref q) = qty {
+                let qty_expr = EquivalencyExpr {
+                    node: Node::Leaf(q.clone().into()),
+                    key: OnceCell::new(),
+                };
+
+                let qty_class = self.add(qty_expr);
+                self.union(class_id, qty_class);
+            }
 
             class_id
         }
@@ -308,7 +310,7 @@ impl EquivalencyGraph {
         struct Productivity {
             merged: usize,
             matched: usize,
-            ban_length: usize = 4,
+            ban_length: usize = 8,
             banned_for: usize,
         }
 
@@ -324,7 +326,7 @@ impl EquivalencyGraph {
         loop {
             let mut matches = Vec::new();
 
-            let mut pending_match = mem::take(&mut self.pending_match);
+            let mut pending_match = mem::take(&mut self.matchlist);
 
             for pending in &mut pending_match {
                 *pending = self.find(*pending);
@@ -390,7 +392,7 @@ impl EquivalencyGraph {
 
                 if self.find(id) != self.find(found) {
                     self.union(id, found);
-                    self.pending_match.push(id);
+                    self.matchlist.push(id);
                     self.pending_fold.push(id);
 
                     prod[rule_idx].merged += 1;
@@ -432,6 +434,7 @@ impl EquivalencyGraph {
 
                     if !class.exprs.is_empty() {
                         let mut exprs = mem::take(&mut class.exprs);
+                        let mut child_of = mem::take(&mut class.child_of);
                         let mut exprs_by_kind = class
                             .exprs_by_kind
                             .each_mut()
@@ -440,6 +443,7 @@ impl EquivalencyGraph {
 
                         let parent_class = &mut self.classes[root.0];
                         parent_class.exprs.append(&mut exprs);
+                        parent_class.child_of.append(&mut child_of);
 
                         if let Some(ref parent_qty) = parent_class.qty
                             && let Some(ref new_qty) = qty
@@ -466,11 +470,15 @@ impl EquivalencyGraph {
             changed_roots.dedup();
 
             for root in changed_roots {
-                self.pending_match.push(root);
+                self.matchlist.push(root);
 
                 let class = &mut self.classes[root.0];
                 class.exprs.sort_unstable_by_key(|x| x.0);
                 class.exprs.dedup();
+
+                class.child_of.sort_unstable_by_key(|x| x.0);
+                class.child_of.dedup();
+
                 for entry in &mut class.exprs_by_kind {
                     entry.sort_unstable_by_key(|x| x.0);
                     entry.dedup();
@@ -504,7 +512,7 @@ impl EquivalencyGraph {
 
                         if changed {
                             expr.key = OnceCell::new();
-                            self.pending_match.push(id);
+                            self.matchlist.push(id);
                             self.pending_fold.push(id);
                         }
 
@@ -516,7 +524,7 @@ impl EquivalencyGraph {
 
                         if root_a != root_b {
                             self.union(root_a, root_b);
-                            self.pending_match.push(root_a);
+                            self.matchlist.push(root_a);
                             self.pending_fold.push(root_a);
 
                             converged = false;
@@ -566,7 +574,7 @@ impl EquivalencyGraph {
 
                         if new_root != qty_root {
                             self.union(new_root, qty_root);
-                            self.pending_match.push(new_root);
+                            self.matchlist.push(new_root);
                             self.pending_fold.push(new_root);
 
                             converged = false;

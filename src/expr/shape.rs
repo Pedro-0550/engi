@@ -1,7 +1,7 @@
 use std::num::NonZero;
 
-use super::tree::{Branch, Leaf, Node};
-use crate::expr::{Expr, NodeId, tree::Matrix};
+use super::dag::{Branch, Leaf, Node};
+use crate::expr::{Expr, NodeId, dag::Matrix};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Shape {

@@ -1,10 +1,10 @@
 // /* --------------------------------- MODULES -------------------------------- */
+pub mod dag;
 pub mod domain;
 pub mod fmt;
 pub mod jit;
 pub mod ops;
 pub mod shape;
-pub mod tree;
 
 use std::{
     cell::{Cell, OnceCell, RefCell},
@@ -28,8 +28,8 @@ use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 use crate::{
     core::value::Value,
     expr::{
+        dag::{Branch, BranchKind, Dag, Leaf, Node, NodeId, NodeKind},
         shape::Shape,
-        tree::{Branch, BranchKind, Leaf, Node, NodeKind},
     },
     model::Variable,
     simplify::{self, EquivalencyGraph, rules},
@@ -40,22 +40,8 @@ use crate::{
     units::{Quantity, Unit::Unitless},
 };
 
-type ExprNode = Node<NodeId>;
-
-#[derive(PartialEq, Clone, Eq, Hash, Copy)]
-pub struct NodeId(usize);
-
-#[derive(PartialEq, Clone, Eq, Hash, Copy)]
-pub struct NodeKey(u128);
-
-#[derive(PartialEq, Clone, Eq, Hash, Copy)]
-pub struct ExprKey(u128);
-
-#[derive(Eq, Clone)]
 pub struct Expr {
-    nodes: Vec<(NodeKey, ExprNode)>,
-    cons: AHashMap<NodeKey, NodeId>,
-    root: NodeId,
+    dag: Dag<NodeId>,
 }
 
 pub struct EditContext<'e> {
@@ -72,75 +58,27 @@ enum Order {
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Expr {
-    pub fn len(&self) -> usize {
-        self.nodes.len()
+    pub fn size(&self) -> usize {
+        self.dag.nodes.len()
+            + self.dag.conditions.len()
+            + self.dag.leaves.len()
+            + self.dag.matrices.len()
     }
 
     pub fn root(&self) -> NodeId {
-        self.root
+        self.dag.root
     }
 
     pub fn edit(&mut self) -> EditContext<'_> {
         EditContext { expr: Cell::new(Some(self)) }
     }
 
-    pub fn node(&self, id: NodeId) -> &ExprNode {
-        &self.nodes[id.0].1
+    pub fn node(&self, id: NodeId) -> Node<NodeId> {
+        self.dag.nodes[id]
     }
 
     pub fn as_single(&self) -> Option<&ExprNode> {
         if self.len() == 1 { Some(&self.nodes[0].1) } else { None }
-    }
-
-    pub fn key(&self, id: NodeId) -> NodeKey {
-        self.nodes[id.0].0
-    }
-
-    pub fn node_mut(&mut self, id: NodeId) -> &mut ExprNode {
-        &mut self.nodes[id.0].1
-    }
-
-    fn key_of(&self, node: &ExprNode) -> NodeKey {
-        let mut hasher = Xxh3Builder::new().with_seed(0).build();
-        match node {
-            Node::Leaf(leaf) => {
-                leaf.hash(&mut hasher);
-            }
-            Node::Branch(branch) => {
-                branch.kind().hash(&mut hasher);
-
-                match branch {
-                    Branch::Matrix(matrix) => {
-                        matrix.shape().hash(&mut hasher);
-                    }
-                    Branch::Conditional { cond, .. } => {
-                        cond.hash_structure(&mut hasher);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        node.for_each_child(|child_id| {
-            let (child_key, _) = self.nodes[child_id.0];
-            child_key.hash(&mut hasher);
-        });
-
-        NodeKey(hasher.digest128())
-    }
-
-    pub fn push(&mut self, node: ExprNode) -> NodeId {
-        let key = self.key_of(&node);
-        if let Some(&id) = self.cons.get(&key) {
-            return id;
-        }
-
-        let id = NodeId(self.nodes.len());
-
-        self.nodes.push((key, node));
-        self.cons.insert(key, id);
-
-        id
     }
 
     pub fn substituted(&self, bindings: &AHashMap<Symbol, Expr>) -> Expr {
