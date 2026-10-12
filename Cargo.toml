@@ -20,7 +20,7 @@ ahash = "*"
 cranelift = {version = "0.135", features = ["jit", "module", "native"]}
 kinded = "*"
 rayon = "*"
-smallvec = "1.16"
+arrayvec = "0.7"
 
 engi-macros = { path = "./macros" }
 
@@ -32,6 +32,11 @@ syn = { version = "3.0", features = ["full"] }
 quote = "1.0"
 proc-macro2 = "1.0"
 itertools = "0.15"
+
+[features]
+## Uses usize for expression node IDs, allowing up to 2^64 nodes on 64-bit systems, instead of the default 2^16
+## Should only be enabled if you actually need that many nodes, since larger IDs has a significant performance cost
+large_exprs = []
 
 [[bench]]
 name = "diff"

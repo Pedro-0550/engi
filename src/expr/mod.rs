@@ -14,11 +14,12 @@ use std::{
     mem,
     ops::{Add, Div, Mul, Neg, Sub},
     slice,
+    sync::mpsc::Iter,
 };
 
 use ahash::AHashMap;
 use derive_more::IsVariant;
-use faer::linalg::svd::ComputeSvdVectors::No;
+use faer::{linalg::svd::ComputeSvdVectors::No, traits::ByRef};
 use itertools::Itertools;
 use kinded::Kinded;
 use num::complex::{Complex64, c64};
@@ -26,9 +27,12 @@ use ordered_float::Pow;
 use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 
 use crate::{
-    core::value::Value,
+    core::{util::impl_as_variant, value::Value},
     expr::{
-        dag::{Branch, BranchKind, Dag, Leaf, Node, NodeId, NodeKind},
+        dag::{
+            Condition, ConditionId, Dag, Leaf, LeafId, Matrix, MatrixId,
+            Operation, OperationId,
+        },
         shape::Shape,
     },
     model::Variable,
@@ -40,9 +44,35 @@ use crate::{
     units::{Quantity, Unit::Unitless},
 };
 
+/// A mathematical expression based on a directed acryllic graph
+///
+/// An Expr is just a [`Dag`] where an `Operand::Operation` refers to an operation.
+/// In other words, a node refers to other nodes.
+///
+/// This is in contrast to an [`EquivalencyGraph`], where a node refers to a class.
+#[derive(Clone)]
 pub struct Expr {
-    dag: Dag<NodeId>,
+    dag: Dag<Operand, OperationId>,
 }
+
+/// An [`Operation`]'s operand. Can be either a leaf, a matrix, or the result of another operation.
+/// This is decoupled from the DAG because in Exprs an operand refers to either an operation, a matrix or a leaf,
+/// while in an equivalency graph it refers only to classes.
+#[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant)]
+pub enum Operand<O = OperationId, L = LeafId, M = MatrixId> {
+    Leaf(L),
+    Matrix(M),
+    Operation(O),
+}
+
+type FetchedOperand<'a> =
+    Operand<&'a Operation<Operand, ConditionId>, &'a Leaf, &'a Matrix<Operand>>;
+
+type BuiltOperand =
+    Operand<Operation<Operand, ConditionId>, Leaf, Matrix<Operand>>;
+
+type FoldedOperand<'a, T> =
+    Operand<Operation<&'a T, ()>, &'a Leaf, Matrix<&'a T>>;
 
 pub struct EditContext<'e> {
     expr: Cell<Option<&'e mut Expr>>,
@@ -51,21 +81,72 @@ pub struct EditContext<'e> {
 #[derive(Eq, Clone, Copy, PartialEq)]
 enum Order {
     Post,
-    In,
     Pre,
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl Expr {
+    pub fn fetch(&self, op: Operand) -> FetchedOperand<'_> {
+        match op {
+            Operand::Leaf(id) => Operand::Leaf(&self.dag.leaves[id]),
+            Operand::Matrix(id) => Operand::Matrix(&self.dag.matrices[id]),
+            Operand::Operation(id) => {
+                Operand::Operation(&self.dag.operations[id])
+            }
+        }
+    }
+}
+
+impl FetchedOperand<'_> {
+    // pub fn iter_children(&self) -> slice::Iter<'_, Operand> {
+    //     match self {
+    //         Operand::Leaf(_) => [].iter(),
+    //         Operand::Matrix(m) => m.elements().iter(),
+    //         Operand::Operation(op) => op.,
+    //     }
+    // }
+
+    pub fn for_each_operand(&self, f: impl FnMut(&Operand)) {
+        match self {
+            Operand::Leaf(_) => (),
+            Operand::Matrix(m) => m.elements().iter().for_each(f),
+            Operand::Operation(op) => op.for_each_operand(f),
+        }
+    }
+
+    pub fn child(&self, at: usize) -> Option<Operand> {
+        match self {
+            Operand::Leaf(_) => None,
+            Operand::Matrix(m) => m.elements().get(at).copied(),
+            Operand::Operation(op) => op.operand(at).copied(),
+        }
+    }
+}
+
+impl<O, L, M> Operand<O, L, M> {
+    pub fn as_leaf(&self) -> Option<&L> {
+        if let Self::Leaf(v) = self { Some(v) } else { None }
+    }
+
+    pub fn as_matrix(&self) -> Option<&M> {
+        if let Self::Matrix(v) = self { Some(v) } else { None }
+    }
+
+    pub fn as_operation(&self) -> Option<&O> {
+        if let Self::Operation(v) = self { Some(v) } else { None }
+    }
+}
+
+impl Expr {
     pub fn size(&self) -> usize {
-        self.dag.nodes.len()
+        self.dag.operations.len()
             + self.dag.conditions.len()
             + self.dag.leaves.len()
             + self.dag.matrices.len()
     }
 
-    pub fn root(&self) -> NodeId {
+    pub fn root(&self) -> Option<Operand> {
         self.dag.root
     }
 
@@ -73,12 +154,8 @@ impl Expr {
         EditContext { expr: Cell::new(Some(self)) }
     }
 
-    pub fn node(&self, id: NodeId) -> Node<NodeId> {
-        self.dag.nodes[id]
-    }
-
-    pub fn as_single(&self) -> Option<&ExprNode> {
-        if self.len() == 1 { Some(&self.nodes[0].1) } else { None }
+    pub fn as_single(&self) -> Option<Operand> {
+        if self.size() == 1 { self.dag.root } else { None }
     }
 
     pub fn substituted(&self, bindings: &AHashMap<Symbol, Expr>) -> Expr {
@@ -86,490 +163,265 @@ impl Expr {
             return self.clone();
         }
 
-        fn rebuild(
-            src: &Expr,
-            id: NodeId,
-            bindings: &AHashMap<Symbol, Expr>,
-            out: &mut Expr,
-            memo: &mut AHashMap<NodeId, NodeId>,
-        ) -> NodeId {
-            if let Some(&done) = memo.get(&id) {
-                return done;
+        struct RebuildContext<'a> {
+            mapped_conds: AHashMap<ConditionId, ConditionId>,
+            mapped_ops: AHashMap<Operand, Operand>,
+            bindings: &'a AHashMap<Symbol, Expr>,
+            out: Expr,
+            src: &'a Expr,
+        }
+
+        fn rebuild_condition(
+            cond: ConditionId,
+            ctx: &mut RebuildContext<'_>,
+        ) -> ConditionId {
+            if let Some(&existing) = ctx.mapped_conds.get(&cond) {
+                return existing;
             }
 
-            let new_id = match src.node(id) {
-                Node::Leaf(Leaf::Symbol(s)) if bindings.contains_key(s) => {
-                    let bound = &bindings[s];
-                    out.import(bound, bound.root())
+            let mapped = ctx.src.dag.conditions[cond].map_with(
+                ctx,
+                |ctx, op| rebuild_operand(*op, ctx),
+                |ctx, cond| rebuild_condition(*cond, ctx),
+            );
+
+            let mapped_id = ctx.out.dag.conditions.insert(mapped);
+            ctx.mapped_conds.insert(cond, mapped_id);
+
+            mapped_id
+        }
+
+        fn rebuild_operand(
+            op: Operand,
+            ctx: &mut RebuildContext<'_>,
+        ) -> Operand {
+            if let Some(&existing) = ctx.mapped_ops.get(&op) {
+                return existing;
+            }
+
+            let new_op = match op {
+                Operand::Leaf(id) => {
+                    let leaf = &ctx.src.dag.leaves[id];
+                    if let Leaf::Symbol(s) = leaf
+                        && ctx.bindings.contains_key(&s)
+                    {
+                        let bound = &ctx.bindings[&s];
+                        ctx.out.import(
+                            bound,
+                            bound.root().expect(
+                                "Cannot substitute for a rootless expression",
+                            ),
+                        )
+                    } else {
+                        Operand::Leaf(ctx.out.dag.leaves.insert(leaf.clone()))
+                    }
                 }
-                node => {
-                    let remapped = node.clone().map(&mut |child: NodeId| {
-                        rebuild(src, child, bindings, out, memo)
-                    });
-                    out.push(remapped)
+                Operand::Matrix(id) => {
+                    let mapped_matrix = ctx.src.dag.matrices[id]
+                        .map(|child| rebuild_operand(*child, ctx));
+                    Operand::Matrix(ctx.out.dag.matrices.insert(mapped_matrix))
+                }
+                Operand::Operation(id) => {
+                    let mapped_operation =
+                        ctx.src.dag.operations[id].clone().map_with(
+                            ctx,
+                            |ctx, op| rebuild_operand(*op, ctx),
+                            |ctx, cond| rebuild_condition(*cond, ctx),
+                        );
+                    Operand::Operation(
+                        ctx.out.dag.operations.insert(mapped_operation),
+                    )
                 }
             };
 
-            memo.insert(id, new_id);
-            new_id
+            ctx.mapped_ops.insert(op, new_op);
+            new_op
         }
 
-        let mut out = Expr::new();
-        let mut memo = AHashMap::new();
-        let root = rebuild(self, self.root, bindings, &mut out, &mut memo);
-        out.set_root(root);
-        out
+        let mut ctx = RebuildContext {
+            mapped_conds: AHashMap::new(),
+            mapped_ops: AHashMap::new(),
+            bindings,
+            out: Expr::new(),
+            src: &self,
+        };
+
+        let root = rebuild_operand(
+            self.root().expect("Cannot substitute for a rootless expression"),
+            &mut ctx,
+        );
+        ctx.out.set_root(root);
+        ctx.out
     }
 
-    /// Appends the given expr to the current expr, moving all of its nodes, changing IDs.
-    /// Returns the new id of the other expr's root.
-    fn append(&mut self, other: Expr) -> NodeId {
-        let mut remapped = vec![None; other.nodes.len()];
-        let mut other_nodes = other.nodes.into_iter().map(Some).collect_vec();
-        let mut stack = vec![(other.root, false)];
-
-        while let Some((id, processed)) = stack.pop() {
-            if remapped[id.0].is_some() {
-                continue;
+    pub fn push(&mut self, operand: BuiltOperand) -> Operand {
+        let op = match operand {
+            Operand::Leaf(l) => Operand::Leaf(self.dag.leaves.insert(l)),
+            Operand::Matrix(m) => Operand::Matrix(self.dag.matrices.insert(m)),
+            Operand::Operation(op) => {
+                Operand::Operation(self.dag.operations.insert(op))
             }
-
-            if processed {
-                let (_, mut node) = other_nodes[id.0].take().unwrap();
-
-                node.for_each_child_mut(|child_id| {
-                    *child_id = remapped[child_id.0].unwrap();
-                });
-
-                let new_id = self.push(node);
-                remapped[id.0] = Some(new_id);
-            } else {
-                stack.push((id, true));
-
-                if let Some((_, node)) = &other_nodes[id.0] {
-                    node.for_each_child(|child| {
-                        if remapped[child.0].is_none() {
-                            stack.push((*child, false));
-                        }
-                    });
-                }
-            }
-        }
-
-        remapped[other.root.0].unwrap()
+        };
+        op
     }
 
-    pub fn push_root(&mut self, new_root: ExprNode) -> NodeId {
-        let root = self.push(new_root);
-        self.root = root;
-        root
+    pub fn push_root(&mut self, new_root: BuiltOperand) -> Operand {
+        let op = self.push(new_root);
+        self.dag.root = Some(op);
+        op
     }
 
-    pub fn set_root(&mut self, new_root: NodeId) {
-        self.root = new_root;
+    pub fn set_root(&mut self, new_root: Operand) {
+        self.dag.root = Some(new_root);
     }
 
-    fn dfs(&self, order: Order) -> Vec<NodeId> {
-        let mut visit = Vec::with_capacity(self.nodes.len());
+    fn dfs(&self, order: Order) -> Vec<Operand> {
+        let mut visit = Vec::with_capacity(self.size());
 
         fn dfs_inner<'e>(
             expr: &'e Expr,
-            current: NodeId,
-            into: &mut Vec<NodeId>,
+            current: Operand,
+            into: &mut Vec<Operand>,
             order: &Order,
         ) {
-            let node = &expr.nodes[current.0].1;
-
             if *order == Order::Pre {
                 into.push(current);
             }
 
-            if *order == Order::In {
-                let children = node.children();
-                match (children.get(0), children.get(1)) {
-                    (Some(left), Some(right)) => {
-                        dfs_inner(expr, **left, into, order);
-                        into.push(current);
-                        dfs_inner(expr, **right, into, order);
-                    }
-                    (Some(child), None) => {
-                        into.push(current);
-                        dfs_inner(expr, **child, into, order);
-                    }
-                    (None, _) => {
-                        into.push(current);
-                    }
-                }
-            } else {
-                node.for_each_child(|child| {
-                    dfs_inner(expr, *child, into, order);
-                });
-            }
+            expr.fetch(current).for_each_operand(|child| {
+                dfs_inner(expr, *child, into, order);
+            });
 
             if *order == Order::Post {
                 into.push(current);
             }
         }
 
-        dfs_inner(self, self.root, &mut visit, &order);
+        dfs_inner(
+            self,
+            self.root().expect("Cannot DFS-traverse a rootless expression"),
+            &mut visit,
+            &order,
+        );
         visit
     }
 
     pub fn fold<T: Clone>(
         &self,
-        f: impl FnMut(NodeId, &Node<NodeId>, Node<T>) -> T,
+        f: impl FnMut(Operand, FoldedOperand<'_, T>) -> T,
     ) -> T {
-        self.fold_from(self.root, f)
+        self.fold_from(
+            self.root().expect("Cannot fold root of a rootless expression"),
+            f,
+        )
     }
 
     pub fn fold_from<T: Clone>(
         &self,
-        root: NodeId,
-        mut f: impl FnMut(NodeId, &Node<NodeId>, Node<T>) -> T,
+        root: Operand,
+        mut f: impl FnMut(Operand, FoldedOperand<'_, T>) -> T,
     ) -> T {
-        let mut mapped = AHashMap::<NodeId, T>::with_capacity(self.nodes.len());
+        let mut mapped = AHashMap::<Operand, T>::with_capacity(self.size());
 
-        for id in self.dfs(Order::Post) {
-            if mapped.contains_key(&id) {
+        for op in self.dfs(Order::Post) {
+            if mapped.contains_key(&op) {
                 continue;
             }
 
-            let node = self.node(id);
-
-            let mapped_node = match node {
-                Node::Leaf(leaf) => Node::Leaf(leaf.clone()),
-                Node::Branch(_) => node.clone().map(&mut |child_id: NodeId| {
-                    mapped.get(&child_id).unwrap().clone()
-                }),
+            let mapped_node = match self.fetch(op) {
+                Operand::Leaf(l) => Operand::Leaf(l),
+                Operand::Matrix(m) => {
+                    Operand::Matrix(m.map(|el| mapped.get(el).unwrap()))
+                }
+                Operand::Operation(op) => Operand::Operation(
+                    op.map(|child| mapped.get(child).unwrap(), |_| ()),
+                ),
             };
 
-            let result = f(id, node, mapped_node);
-            mapped.insert(id, result);
+            let result = f(op, mapped_node);
+            mapped.insert(op, result);
         }
 
         mapped.remove(&root).expect("root node should be folded")
     }
 
-    /// Imports an entire node's subtree from another expr, mapping IDs appropriately
-    pub fn import(&mut self, src: &Expr, src_id: NodeId) -> NodeId {
-        let mut cache = AHashMap::new();
+    /// Imports an entire operand's subtree from another Expr, mapping Ids appropriately
+    pub fn import(&mut self, src: &Expr, src_id: Operand) -> Operand {
+        struct ImportContext<'a> {
+            dest: &'a mut Expr,
+            src: &'a Expr,
+            mapped_ops: AHashMap<Operand, Operand>,
+            mapped_conds: AHashMap<ConditionId, ConditionId>,
+        }
 
-        fn import_inner(
-            expr: &mut Expr,
-            src: &Expr,
-            src_id: NodeId,
-            mapped: &mut AHashMap<NodeId, NodeId>,
-        ) -> NodeId {
-            if let Some(&remapped) = mapped.get(&src_id) {
-                return remapped;
+        fn import_condition(
+            src_id: ConditionId,
+            ctx: &mut ImportContext<'_>,
+        ) -> ConditionId {
+            if let Some(&existing) = ctx.mapped_conds.get(&src_id) {
+                return existing;
             }
 
-            let remapped_node =
-                src.node(src_id).clone().map(&mut |child: NodeId| {
-                    import_inner(expr, src, child, mapped)
-                });
+            let mapped = ctx.src.dag.conditions[src_id].map_with(
+                ctx,
+                |ctx, op| import_operand(*op, ctx),
+                |ctx, cond| import_condition(*cond, ctx),
+            );
 
-            let new_id = expr.push(remapped_node);
-            mapped.insert(src_id, new_id);
-            new_id
+            let mapped_id = ctx.dest.dag.conditions.insert(mapped);
+            ctx.mapped_conds.insert(src_id, mapped_id);
+
+            mapped_id
         }
 
-        import_inner(self, src, src_id, &mut cache)
-    }
+        fn import_operand(
+            src_op: Operand,
+            ctx: &mut ImportContext<'_>,
+        ) -> Operand {
+            if let Some(&mapped) = ctx.mapped_ops.get(&src_op) {
+                return mapped;
+            }
 
-    // /// Folds values in branches by evaluating them as much as possible
-    // pub fn folded(&self) -> Self {
-    //     #[derive(Clone)]
-    //     struct Accumulated {
-    //         value: Option<Value>,
-    //         symbolic: Vec<NodeId>,
-    //     }
-
-    //     fn identity(kind: BranchKind) -> Value {
-    //         match kind {
-    //             BranchKind::Add => Value::ZERO,
-    //             BranchKind::Mul => Value::ONE,
-    //             BranchKind::Max => {
-    //                 c64(f64::NEG_INFINITY, f64::NEG_INFINITY).into()
-    //             }
-    //             BranchKind::Min => c64(f64::INFINITY, f64::INFINITY).into(),
-    //             _ => unreachable!(),
-    //         }
-    //     }
-
-    //     impl Accumulated {
-    //         fn into_value(self) -> Option<Value> {
-    //             if self.symbolic.is_empty() { self.value } else { None }
-    //         }
-
-    //         fn value(v: Value) -> Self {
-    //             Self { symbolic: vec![], value: Some(v) }
-    //         }
-
-    //         fn symbolic(node: NodeId) -> Self {
-    //             Self { symbolic: vec![node], value: None }
-    //         }
-
-    //         fn build(self, op: BranchKind, into: &mut Expr) -> NodeId {
-    //             let mut iter = self.symbolic.iter().copied();
-    //             let init = self
-    //                 .value
-    //                 .map(|x| into.push(x.into()))
-    //                 .or_else(|| iter.next())
-    //                 .unwrap();
-
-    //             iter.fold(init, |acc, v| match op {
-    //                 BranchKind::Add => into.edit().add(acc, v),
-    //                 BranchKind::Mul => into.edit().mul(acc, v),
-    //                 BranchKind::Min => into.edit().min(acc, v),
-    //                 BranchKind::Max => into.edit().max(acc, v),
-    //                 _ => unreachable!(),
-    //             })
-    //         }
-
-    //         fn fold_binary(
-    //             a: Accumulated,
-    //             b: Accumulated,
-    //             kind: BranchKind,
-    //         ) -> Self {
-    //             Accumulated {
-    //                 value: {
-    //                     let a = a.value;
-    //                     let b = b.value;
-
-    //                     if a.is_none() && b.is_none() {
-    //                         None
-    //                     } else {
-    //                         Some(a.iter().chain(b.iter()).fold(
-    //                             identity(kind),
-    //                             |acc, v| match kind {
-    //                                 BranchKind::Add => acc + v,
-    //                                 BranchKind::Mul => acc * v,
-    //                                 BranchKind::Max | BranchKind::Min => {
-    //                                     let acc = acc.as_scalar().unwrap();
-    //                                     let v = v.as_scalar().unwrap();
-
-    //                                     if kind == BranchKind::Max {
-    //                                         Complex64 {
-    //                                             re: acc.re.max(v.re),
-    //                                             im: acc.im.max(v.im),
-    //                                         }
-    //                                     } else {
-    //                                         Complex64 {
-    //                                             re: acc.re.min(v.re),
-    //                                             im: acc.im.min(v.im),
-    //                                         }
-    //                                     }
-    //                                     .into()
-    //                                 }
-    //                                 _ => unreachable!(),
-    //                             },
-    //                         ))
-    //                     }
-    //                 },
-    //                 symbolic: [a.symbolic, b.symbolic].concat(),
-    //             }
-    //         }
-    //     }
-
-    //     let mut new_expr = Expr::new();
-
-    //     let acc =
-    //         self.fold(&mut |id, old: &Node<NodeId>, new: Node<Accumulated>| {
-    //             match new {
-    //                 Node::Leaf(leaf) => match leaf {
-    //                     Leaf::Quantity(quantity) => {
-    //                         Accumulated::value(quantity.into_value())
-    //                     }
-    //                     _ => {
-    //                         let new_id = new_expr.push(old.clone());
-    //                         Accumulated::symbolic(new_id)
-    //                     }
-    //                 },
-    //                 Node::Branch(branch) => {
-    //                     let branch_kind = branch.kind();
-
-    //                     match branch {
-    //                         Branch::Add(children)
-    //                         | Branch::Mul(children)
-    //                         | Branch::Max(children)
-    //                         | Branch::Min(children) => {
-    //                             let this_node = self.node(id);
-    //                             let [mut a_acc, mut b_acc] = children;
-    //                             let [a_id, b_id] = *old.children() else {
-    //                                 unreachable!()
-    //                             };
-
-    //                             // There is no order for complex numbers (although we still allow them elementwise), matrices, and sets
-    //                             if this_node
-    //                                 .as_branch()
-    //                                 .is_some_and(|b| b.is_max() || b.is_min())
-    //                                 && !(a_acc
-    //                                     .value
-    //                                     .as_ref()
-    //                                     .is_none_or(|v| v.is_scalar())
-    //                                     && b_acc
-    //                                         .value
-    //                                         .as_ref()
-    //                                         .is_none_or(|v| v.is_scalar()))
-    //                             {
-    //                                 let new_id = new_expr.push(old.clone());
-    //                                 return Accumulated::symbolic(new_id);
-    //                             }
-
-    //                             let a_node = self.node(*a_id);
-    //                             let b_node = self.node(*b_id);
-
-    //                             let foldable_a = a_node.kind()
-    //                                 == this_node.kind()
-    //                                 || a_node.is_leaf();
-    //                             let foldable_b = b_node.kind()
-    //                                 == this_node.kind()
-    //                                 || b_node.is_leaf();
-
-    //                             if foldable_a && foldable_b {
-    //                                 Accumulated::fold_binary(
-    //                                     a_acc,
-    //                                     b_acc,
-    //                                     branch_kind,
-    //                                 )
-    //                             } else if foldable_a {
-    //                                 let b_kind =
-    //                                     b_node.as_branch().unwrap().kind();
-    //                                 let new_b_id =
-    //                                     b_acc.build(b_kind, &mut new_expr);
-
-    //                                 a_acc.symbolic.push(new_b_id);
-    //                                 Accumulated::symbolic(
-    //                                     a_acc.build(branch_kind, &mut new_expr),
-    //                                 )
-    //                             } else if foldable_b {
-    //                                 let a_kind =
-    //                                     a_node.as_branch().unwrap().kind();
-    //                                 let new_a_id =
-    //                                     a_acc.build(a_kind, &mut new_expr);
-
-    //                                 b_acc.symbolic.push(new_a_id);
-    //                                 Accumulated::symbolic(
-    //                                     b_acc.build(branch_kind, &mut new_expr),
-    //                                 )
-    //                             } else {
-    //                                 let a_kind =
-    //                                     a_node.as_branch().unwrap().kind();
-    //                                 let b_kind =
-    //                                     b_node.as_branch().unwrap().kind();
-
-    //                                 let new_a_id =
-    //                                     a_acc.build(a_kind, &mut new_expr);
-    //                                 let new_b_id =
-    //                                     b_acc.build(b_kind, &mut new_expr);
-
-    //                                 let curr_acc = Accumulated {
-    //                                     value: None,
-    //                                     symbolic: vec![new_a_id, new_b_id],
-    //                                 };
-
-    //                                 Accumulated::symbolic(
-    //                                     curr_acc
-    //                                         .build(branch_kind, &mut new_expr),
-    //                                 )
-    //                             }
-    //                         }
-    //                         Branch::Pow { base, exp } => {
-    //                             if let Some(base) = base.into_value()
-    //                                 && let Some(exp) = exp.into_value()
-    //                             {
-    //                                 Accumulated::value(base.pow(exp))
-    //                             } else {
-    //                                 Accumulated::symbolic(
-    //                                     new_expr.import(self, id),
-    //                                 )
-    //                             }
-    //                         }
-    //                         Branch::Log { base, arg } => {
-    //                             if let Some(base) = base.into_value()
-    //                                 && let Some(arg) = arg.into_value()
-    //                             {
-    //                                 Accumulated::value(arg.ln() / base.ln())
-    //                             } else {
-    //                                 Accumulated::symbolic(
-    //                                     new_expr.import(self, id),
-    //                                 )
-    //                             }
-    //                         }
-
-    //                         _ => {
-    //                             Accumulated::symbolic(new_expr.import(self, id))
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         });
-
-    //     let root_node = self.node(self.root());
-    //     let root_id = match root_node {
-    //         Node::Branch(b)
-    //             if matches!(
-    //                 b.kind(),
-    //                 BranchKind::Add
-    //                     | BranchKind::Mul
-    //                     | BranchKind::Min
-    //                     | BranchKind::Max
-    //             ) =>
-    //         {
-    //             acc.build(b.kind(), &mut new_expr)
-    //         }
-    //         _ => {
-    //             if let Some(v) = acc.value {
-    //                 new_expr.push(v.into())
-    //             } else {
-    //                 assert_eq!(
-    //                     acc.symbolic.len(),
-    //                     1,
-    //                     "Expected exactly 1 symbolic root node"
-    //                 );
-    //                 acc.symbolic[0]
-    //             }
-    //         }
-    //     };
-
-    //     new_expr.set_root(root_id);
-    //     new_expr
-    // }
-
-    pub fn normalize(&mut self) {
-        for id in self.dfs(Order::Post) {
-            let _ = try {
-                let branch = self.node(id).as_branch()?;
-                let [a, b] = branch.as_binary()?;
-
-                // Multiplicative commutativity rule
-                if branch.is_mul()
-                    && !self.shape_of(*a).is_scalar()
-                    && !self.shape_of(*b).is_scalar()
-                {
-                    continue;
+            let mapped_op = match ctx.src.fetch(src_op) {
+                Operand::Leaf(l) => {
+                    Operand::Leaf(ctx.dest.dag.leaves.insert(l.clone()))
                 }
-
-                if self.key(*b).0 > self.key(*a).0 {
-                    let [a, b] =
-                        self.node_mut(id).as_branch_mut()?.as_binary_mut()?;
-
-                    mem::swap(a, b);
-                    let new_key = self.key_of(self.node(id));
-                    self.nodes[id.0].0 = new_key;
-                    self.cons.insert(new_key, id);
-                    // We keep the old key because why not, its the same thing anyway
+                Operand::Matrix(mat) => {
+                    let mapped_matrix = mat.map(|op| import_operand(*op, ctx));
+                    Operand::Matrix(ctx.dest.dag.matrices.insert(mapped_matrix))
+                }
+                Operand::Operation(op) => {
+                    let mapped_operation = op.map_with(
+                        ctx,
+                        |ctx, op| import_operand(*op, ctx),
+                        |ctx, cond| import_condition(*cond, ctx),
+                    );
+                    Operand::Operation(
+                        ctx.dest.dag.operations.insert(mapped_operation),
+                    )
                 }
             };
+
+            ctx.mapped_ops.insert(src_op, mapped_op);
+            mapped_op
         }
+
+        let mut ctx = ImportContext {
+            dest: self,
+            mapped_conds: AHashMap::new(),
+            mapped_ops: AHashMap::new(),
+            src,
+        };
+
+        import_operand(src_id, &mut ctx)
     }
 
     pub fn new() -> Self {
-        Self { cons: AHashMap::new(), nodes: Vec::new(), root: NodeId(0) }
+        Self { dag: Dag::new() }
     }
 
     pub fn symbols(&self) -> impl Iterator<Item = Symbol> {
-        self.nodes.iter().filter_map(|x| x.1.as_leaf()?.as_symbol().copied())
+        self.dag.leaves.iter().filter_map(|x| x.as_symbol().copied())
     }
 
     pub fn simplified(&self) -> Expr {
@@ -579,17 +431,17 @@ impl Expr {
     }
 }
 
-impl PartialEq for Expr {
-    fn eq(&self, other: &Self) -> bool {
-        self.nodes[self.root.0].0 == other.nodes[other.root.0].0
-    }
-}
+// impl PartialEq for Expr {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.nodes[self.root.0].0 == other.nodes[other.root.0].0
+//     }
+// }
 
-impl Hash for Expr {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.nodes[self.root.0].0.hash(state);
-    }
-}
+// impl Hash for Expr {
+//     fn hash<H: Hasher>(&self, state: &mut H) {
+//         self.nodes[self.root.0].0.hash(state);
+//     }
+// }
 
 /* -------------------------------------------------------------------------- */
 
@@ -597,9 +449,9 @@ impl Mul<Expr> for Expr {
     type Output = Expr;
 
     fn mul(mut self, rhs: Expr) -> Self::Output {
-        let a_id = self.root();
-        let b_id = self.append(rhs);
-        self.push_root(Node::Branch(Branch::Mul([a_id, b_id])));
+        let a_id = self.root().unwrap();
+        let b_id = self.import(&rhs, rhs.root().unwrap());
+        self.push_root(Operand::Operation(Operation::Mul([a_id, b_id])));
         self
     }
 }
@@ -608,9 +460,9 @@ impl Add<Expr> for Expr {
     type Output = Expr;
 
     fn add(mut self, rhs: Expr) -> Self::Output {
-        let a_id = self.root();
-        let b_id = self.append(rhs);
-        self.push_root(Node::Branch(Branch::Add([a_id, b_id])));
+        let a_id = self.root().unwrap();
+        let b_id = self.import(&rhs, rhs.root().unwrap());
+        self.push_root(Operand::Operation(Operation::Add([a_id, b_id])));
         self
     }
 }
@@ -635,9 +487,9 @@ impl Pow<Expr> for Expr {
     type Output = Expr;
 
     fn pow(mut self, exp: Expr) -> Self::Output {
-        let base = self.root();
-        let exp = self.append(exp);
-        self.push_root(Node::Branch(Branch::Pow { base, exp }));
+        let base = self.root().unwrap();
+        let exp = self.import(&exp, exp.root().unwrap());
+        self.push_root(Operand::Operation(Operation::Pow { base, exp }));
         self
     }
 }
@@ -649,7 +501,9 @@ macro_rules! impl_unary_fn {
         pub fn $fn(x: impl Into<Expr>) -> Expr {
             let mut expr = x.into();
 
-            expr.push_root(Node::Branch(Branch::$variant(expr.root())));
+            expr.push_root(Operand::Operation(Operation::$variant(
+                expr.root().unwrap(),
+            )));
             expr
         }
     };
@@ -665,7 +519,9 @@ macro_rules! impl_unary_fn {
                 $name
             );
 
-            expr.push_root(Node::Branch(Branch::$variant(expr.root())));
+            expr.push_root(Operand::Operation(Operation::$variant(
+                expr.root().unwrap(),
+            )));
             expr
         }
     };
@@ -710,10 +566,10 @@ pub fn atan2(x: impl Into<Expr>, y: impl Into<Expr>) -> Expr {
         "atan2 is only defined for scalars"
     );
 
-    let x = expr.root();
-    let y = expr.append(y);
+    let x = expr.root().unwrap();
+    let y = expr.import(&y, y.root().unwrap());
 
-    expr.push_root(Node::Branch(Branch::Atan2 { x, y }));
+    expr.push_root(Operand::Operation(Operation::Atan2 { x, y }));
     expr
 }
 
@@ -732,10 +588,10 @@ pub fn log(base: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
     );
 
     let mut expr = base;
-    let base = expr.root();
-    let x = expr.append(x);
+    let base = expr.root().unwrap();
+    let x = expr.import(&x, x.root().unwrap());
 
-    expr.push_root(Node::Branch(Branch::Log { base, arg: x }));
+    expr.push_root(Operand::Operation(Operation::Log { base, arg: x }));
 
     expr
 }

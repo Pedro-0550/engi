@@ -3,17 +3,13 @@ use std::ops::{Add, Div, Mul, Sub};
 use float_eq::FloatEq;
 use num::{Complex, bigint::Sign};
 use ordered_float::Pow;
-use smallvec::SmallVec;
 
-use super::{
-    Node,
-    dag::{Branch, Leaf},
-};
+use super::dag::Leaf;
 use crate::{
     core::value::EQ_ABS_TOL,
     expr::{
-        Expr, NodeId,
-        dag::{Conditional, Matrix},
+        Expr, FoldedOperand, Operand, OperationId,
+        dag::{Matrix, Operation},
         domain::Endpoint::{Neg, Pos, Zero},
     },
     symbol::constants::e,
@@ -50,8 +46,6 @@ pub enum Numeric {
     Imag,
     Complex,
 }
-
-pub struct Set(SmallVec<[Interval; 3]>);
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct Domain {
@@ -553,39 +547,44 @@ impl From<f64> for Interval {
     }
 }
 
-type DomainNode = Node<Domain, Domain, Matrix<Domain>, ()>;
-
-impl DomainNode {
+impl FoldedOperand<'_, Domain> {
     pub fn domain(&self) -> Domain {
         match self {
-            Node::Leaf(leaf) => match leaf {
+            Operand::Leaf(leaf) => match leaf {
                 Leaf::Symbol(symbol) => symbol.domain(),
                 Leaf::Constant(constant) => {
                     constant.quantity().value().domain()
                 }
                 Leaf::Quantity(quantity) => quantity.value().domain(),
             },
-            Node::Branch(branch) => match branch {
-                Branch::Add([a, b]) => Domain::new(a.re + b.re, a.im + b.im),
-                Branch::Mul([a, b]) => Domain::new(
+            Operand::Matrix(mat) => mat
+                .elements()
+                .iter()
+                .copied()
+                .copied()
+                .reduce(|a, b| Domain::new(a.re.union(b.re), a.im.union(b.im)))
+                .unwrap(),
+            Operand::Operation(op) => match op {
+                Operation::Add([a, b]) => Domain::new(a.re + b.re, a.im + b.im),
+                Operation::Mul([a, b]) => Domain::new(
                     a.re * b.re - a.im * b.im,
                     a.re * b.im + a.im * b.re,
                 ),
-                Branch::Min([a, b]) => {
+                Operation::Min([a, b]) => {
                     Domain::new(a.re.min(b.re), a.im.min(b.im))
                 }
-                Branch::Max([a, b]) => {
+                Operation::Max([a, b]) => {
                     Domain::new(a.re.max(b.re), a.im.max(b.im))
                 }
-                Branch::Sin(u) => Domain::new(
+                Operation::Sin(u) => Domain::new(
                     u.re.sin() * u.im.cosh(),
                     u.re.cos() * u.im.sinh(),
                 ),
-                Branch::Cos(u) => Domain::new(
+                Operation::Cos(u) => Domain::new(
                     u.re.cos() * u.im.cosh(),
                     -(u.re.sin() * u.im.sinh()),
                 ),
-                Branch::Tan(u) => {
+                Operation::Tan(u) => {
                     let u2_re: Interval = u.re * Interval::singleton(2.0);
                     let u2_im: Interval = u.im * Interval::singleton(2.0);
 
@@ -594,22 +593,24 @@ impl DomainNode {
                         (u2_im).sinh() / (u2_re.cos() + u2_im.cosh()),
                     )
                 }
-                Branch::Asin(_) => todo!(),
-                Branch::Acos(_) => todo!(),
-                Branch::Atan(_) => todo!(),
-                Branch::Sinh(_) => todo!(),
-                Branch::Cosh(_) => todo!(),
-                Branch::Tanh(_) => todo!(),
-                Branch::Asinh(_) => todo!(),
-                Branch::Acosh(_) => todo!(),
-                Branch::Atanh(_) => todo!(),
-                Branch::Arg(_) => Domain::REAL,
-                Branch::Conj(x) => Domain::new(x.re, -x.im),
-                Branch::Norm(_) => Domain::new(Interval::R_NN, Interval::ZERO),
-                Branch::Sign(x) => Domain::new(x.re.sign(), x.im.sign()),
-                Branch::Real(x) => x.real(),
-                Branch::Imag(x) => Domain::new(x.im, Interval::ZERO),
-                Branch::Pow { base, exp } => {
+                Operation::Asin(_) => todo!(),
+                Operation::Acos(_) => todo!(),
+                Operation::Atan(_) => todo!(),
+                Operation::Sinh(_) => todo!(),
+                Operation::Cosh(_) => todo!(),
+                Operation::Tanh(_) => todo!(),
+                Operation::Asinh(_) => todo!(),
+                Operation::Acosh(_) => todo!(),
+                Operation::Atanh(_) => todo!(),
+                Operation::Arg(_) => Domain::REAL,
+                Operation::Conj(x) => Domain::new(x.re, -x.im),
+                Operation::Norm(_) => {
+                    Domain::new(Interval::R_NN, Interval::ZERO)
+                }
+                Operation::Sign(x) => Domain::new(x.re.sign(), x.im.sign()),
+                Operation::Real(x) => x.real(),
+                Operation::Imag(x) => Domain::new(x.im, Interval::ZERO),
+                Operation::Pow { base, exp } => {
                     let two = Interval::singleton(2.0);
                     let euler = Interval::singleton(std::f64::consts::E);
                     let ln_r = (base.re.pow(two) + base.im.pow(two)).ln() / two;
@@ -619,7 +620,7 @@ impl DomainNode {
 
                     Domain::new(euler.pow(a) * b.cos(), euler.pow(a) * b.sin())
                 }
-                Branch::Log { base, arg } => {
+                Operation::Log { base, arg } => {
                     let two = Interval::singleton(2.0);
 
                     let ln_z = |x: Domain| {
@@ -629,8 +630,8 @@ impl DomainNode {
                         )
                     };
 
-                    let ln_arg = ln_z(*arg);
-                    let ln_base = ln_z(*base);
+                    let ln_arg = ln_z(**arg);
+                    let ln_base = ln_z(**base);
 
                     let den = ln_base.re.pow(two) + ln_base.im.pow(two);
 
@@ -639,20 +640,12 @@ impl DomainNode {
                         (ln_arg.im * ln_base.re - ln_arg.re * ln_base.im) / den,
                     )
                 }
-                Branch::Atan2 { x, y } => Domain::REAL,
-                Branch::Matrix(matrix) => matrix
-                    .elements()
-                    .iter()
-                    .copied()
-                    .reduce(|a, b| {
-                        Domain::new(a.re.union(b.re), a.im.union(b.im))
-                    })
-                    .unwrap(),
-                Branch::Transpose(x) => *x,
-                Branch::Det(_) => todo!(),
-                Branch::Rank(_) => todo!(),
-                Branch::Trace(_) => todo!(),
-                Branch::Conditional { pass, fail, .. } => {
+                Operation::Atan2 { x, y } => Domain::REAL,
+                Operation::Transpose(x) => **x,
+                Operation::Det(_) => todo!(),
+                Operation::Rank(_) => todo!(),
+                Operation::Trace(_) => todo!(),
+                Operation::Conditional { pass, fail, .. } => {
                     Domain::new(pass.re.union(fail.re), pass.im.union(fail.im))
                 }
             },
@@ -663,22 +656,23 @@ impl DomainNode {
 impl Expr {
     /// Returns the domain of this expression.
     /// The possible values of this expression are guaranteed to be contained in its domain, but are not required to cover all of it.
-    pub fn domain_of(&self, node: NodeId) -> Domain {
-        self.fold_from(node, |_, _, node: Node<Domain>| node.domain())
+    pub fn domain_of(&self, op: Operand) -> Domain {
+        self.fold_from(op, |_, op: FoldedOperand<'_, Domain>| op.domain())
     }
 
     pub fn domain(&self) -> Domain {
-        self.domain_of(self.root)
+        self.domain_of(self.root().unwrap())
     }
 
     pub fn realize(&self) -> Realized {
         let mut working = Expr::new();
 
-        let (re_id, im_id) = self.fold(|_, old, node| {
+        let (re_id, im_id) = self.fold(|old, folded| {
+            let old = self.fetch(old);
             let ctx = working.edit();
 
-            match node {
-                Node::Leaf(leaf) => match leaf {
+            match folded {
+                Operand::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => (
                         symbol
                             .real()
@@ -698,31 +692,31 @@ impl Expr {
                         (ctx.qty(re_qty), ctx.qty(im_qty))
                     }
                 },
-                Node::Branch(branch) => match branch {
-                    Branch::Add([(a_re, a_im), (b_re, b_im)]) => {
-                        (ctx.add(a_re, b_re), ctx.add(a_im, b_im))
+                Operand::Operation(operation) => match operation {
+                    Operation::Add([(a_re, a_im), (b_re, b_im)]) => {
+                        (ctx.add(*a_re, *b_re), ctx.add(*a_im, *b_im))
                     }
-                    Branch::Mul([(a_re, a_im), (b_re, b_im)]) => (
-                        ctx.sub(ctx.mul(a_re, b_re), ctx.mul(a_im, b_im)),
-                        ctx.add(ctx.mul(a_re, b_im), ctx.mul(a_im, b_re)),
+                    Operation::Mul([(a_re, a_im), (b_re, b_im)]) => (
+                        ctx.sub(ctx.mul(*a_re, *b_re), ctx.mul(*a_im, *b_im)),
+                        ctx.add(ctx.mul(*a_re, *b_im), ctx.mul(*a_im, *b_re)),
                     ),
-                    Branch::Min([(a_re, a_im), (b_re, b_im)]) => {
-                        (ctx.min(a_re, b_re), ctx.min(a_im, b_im))
+                    Operation::Min([(a_re, a_im), (b_re, b_im)]) => {
+                        (ctx.min(*a_re, *b_re), ctx.min(*a_im, *b_im))
                     }
-                    Branch::Max([(a_re, a_im), (b_re, b_im)]) => {
-                        (ctx.max(a_re, b_re), ctx.max(a_im, b_im))
+                    Operation::Max([(a_re, a_im), (b_re, b_im)]) => {
+                        (ctx.max(*a_re, *b_re), ctx.max(*a_im, *b_im))
                     }
-                    Branch::Sin((u_re, u_im)) => (
-                        ctx.mul(ctx.sin(u_re), ctx.cosh(u_im)),
-                        ctx.mul(ctx.cos(u_re), ctx.sinh(u_im)),
+                    Operation::Sin((u_re, u_im)) => (
+                        ctx.mul(ctx.sin(*u_re), ctx.cosh(*u_im)),
+                        ctx.mul(ctx.cos(*u_re), ctx.sinh(*u_im)),
                     ),
-                    Branch::Cos((u_re, u_im)) => (
-                        ctx.mul(ctx.cos(u_re), ctx.cosh(u_im)),
-                        ctx.neg(ctx.mul(ctx.sin(u_re), ctx.sinh(u_im))),
+                    Operation::Cos((u_re, u_im)) => (
+                        ctx.mul(ctx.cos(*u_re), ctx.cosh(*u_im)),
+                        ctx.neg(ctx.mul(ctx.sin(*u_re), ctx.sinh(*u_im))),
                     ),
-                    Branch::Tan((u_re, u_im)) => {
-                        let u2_re = ctx.mul(ctx.qty(2), u_re);
-                        let u2_im = ctx.mul(ctx.qty(2), u_im);
+                    Operation::Tan((u_re, u_im)) => {
+                        let u2_re = ctx.mul(ctx.qty(2), *u_re);
+                        let u2_im = ctx.mul(ctx.qty(2), *u_im);
 
                         (
                             ctx.div(
@@ -735,22 +729,22 @@ impl Expr {
                             ),
                         )
                     }
-                    Branch::Asin(_) => todo!(),
-                    Branch::Acos(_) => todo!(),
-                    Branch::Atan(_) => todo!(),
-                    Branch::Sinh(_) => todo!(),
-                    Branch::Cosh(_) => todo!(),
-                    Branch::Tanh(_) => todo!(),
-                    Branch::Asinh(_) => todo!(),
-                    Branch::Acosh(_) => todo!(),
-                    Branch::Atanh(_) => todo!(),
-                    Branch::Arg(_) => todo!(),
-                    Branch::Conj(_) => todo!(),
-                    Branch::Norm(_) => todo!(),
-                    Branch::Sign(_) => todo!(),
-                    Branch::Real((u_re, _)) => (u_re, ctx.zero()),
-                    Branch::Imag((_, u_im)) => (ctx.zero(), u_im),
-                    Branch::Pow {
+                    Operation::Asin(_) => todo!(),
+                    Operation::Acos(_) => todo!(),
+                    Operation::Atan(_) => todo!(),
+                    Operation::Sinh(_) => todo!(),
+                    Operation::Cosh(_) => todo!(),
+                    Operation::Tanh(_) => todo!(),
+                    Operation::Asinh(_) => todo!(),
+                    Operation::Acosh(_) => todo!(),
+                    Operation::Atanh(_) => todo!(),
+                    Operation::Arg(_) => todo!(),
+                    Operation::Conj(_) => todo!(),
+                    Operation::Norm(_) => todo!(),
+                    Operation::Sign(_) => todo!(),
+                    Operation::Real((u_re, _)) => (*u_re, ctx.zero()),
+                    Operation::Imag((_, u_im)) => (ctx.zero(), *u_im),
+                    Operation::Pow {
                         base: (b_re, b_im),
                         exp: (exp_re, exp_im),
                     } => {
@@ -758,44 +752,43 @@ impl Expr {
                         let euler = ctx.constant(e);
 
                         let ln_r = ctx.div(
-                            ctx.ln(
-                                ctx.add(ctx.pow(b_re, two), ctx.pow(b_im, two))
-                            ),
+                            ctx.ln(ctx
+                                .add(ctx.pow(*b_re, two), ctx.pow(*b_im, two))),
                             two,
                         );
 
-                        let θ = ctx.atan2(b_re, b_im);
+                        let θ = ctx.atan2(*b_re, *b_im);
 
-                        let a =
-                            ctx.sub(ctx.mul(exp_re, ln_r), ctx.mul(exp_im, θ));
-                        let b =
-                            ctx.add(ctx.mul(exp_im, ln_r), ctx.mul(exp_re, θ));
+                        let a = ctx
+                            .sub(ctx.mul(*exp_re, ln_r), ctx.mul(*exp_im, θ));
+                        let b = ctx
+                            .add(ctx.mul(*exp_im, ln_r), ctx.mul(*exp_re, θ));
 
                         (
                             ctx.mul(ctx.pow(euler, a), ctx.cos(b)),
                             ctx.mul(ctx.pow(euler, a), ctx.sin(b)),
                         )
                     }
-                    Branch::Log {
+                    Operation::Log {
                         base: (base_re, base_im),
                         arg: (arg_re, arg_im),
                     } => {
                         let two = ctx.qty(2);
 
-                        let ln_z = |re: NodeId, im: NodeId| {
+                        let ln_z = |re: Operand, im: Operand| {
                             let r2 =
                                 ctx.add(ctx.pow(re, two), ctx.pow(im, two));
                             (ctx.div(ctx.ln(r2), two), ctx.atan2(re, im))
                         };
 
-                        let (p, q) = ln_z(arg_re, arg_im);
+                        let (p, q) = ln_z(*arg_re, *arg_im);
 
                         if try { *old.as_leaf()?.as_constant()? == e }
                             .unwrap_or(false)
                         {
                             (p, q)
                         } else {
-                            let (r, s) = ln_z(base_re, base_im);
+                            let (r, s) = ln_z(*base_re, *base_im);
                             let den = ctx.add(ctx.pow(r, two), ctx.pow(s, two));
 
                             (
@@ -810,14 +803,14 @@ impl Expr {
                             )
                         }
                     }
-                    Branch::Atan2 { x, y } => todo!(),
-                    Branch::Matrix(matrix) => todo!(),
-                    Branch::Transpose(_) => todo!(),
-                    Branch::Det(_) => todo!(),
-                    Branch::Rank(_) => todo!(),
-                    Branch::Trace(_) => todo!(),
-                    Branch::Conditional { cond, pass, fail } => todo!(),
+                    Operation::Atan2 { x, y } => todo!(),
+                    Operation::Transpose(_) => todo!(),
+                    Operation::Det(_) => todo!(),
+                    Operation::Rank(_) => todo!(),
+                    Operation::Trace(_) => todo!(),
+                    Operation::Conditional { cond, pass, fail } => todo!(),
                 },
+                Operand::Matrix(_) => todo!(),
             }
         });
 

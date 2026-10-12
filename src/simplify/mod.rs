@@ -26,7 +26,9 @@ use crate::{
     },
     expr::{
         Expr,
-        dag::{Branch, BranchKind, Leaf, LeafKind, Matrix, Node, NodeKind},
+        dag::{
+            self, Branch, BranchKind, Leaf, LeafKind, Matrix, Node, NodeKind,
+        },
         domain::Domain,
         shape::Shape,
     },
@@ -46,19 +48,19 @@ mod test;
 /* --------------------------------- STRUCTS -------------------------------- */
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Default, PartialOrd, Ord)]
-struct ClassId(usize);
+pub struct ClassId(dag::Idx);
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct NodeId(usize);
+struct NodeId(dag::Idx);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct LeafId(usize);
+struct LeafId(dag::Idx);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct MatrixId(usize);
+struct MatrixId(dag::Idx);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct ConditionalId(usize);
+struct ConditionalId(dag::Idx);
 
 pub struct Substitution {
     bindings: AHashMap<Wildcard, ClassId>,

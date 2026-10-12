@@ -3,7 +3,7 @@ use std::fmt::{self, Debug, Display, Formatter, Pointer, Write};
 use super::dag::{Branch, Leaf, Node};
 use crate::{
     core::value::ComplexExt,
-    expr::{Expr, NodeId, Order, fmt::Joinabability::WithParens},
+    expr::{Expr, OperationId, Order, fmt::Joinabability::WithParens},
     symbol::constants,
     units::Unit::Unitless,
 };
@@ -18,7 +18,7 @@ enum Joinabability {
 
 impl Display for Expr {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        fn joinability(expr: &Expr, id: NodeId) -> Joinabability {
+        fn joinability(expr: &Expr, id: OperationId) -> Joinabability {
             match expr.node(id) {
                 Node::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => Joinabability::Joinable,
@@ -93,7 +93,7 @@ impl Display for Expr {
         fn fmt_inner(
             expr: &Expr,
             f: &mut Formatter<'_>,
-            id: NodeId,
+            id: OperationId,
         ) -> fmt::Result {
             let node = expr.node(id);
 

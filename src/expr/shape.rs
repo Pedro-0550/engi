@@ -1,7 +1,10 @@
 use std::num::NonZero;
 
-use super::dag::{Branch, Leaf, Node};
-use crate::expr::{Expr, NodeId, dag::Matrix};
+use super::dag::Leaf;
+use crate::expr::{
+    Expr, FoldedOperand, Operand, OperationId,
+    dag::{Matrix, Operation},
+};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Shape {
@@ -63,23 +66,23 @@ impl Shape {
     }
 }
 
-impl Node<Shape> {
+impl FoldedOperand<'_, Shape> {
     pub fn shape(&self) -> Shape {
         match self {
-            Node::Leaf(leaf) => match leaf {
+            Operand::Leaf(leaf) => match leaf {
                 Leaf::Symbol(symbol) => symbol.shape(),
                 Leaf::Constant(constant) => constant.quantity().value().shape(),
                 Leaf::Quantity(quantity) => quantity.value().shape(),
             },
-            Node::Branch(branch) => match branch {
-                Branch::Add([a, b]) => {
+            Operand::Operation(operation) => match *operation {
+                Operation::Add([a, b]) => {
                     assert_eq!(
                         a, b,
                         "Cannot add two values of different shapes",
                     );
                     *a
                 }
-                Branch::Mul([a, b]) => {
+                Operation::Mul([a, b]) => {
                     if a.cols == b.rows {
                         Shape::rect(a.rows.get(), b.cols.get())
                     } else if a.is_vec() && b.is_vec() {
@@ -90,7 +93,7 @@ impl Node<Shape> {
                         )
                     }
                 }
-                Branch::Min([a, b]) | Branch::Max([a, b]) => {
+                Operation::Min([a, b]) | Operation::Max([a, b]) => {
                     assert!(
                         a.is_scalar() && b.is_scalar(),
                         "Min/max is only defined for scalar arguments",
@@ -98,18 +101,18 @@ impl Node<Shape> {
 
                     Shape::SCALAR
                 }
-                Branch::Cos(u)
-                | Branch::Tan(u)
-                | Branch::Asin(u)
-                | Branch::Acos(u)
-                | Branch::Atan(u)
-                | Branch::Sinh(u)
-                | Branch::Cosh(u)
-                | Branch::Tanh(u)
-                | Branch::Asinh(u)
-                | Branch::Acosh(u)
-                | Branch::Atanh(u)
-                | Branch::Sin(u) => {
+                Operation::Cos(u)
+                | Operation::Tan(u)
+                | Operation::Asin(u)
+                | Operation::Acos(u)
+                | Operation::Atan(u)
+                | Operation::Sinh(u)
+                | Operation::Cosh(u)
+                | Operation::Tanh(u)
+                | Operation::Asinh(u)
+                | Operation::Acosh(u)
+                | Operation::Atanh(u)
+                | Operation::Sin(u) => {
                     assert!(
                         u.is_scalar() || u.is_square_mat(),
                         "Function only defined for scalars and square matrices"
@@ -117,7 +120,7 @@ impl Node<Shape> {
 
                     *u
                 }
-                Branch::Arg(u) => {
+                Operation::Arg(u) => {
                     assert_eq!(
                         *u,
                         Shape::SCALAR,
@@ -126,12 +129,12 @@ impl Node<Shape> {
 
                     Shape::SCALAR
                 }
-                Branch::Conj(u)
-                | Branch::Sign(u)
-                | Branch::Real(u)
-                | Branch::Imag(u) => *u,
-                Branch::Norm(_) => Shape::SCALAR,
-                Branch::Pow { base, exp } => {
+                Operation::Conj(u)
+                | Operation::Sign(u)
+                | Operation::Real(u)
+                | Operation::Imag(u) => *u,
+                Operation::Norm(_) => Shape::SCALAR,
+                Operation::Pow { base, exp } => {
                     assert!(
                         base.is_scalar() || base.is_square_mat(),
                         "Pow base must be a scalar or square matrix"
@@ -153,7 +156,7 @@ impl Node<Shape> {
                         Shape::SCALAR
                     }
                 }
-                Branch::Log { base, arg } => {
+                Operation::Log { base, arg } => {
                     assert!(
                         base.is_scalar() || base.is_square_mat(),
                         "Log base must be a scalar or square matrix"
@@ -175,19 +178,18 @@ impl Node<Shape> {
                         Shape::SCALAR
                     }
                 }
-                Branch::Atan2 { x: a, y: b } => {
+                Operation::Atan2 { x: a, y: b } => {
                     assert!(
                         a.is_scalar() && b.is_scalar(),
                         "Atan arguments must be scalar"
                     );
                     Shape::SCALAR
                 }
-                Branch::Matrix(matrix) => matrix.shape(),
-                Branch::Transpose(u) => u.transpose(),
-                Branch::Det(_) => todo!(),
-                Branch::Rank(_) => todo!(),
-                Branch::Trace(_) => todo!(),
-                Branch::Conditional { pass, fail, .. } => {
+                Operation::Transpose(u) => u.transpose(),
+                Operation::Det(_) => todo!(),
+                Operation::Rank(_) => todo!(),
+                Operation::Trace(_) => todo!(),
+                Operation::Conditional { pass, fail, .. } => {
                     assert_eq!(
                         pass, fail,
                         "Both branches of a conditional must be of the same shape"
@@ -195,17 +197,18 @@ impl Node<Shape> {
                     *pass
                 }
             },
+            Operand::Matrix(mat) => mat.shape(),
         }
     }
 }
 
 impl Expr {
     pub fn shape(&self) -> Shape {
-        self.shape_of(self.root())
+        self.shape_of(self.root().unwrap())
     }
 
-    pub fn shape_of(&self, id: NodeId) -> Shape {
-        self.fold_from(id, |_, _, node: Node<Shape>| node.shape())
+    pub fn shape_of(&self, id: Operand) -> Shape {
+        self.fold_from(id, |_, node: FoldedOperand<'_, Shape>| node.shape())
     }
 
     pub fn scalarize(self) -> Matrix<Expr> {

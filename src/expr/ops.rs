@@ -9,8 +9,8 @@ use num::{complex::Complex64, pow::Pow};
 use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{
-        EditContext, Expr, ExprNode, NodeId,
-        dag::{Branch, Leaf, Node},
+        BuiltOperand, EditContext, Expr, Operand,
+        dag::{Leaf, Operation},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     symbol::{
@@ -163,7 +163,7 @@ impl From<&Expr> for Expr {
 
 impl<T> From<T> for Expr
 where
-    T: Into<ExprNode>,
+    T: Into<BuiltOperand>,
 {
     fn from(value: T) -> Self {
         let mut expr = Self::new();
@@ -174,29 +174,28 @@ where
 }
 
 impl EditContext<'_> {
-    fn push(&self, node: ExprNode) -> NodeId {
-        let expr =
-            self.expr.take().expect("Context used recursively or panicked");
+    fn push(&self, operand: BuiltOperand) -> Operand {
+        let expr = self.expr.take().expect("Edit context used recursively");
 
-        let result = expr.push(node);
+        let result = expr.push(operand);
 
         self.expr.set(Some(expr));
         result
     }
 
-    pub fn qty(&self, val: impl Into<Quantity>) -> NodeId {
-        self.push(Node::Leaf(Leaf::Quantity(val.into())))
+    pub fn qty(&self, val: impl Into<Quantity>) -> Operand {
+        self.push(Operand::Leaf(Leaf::Quantity(val.into())))
     }
 
-    pub fn symbol(&self, symbol: Symbol) -> NodeId {
-        self.push(Node::Leaf(Leaf::Symbol(symbol)))
+    pub fn symbol(&self, symbol: Symbol) -> Operand {
+        self.push(Operand::Leaf(Leaf::Symbol(symbol)))
     }
 
-    pub fn constant(&self, constant: Constant) -> NodeId {
-        self.push(Node::Leaf(Leaf::Constant(constant)))
+    pub fn constant(&self, constant: Constant) -> Operand {
+        self.push(Operand::Leaf(Leaf::Constant(constant)))
     }
 
-    pub fn import(&self, src: &EditContext<'_>, id: NodeId) -> NodeId {
+    pub fn import(&self, src: &EditContext<'_>, id: Operand) -> Operand {
         let expr = self.expr.take().expect("Context used recursively");
         let src_expr = src.expr.take().expect("Context used recursively");
 
@@ -207,141 +206,141 @@ impl EditContext<'_> {
         result
     }
 
-    pub fn zero(&self) -> NodeId {
+    pub fn zero(&self) -> Operand {
         self.qty(0)
     }
 
-    pub fn one(&self) -> NodeId {
+    pub fn one(&self) -> Operand {
         self.qty(1)
     }
 
-    pub fn neg_one(&self) -> NodeId {
+    pub fn neg_one(&self) -> Operand {
         self.qty(-1)
     }
 
-    pub fn add(&self, a: NodeId, b: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Add([a, b])))
+    pub fn add(&self, a: Operand, b: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Add([a, b])))
     }
 
-    pub fn mul(&self, a: NodeId, b: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Mul([a, b])))
+    pub fn mul(&self, a: Operand, b: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Mul([a, b])))
     }
 
-    pub fn max(&self, a: NodeId, b: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Max([a, b])))
+    pub fn max(&self, a: Operand, b: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Max([a, b])))
     }
 
-    pub fn min(&self, a: NodeId, b: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Min([a, b])))
+    pub fn min(&self, a: Operand, b: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Min([a, b])))
     }
 
-    pub fn neg(&self, a: NodeId) -> NodeId {
+    pub fn neg(&self, a: Operand) -> Operand {
         let neg_1 = self.neg_one();
         self.mul(neg_1, a)
     }
 
-    pub fn sub(&self, a: NodeId, b: NodeId) -> NodeId {
+    pub fn sub(&self, a: Operand, b: Operand) -> Operand {
         let neg_b = self.neg(b);
         self.add(a, neg_b)
     }
 
-    pub fn pow(&self, base: NodeId, exp: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Pow { base, exp }))
+    pub fn pow(&self, base: Operand, exp: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Pow { base, exp }))
     }
 
-    pub fn div(&self, num: NodeId, den: NodeId) -> NodeId {
+    pub fn div(&self, num: Operand, den: Operand) -> Operand {
         let neg_one = self.neg_one();
         let inv_den = self.pow(den, neg_one);
         self.mul(num, inv_den)
     }
 
-    pub fn sqrt(&self, u: NodeId) -> NodeId {
+    pub fn sqrt(&self, u: Operand) -> Operand {
         let half = self.qty(0.5);
         self.pow(u, half)
     }
 
-    pub fn log(&self, base: NodeId, arg: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Log { base, arg }))
+    pub fn log(&self, base: Operand, arg: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Log { base, arg }))
     }
 
-    pub fn ln(&self, arg: NodeId) -> NodeId {
+    pub fn ln(&self, arg: Operand) -> Operand {
         let base_e = self.constant(e);
         self.log(base_e, arg)
     }
 
-    pub fn atan2(&self, x: NodeId, y: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Atan2 { x, y }))
+    pub fn atan2(&self, x: Operand, y: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Atan2 { x, y }))
     }
 
-    pub fn sin(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Sin(u)))
+    pub fn sin(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Sin(u)))
     }
 
-    pub fn cos(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Cos(u)))
+    pub fn cos(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Cos(u)))
     }
 
-    pub fn tan(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Tan(u)))
+    pub fn tan(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Tan(u)))
     }
 
-    pub fn asin(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Asin(u)))
+    pub fn asin(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Asin(u)))
     }
 
-    pub fn acos(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Acos(u)))
+    pub fn acos(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Acos(u)))
     }
 
-    pub fn atan(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Atan(u)))
+    pub fn atan(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Atan(u)))
     }
 
-    pub fn sinh(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Sinh(u)))
+    pub fn sinh(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Sinh(u)))
     }
 
-    pub fn cosh(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Cosh(u)))
+    pub fn cosh(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Cosh(u)))
     }
 
-    pub fn tanh(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Tanh(u)))
+    pub fn tanh(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Tanh(u)))
     }
 
-    pub fn asinh(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Asinh(u)))
+    pub fn asinh(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Asinh(u)))
     }
 
-    pub fn acosh(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Acosh(u)))
+    pub fn acosh(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Acosh(u)))
     }
 
-    pub fn atanh(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Atanh(u)))
+    pub fn atanh(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Atanh(u)))
     }
 
-    pub fn transpose(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Transpose(u)))
+    pub fn transpose(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Transpose(u)))
     }
 
-    pub fn conj(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Conj(u)))
+    pub fn conj(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Conj(u)))
     }
 
-    pub fn real(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Real(u)))
+    pub fn real(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Real(u)))
     }
 
-    pub fn imag(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Imag(u)))
+    pub fn imag(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Imag(u)))
     }
 
-    pub fn sign(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Sign(u)))
+    pub fn sign(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Sign(u)))
     }
 
-    pub fn trace(&self, u: NodeId) -> NodeId {
-        self.push(Node::Branch(Branch::Trace(u)))
+    pub fn trace(&self, u: Operand) -> Operand {
+        self.push(Operand::Operation(Operation::Trace(u)))
     }
 }

@@ -1,140 +1,160 @@
 use std::{
     hash::{Hash, Hasher},
+    marker::PhantomData,
     num::NonZero,
     ops::{Index, IndexMut},
+    slice, vec,
 };
 
 use ahash::AHashMap;
+use arrayvec::ArrayVec;
 use derive_more::{Deref, From, Into, IsVariant};
 use kinded::Kinded;
 use num::complex::Complex64;
-use smallvec::{SmallVec, smallvec};
 
 use crate::{
     core::{util::impl_as_variant, value::Value},
-    expr::shape::Shape,
+    expr::{Operand, domain::Domain, shape::Shape},
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
+    simplify::ClassId,
     symbol::{Symbol, constants::Constant},
     units::{Quantity, Unit::Unitless},
 };
 
-/// A kind of DAG node which is formed from some number of children nodes, representing some operation or composition.
+macro_rules! unary {
+    ($n:ident) => {
+        Operation::Sin($n)
+            | Operation::Cos($n)
+            | Operation::Tan($n)
+            | Operation::Asin($n)
+            | Operation::Acos($n)
+            | Operation::Atan($n)
+            | Operation::Sinh($n)
+            | Operation::Cosh($n)
+            | Operation::Tanh($n)
+            | Operation::Asinh($n)
+            | Operation::Acosh($n)
+            | Operation::Atanh($n)
+            | Operation::Arg($n)
+            | Operation::Conj($n)
+            | Operation::Norm($n)
+            | Operation::Sign($n)
+            | Operation::Real($n)
+            | Operation::Imag($n)
+            | Operation::Transpose($n)
+            | Operation::Det($n)
+            | Operation::Rank($n)
+            | Operation::Trace($n)
+    };
+}
+
+macro_rules! binary {
+    ($a:ident, $b:ident) => {
+        Operation::Pow { base: $a, exp: $b }
+            | Operation::Log { base: $b, arg: $a }
+            | Operation::Atan2 { x: $a, y: $b }
+            | Operation::Add([$a, $b])
+            | Operation::Mul([$a, $b])
+            | Operation::Min([$a, $b])
+            | Operation::Max([$a, $b])
+    };
+}
+
+/* -------------------------------------------------------------------------- */
+
+/// A kind of DAG node which is formed from some number of operands,
+/// representing some operation or composition over them.
 ///
-/// Represents every operation available in engi.
+/// Contains every operation available in engi.
 #[derive(Eq, PartialEq, Clone, Copy, Hash, Kinded, IsVariant)]
 #[kinded(derive(Hash))]
-pub enum Branch<R, M, C> {
-    Add([R; 2]),
-    Mul([R; 2]),
-    Min([R; 2]),
-    Max([R; 2]),
+pub enum Operation<O, C> {
+    // Arithmetic
+    Add([O; 2]),
+    Mul([O; 2]),
 
-    Sin(R),
-    Cos(R),
-    Tan(R),
+    // Comparison
+    Min([O; 2]),
+    Max([O; 2]),
 
-    Asin(R),
-    Acos(R),
-    Atan(R),
+    // Trig
+    Sin(O),
+    Cos(O),
+    Tan(O),
 
-    Sinh(R),
-    Cosh(R),
-    Tanh(R),
+    Asin(O),
+    Acos(O),
+    Atan(O),
+    Atan2 { x: O, y: O },
 
-    Asinh(R),
-    Acosh(R),
-    Atanh(R),
+    // Hyperbolic trig
+    Sinh(O),
+    Cosh(O),
+    Tanh(O),
 
-    Arg(R),
-    Conj(R),
-    Norm(R),
-    Sign(R),
+    Asinh(O),
+    Acosh(O),
+    Atanh(O),
 
-    Real(R),
-    Imag(R),
+    // Complex
+    Arg(O),
+    Conj(O),
+    Real(O),
+    Imag(O),
 
-    Pow { base: R, exp: R },
-    Log { base: R, arg: R },
-    Atan2 { x: R, y: R },
+    // Dunno what to call these
+    Norm(O),
+    Sign(O),
 
-    Transpose(R),
-    Det(R),
-    Rank(R),
-    Trace(R),
+    // Exp
+    Pow { base: O, exp: O },
+    Log { base: O, arg: O },
 
-    Matrix(M),
-    Conditional { cond: C, pass: R, fail: R },
+    // Matrix
+    Transpose(O),
+    Det(O),
+    Rank(O),
+    Trace(O),
+
+    // Piecewise
+    Conditional { cond: C, pass: O, fail: O },
 }
 
-#[derive(PartialEq, Eq, Clone)]
-pub struct Consed<T: Hash + Eq, I> {
-    cons: AHashMap<T, I>,
-    pub(crate) values: Vec<T>,
-}
+const _: () = assert!(size_of::<Operation<Operand, ConditionId>>() <= 10);
+const _: () = assert!(size_of::<Operation<ClassId, ConditionId>>() <= 8);
 
-/// Mathematical expression DAG. Stores [`Node`]s which reference each other with [`NodeId`]s.
-/// Nodes, conditions, matrices and leafs are hashconsed and referenced with strongly typed Ids.
-///
-/// When used with the DAG, [`Node`]s, [`Condition`]s, and every Id are lightweight and [`Copy`]
-#[derive(PartialEq, Eq, Clone)]
-pub struct Dag<N: Hash + Eq> {
-    pub(crate) nodes: Consed<Node<N>, N>,
-    pub(crate) leaves: Consed<Leaf, LeafId>,
-    pub(crate) matrices: Consed<Matrix<N>, MatrixId>,
-    pub(crate) conditions: Consed<Condition<N, ConditionId>, ConditionId>,
-
-    pub(crate) root: N,
-}
-
-/// An unique index for a [`Leaf`], valid only within one [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct LeafId(usize);
-
-/// An unique index for a [`Node`], valid only within the same [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct NodeId(usize);
-
-/// An unique index for a [`Matrix`], valid only within the same [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct MatrixId(usize);
-
-/// An unique index for a [`Condition`], valid only within the same [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct ConditionId(usize);
-
-/// Dynamically sized column-major matrix
+/// Dynamically sized row-major matrix
 #[derive(Eq, PartialEq, Clone, Hash)]
-pub struct Matrix<N> {
+pub struct Matrix<O> {
     shape: Shape,
-    elements: Box<[N]>,
+    elements: Box<[O]>,
 }
 
-/// A boolean condition based on comparisons between the values of given nodes, or some logic operator over other conditions.
-/// - R = Node type
-/// - C = Condition type
-/// The type parameters should either be references/handles to some actual types (like [`ConditionId`] for [`Condition`]),
-/// the type itself (like [`Condition`]), or
+/// A boolean condition based on comparisons between the values of given nodes, or some logical composition over other conditions.
+/// The type parameters should either be references/handles to the actual types (like [`ConditionId`] for [`Condition`]),
+/// the type itself with some indirection (like [`Box<Condition>`]), or
 /// or an intermediate type when used in folding operations.
 ///
-/// "Flattening" a condition tree, where C is a reference such as [`ConditionId`], into a tree with the actual values can be done with [`BoxedCondition`]
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
-pub enum Condition<R, C> {
-    Eq(R, R),
-    Ne(R, R),
-    Lt(R, R),
-    Le(R, R),
-    Gt(R, R),
-    Ge(R, R),
+/// "Flattening" a condition expression into an actual tree can be done with [`BoxedCondition`]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+pub enum Condition<O, C> {
+    // Comparison
+    Eq(O, O),
+    Ne(O, O),
+    Lt(O, O),
+    Le(O, O),
+    Gt(O, O),
+    Ge(O, O),
 
+    // Composition
     And([C; 2]),
     Or([C; 2]),
     Not(C),
 }
 
-pub struct BoxedCondition<N>(Box<Condition<N, BoxedCondition<N>>>);
-
-/// Leaf value in the expression DAG
-/// In general, constants and quantities are not equal even if their underlying values are equal.
+/// Leaf node in the expression DAG
+/// Constants and quantities are not equal even if their underlying values are equal.
+/// Constants are treated exactly like symbols up until evaluation, except that they cannot be used in substitutions.
 #[derive(PartialEq, Clone, Eq, Hash, Kinded, IsVariant)]
 #[kinded(derive(Hash))]
 pub enum Leaf {
@@ -143,839 +163,513 @@ pub enum Leaf {
     Quantity(Quantity),
 }
 
-/// Expression DAG node
-/// - R = Node type
-/// - L = Leaf type
-/// - M = Matrix type
-/// - C = Condition type
-/// The type parameters should either be refenceres to some actual types (like [`LeafId`] for [`Leaf`]), the type itself (like [`Leaf`]), or
-/// or an intermediate type when used in folding operations.
-#[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant)]
-pub enum Node<R, L = LeafId, M = MatrixId, C = ConditionId> {
-    Leaf(L),
-    Branch(R, M, C),
+type FlattenedOperand = Operand<BoxedOperation, Leaf, BoxedMatrix>;
+pub struct BoxedMatrix(Matrix<FlattenedOperand>);
+pub struct BoxedOperation(Box<Operation<FlattenedOperand, BoxedCondition>>);
+pub struct BoxedCondition(Box<Condition<FlattenedOperand, BoxedCondition>>);
+
+/// Hash-consing Vec<T> with support for strongly-typed indices
+#[derive(PartialEq, Eq, Clone)]
+pub struct Consed<T: Hash + Eq, K, Id = K> {
+    cons: AHashMap<T, K>,
+    values: Vec<T>,
+    _phantom: PhantomData<Id>,
 }
 
-#[derive(PartialEq, Clone, Eq, Hash, Copy)]
-pub enum NodeKind {
-    Leaf(LeafKind),
-    Branch(BranchKind),
+/// Mathematical expression DAG.
+/// Operations, conditions, matrices and leafs are hashconsed and referenced with strongly typed Ids.
+///
+/// When used with the DAG, [`Node`]s, [`Condition`]s, and every Id are lightweight and [`Copy`]
+#[derive(PartialEq, Eq, Clone)]
+pub struct Dag<O: Hash + Eq, K> {
+    pub(crate) operations: Consed<Operation<O, ConditionId>, K, OperationId>,
+    pub(crate) leaves: Consed<Leaf, LeafId>,
+    pub(crate) matrices: Consed<Matrix<O>, MatrixId>,
+    pub(crate) conditions: Consed<Condition<O, ConditionId>, ConditionId>,
+
+    pub(crate) root: Option<O>,
 }
+
+#[cfg(feature = "large_exprs")]
+pub type Idx = usize;
+
+#[cfg(not(feature = "large_exprs"))]
+pub type Idx = u16;
+
+/// An unique index for a [`Leaf`], valid only within one [`Dag`]
+#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
+pub struct LeafId(Idx);
+
+/// An unique index for a [`Node`], valid only within the same [`Dag`]
+#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
+pub struct OperationId(Idx);
+
+/// An unique index for a [`Matrix`], valid only within the same [`Dag`]
+#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
+pub struct MatrixId(Idx);
+
+/// An unique index for a [`Condition`], valid only within the same [`Dag`]
+#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
+pub struct ConditionId(Idx);
 
 /* -------------------------------------------------------------------------- */
 
 impl_as_variant!(Leaf, [Symbol => Symbol, Quantity => Quantity, Constant => Constant]);
 
-impl<T: Hash + Eq + Clone, I: From<usize> + Copy> Consed<T, I> {
-    fn insert(&mut self, val: T) -> I {
+impl<O, K> Dag<O, K>
+where
+    O: Hash + Eq,
+{
+    pub fn new() -> Self {
+        Self {
+            operations: Consed::default(),
+            leaves: Consed::default(),
+            matrices: Consed::default(),
+            conditions: Consed::default(),
+            root: None,
+        }
+    }
+}
+
+impl<T, K, Id> Consed<T, K, Id>
+where
+    T: Hash + Eq + Clone,
+    K: From<Idx> + Copy,
+{
+    pub fn insert(&mut self, val: T) -> K {
         if let Some(existing) = self.cons.get(&val) {
             *existing
         } else {
             let idx = self.values.len();
-            let id = I::from(idx);
+            let key = K::from(idx as Idx);
+
             self.values.push(val.clone());
-            self.cons.insert(val, id);
-            id
+            self.cons.insert(val, key);
+
+            key
         }
     }
+
+    // /// Forcefully inserts a new value, without hash-consing it.
+    // pub fn insert_unconsed(&mut self, val: T) -> K {
+    //     let idx = self.values.len();
+    //     let key = K::from(idx as Idx);
+    //     self.values.push(val);
+    //     key
+    // }
+
+    // /// Conses a previously unconsed value, inserted with insert_unconsed
+    // pub fn conse(&mut self, val: T, key: K) {
+    //     self.cons.insert(val, key);
+    // }
 
     pub fn len(&self) -> usize {
         self.values.len()
     }
+
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        self.values.iter()
+    }
 }
 
-impl<T: Hash + Eq, I> AsRef<[T]> for Consed<T, I> {
+impl<T, K, Id> Default for Consed<T, K, Id>
+where
+    T: Hash + Eq,
+{
+    fn default() -> Self {
+        Self {
+            cons: Default::default(),
+            values: Default::default(),
+            _phantom: Default::default(),
+        }
+    }
+}
+
+impl<T, K, Id> IntoIterator for Consed<T, K, Id>
+where
+    T: Hash + Eq,
+{
+    type Item = T;
+    type IntoIter = vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.values.into_iter()
+    }
+}
+
+impl<T, K, Id> AsRef<[T]> for Consed<T, K, Id>
+where
+    T: Hash + Eq,
+{
     fn as_ref(&self) -> &[T] {
         &self.values
     }
 }
 
-impl<T: Hash + Eq, I: Into<usize>> Index<I> for Consed<T, I> {
+impl<T, K, Id> Index<Id> for Consed<T, K, Id>
+where
+    T: Hash + Eq,
+    Idx: From<Id>,
+{
     type Output = T;
 
-    fn index(&self, index: I) -> &Self::Output {
-        &self.values[index.into()]
+    fn index(&self, index: Id) -> &Self::Output {
+        &self.values[Idx::from(index) as usize]
     }
 }
 
-// impl<N> Node<N> {
-//     pub fn as_leaf(&self) -> Option<&Leaf> {
-//         match self {
-//             Node::Leaf(leaf) => Some(leaf),
-//             Node::Branch(branch) => None,
-//         }
-//     }
-
-//     pub fn as_branch(&self) -> Option<&Branch<N>> {
-//         match self {
-//             Node::Branch(branch) => Some(branch),
-//             Node::Leaf(leaf) => None,
-//         }
-//     }
-
-//     pub fn as_branch_mut(&mut self) -> Option<&mut Branch<N>> {
-//         match self {
-//             Node::Branch(branch) => Some(branch),
-//             Node::Leaf(leaf) => None,
-//         }
-//     }
-
-//     pub fn kind(&self) -> NodeKind {
-//         match self {
-//             Node::Leaf(leaf) => NodeKind::Leaf(leaf.kind()),
-//             Node::Branch(branch) => NodeKind::Branch(branch.kind()),
-//         }
-//     }
-
-//     #[inline]
-//     pub fn for_each_child<'a>(&'a self, mut f: impl FnMut(&'a N)) {
-//         match self {
-//             Node::Leaf(_) => {}
-//             Node::Branch(branch) => match branch {
-//                 Branch::Add(ns)
-//                 | Branch::Mul(ns)
-//                 | Branch::Min(ns)
-//                 | Branch::Max(ns) => {
-//                     f(&ns[0]);
-//                     f(&ns[1]);
-//                 }
-
-//                 Branch::Sin(n)
-//                 | Branch::Cos(n)
-//                 | Branch::Tan(n)
-//                 | Branch::Asin(n)
-//                 | Branch::Acos(n)
-//                 | Branch::Atan(n)
-//                 | Branch::Sinh(n)
-//                 | Branch::Cosh(n)
-//                 | Branch::Tanh(n)
-//                 | Branch::Asinh(n)
-//                 | Branch::Acosh(n)
-//                 | Branch::Atanh(n)
-//                 | Branch::Arg(n)
-//                 | Branch::Conj(n)
-//                 | Branch::Norm(n)
-//                 | Branch::Sign(n)
-//                 | Branch::Real(n)
-//                 | Branch::Imag(n)
-//                 | Branch::Transpose(n)
-//                 | Branch::Det(n)
-//                 | Branch::Rank(n)
-//                 | Branch::Trace(n) => f(n),
-
-//                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-//                     f(base);
-//                     f(exp);
-//                 }
-//                 Branch::Atan2 { x: a, y: b } => {
-//                     f(a);
-//                     f(b);
-//                 }
-
-//                 Branch::Matrix(m) => {
-//                     for n in m.elements() {
-//                         f(n)
-//                     }
-//                 }
-//                 Branch::Conditional { cond, pass, fail } => {
-//                     cond.for_each_child(&mut f);
-//                     f(pass);
-//                     f(fail);
-//                 }
-//             },
-//         }
-//     }
-
-//     #[inline]
-//     pub fn for_each_child_mut<'a>(&'a mut self, mut f: impl FnMut(&'a mut N)) {
-//         match self {
-//             Node::Leaf(_) => {}
-//             Node::Branch(branch) => match branch {
-//                 Branch::Add(ns)
-//                 | Branch::Mul(ns)
-//                 | Branch::Min(ns)
-//                 | Branch::Max(ns) => {
-//                     for n in ns.iter_mut() {
-//                         f(n)
-//                     }
-//                 }
-
-//                 Branch::Sin(n)
-//                 | Branch::Cos(n)
-//                 | Branch::Tan(n)
-//                 | Branch::Asin(n)
-//                 | Branch::Acos(n)
-//                 | Branch::Atan(n)
-//                 | Branch::Sinh(n)
-//                 | Branch::Cosh(n)
-//                 | Branch::Tanh(n)
-//                 | Branch::Asinh(n)
-//                 | Branch::Acosh(n)
-//                 | Branch::Atanh(n)
-//                 | Branch::Arg(n)
-//                 | Branch::Conj(n)
-//                 | Branch::Norm(n)
-//                 | Branch::Sign(n)
-//                 | Branch::Real(n)
-//                 | Branch::Imag(n)
-//                 | Branch::Transpose(n)
-//                 | Branch::Det(n)
-//                 | Branch::Rank(n)
-//                 | Branch::Trace(n) => f(n),
-
-//                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-//                     f(base);
-//                     f(exp);
-//                 }
-//                 Branch::Atan2 { x: a, y: b } => {
-//                     f(a);
-//                     f(b);
-//                 }
-
-//                 Branch::Matrix(m) => {
-//                     for n in m.elements_mut() {
-//                         f(n)
-//                     }
-//                 }
-//                 Branch::Conditional { cond, pass, fail } => {
-//                     cond.for_each_child_mut(&mut f);
-//                     f(pass);
-//                     f(fail);
-//                 }
-//             },
-//         }
-//     }
-
-//     pub fn children(&self) -> SmallVec<[&N; 2]> {
-//         match self {
-//             Node::Leaf(_) => SmallVec::new(),
-
-//             Node::Branch(branch) => match branch {
-//                 Branch::Add(ns)
-//                 | Branch::Mul(ns)
-//                 | Branch::Min(ns)
-//                 | Branch::Max(ns) => SmallVec::from_buf(ns.each_ref()),
-
-//                 Branch::Sin(n)
-//                 | Branch::Cos(n)
-//                 | Branch::Tan(n)
-//                 | Branch::Asin(n)
-//                 | Branch::Acos(n)
-//                 | Branch::Atan(n)
-//                 | Branch::Sinh(n)
-//                 | Branch::Cosh(n)
-//                 | Branch::Tanh(n)
-//                 | Branch::Asinh(n)
-//                 | Branch::Acosh(n)
-//                 | Branch::Atanh(n)
-//                 | Branch::Arg(n)
-//                 | Branch::Conj(n)
-//                 | Branch::Norm(n)
-//                 | Branch::Sign(n)
-//                 | Branch::Real(n)
-//                 | Branch::Imag(n)
-//                 | Branch::Transpose(n)
-//                 | Branch::Det(n)
-//                 | Branch::Rank(n)
-//                 | Branch::Trace(n) => smallvec![n],
-
-//                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-//                     smallvec![base, exp]
-//                 }
-
-//                 Branch::Atan2 { x: a, y: b } => smallvec![a, b],
-
-//                 Branch::Matrix(matrix) => matrix.elements().iter().collect(),
-
-//                 Branch::Conditional { cond, pass, fail } => {
-//                     let mut out = SmallVec::new();
-//                     cond.push_children(&mut out);
-//                     out.push(pass);
-//                     out.push(fail);
-//                     out
-//                 }
-//             },
-//         }
-//     }
-
-//     pub fn children_mut(&mut self) -> SmallVec<[&mut N; 2]> {
-//         match self {
-//             Node::Leaf(_) => SmallVec::new(),
-
-//             Node::Branch(branch) => match branch {
-//                 Branch::Add(ns)
-//                 | Branch::Mul(ns)
-//                 | Branch::Min(ns)
-//                 | Branch::Max(ns) => SmallVec::from_buf(ns.each_mut()),
-
-//                 Branch::Sin(n)
-//                 | Branch::Cos(n)
-//                 | Branch::Tan(n)
-//                 | Branch::Asin(n)
-//                 | Branch::Acos(n)
-//                 | Branch::Atan(n)
-//                 | Branch::Sinh(n)
-//                 | Branch::Cosh(n)
-//                 | Branch::Tanh(n)
-//                 | Branch::Asinh(n)
-//                 | Branch::Acosh(n)
-//                 | Branch::Atanh(n)
-//                 | Branch::Arg(n)
-//                 | Branch::Conj(n)
-//                 | Branch::Norm(n)
-//                 | Branch::Sign(n)
-//                 | Branch::Real(n)
-//                 | Branch::Imag(n)
-//                 | Branch::Transpose(n)
-//                 | Branch::Det(n)
-//                 | Branch::Rank(n)
-//                 | Branch::Trace(n) => smallvec![n],
-
-//                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-//                     smallvec![base, exp]
-//                 }
-
-//                 Branch::Atan2 { x: a, y: b } => smallvec![a, b],
-
-//                 Branch::Matrix(matrix) => {
-//                     matrix.elements_mut().iter_mut().collect()
-//                 }
-
-//                 Branch::Conditional { cond, pass, fail } => {
-//                     let mut out = SmallVec::new();
-//                     cond.push_children_mut(&mut out);
-//                     out.push(pass);
-//                     out.push(fail);
-//                     out
-//                 }
-//             },
-//         }
-//     }
-
-//     /// Cost function based on a cycle count heuristic on modern CPUs
-//     pub fn cost(&self) -> u8 {
-//         match self {
-//             Node::Leaf(leaf) => 1,
-//             Node::Branch(branch) => match branch {
-//                 Branch::Add(_) => 1,
-//                 Branch::Mul(_) => 1,
-//                 Branch::Min(_) => 1,
-//                 Branch::Max(_) => 1,
-//                 Branch::Sin(_) => 2,
-//                 Branch::Cos(_) => 2,
-//                 Branch::Tan(_) => 2,
-//                 Branch::Asin(_) => 3,
-//                 Branch::Acos(_) => 3,
-//                 Branch::Atan(_) => 3,
-//                 Branch::Sinh(_) => 3,
-//                 Branch::Cosh(_) => 3,
-//                 Branch::Tanh(_) => 3,
-//                 Branch::Asinh(_) => 3,
-//                 Branch::Acosh(_) => 3,
-//                 Branch::Atanh(_) => 3,
-//                 Branch::Arg(_) => 3,
-//                 Branch::Conj(_) => 1,
-//                 Branch::Norm(_) => 3,
-//                 Branch::Sign(_) => 1,
-//                 Branch::Real(_) => 1,
-//                 Branch::Imag(_) => 1,
-//                 Branch::Pow { base, exp } => 4,
-//                 Branch::Log { base, arg } => 4,
-//                 Branch::Atan2 { x: a, y: b } => 3,
-//                 Branch::Matrix(matrix) => todo!(),
-//                 Branch::Transpose(_) => todo!(),
-//                 Branch::Det(_) => todo!(),
-//                 Branch::Rank(_) => todo!(),
-//                 Branch::Trace(_) => todo!(),
-//                 Branch::Conditional { cond, pass, fail } => todo!(),
-//             },
-//         }
-//     }
-
-//     pub fn into_children(self) -> SmallVec<[N; 2]> {
-//         match self {
-//             Node::Leaf(_) => SmallVec::new(),
-
-//             Node::Branch(branch) => match branch {
-//                 Branch::Add(ns)
-//                 | Branch::Mul(ns)
-//                 | Branch::Min(ns)
-//                 | Branch::Max(ns) => SmallVec::from_buf(ns),
-
-//                 Branch::Sin(n)
-//                 | Branch::Cos(n)
-//                 | Branch::Tan(n)
-//                 | Branch::Asin(n)
-//                 | Branch::Acos(n)
-//                 | Branch::Atan(n)
-//                 | Branch::Sinh(n)
-//                 | Branch::Cosh(n)
-//                 | Branch::Tanh(n)
-//                 | Branch::Asinh(n)
-//                 | Branch::Acosh(n)
-//                 | Branch::Atanh(n)
-//                 | Branch::Arg(n)
-//                 | Branch::Conj(n)
-//                 | Branch::Norm(n)
-//                 | Branch::Sign(n)
-//                 | Branch::Real(n)
-//                 | Branch::Imag(n)
-//                 | Branch::Transpose(n)
-//                 | Branch::Det(n)
-//                 | Branch::Rank(n)
-//                 | Branch::Trace(n) => smallvec![n],
-
-//                 Branch::Pow { base, exp } | Branch::Log { base, arg: exp } => {
-//                     smallvec![base, exp]
-//                 }
-
-//                 Branch::Atan2 { x: a, y: b } => smallvec![a, b],
-
-//                 Branch::Matrix(matrix) => {
-//                     SmallVec::from_vec(matrix.into_elements().into_vec())
-//                 }
-
-//                 Branch::Conditional { cond, pass, fail } => {
-//                     let mut out = SmallVec::new();
-//                     cond.push_into_children(&mut out);
-//                     out.push(pass);
-//                     out.push(fail);
-//                     out
-//                 }
-//             },
-//         }
-//     }
-
-//     pub fn map<T>(self, f: &mut impl FnMut(N) -> T) -> Node<T> {
-//         match self {
-//             Node::Leaf(l) => Node::Leaf(l),
-
-//             Node::Branch(branch) => Node::Branch(match branch {
-//                 Branch::Add(ns) => Branch::Add(ns.map(f)),
-//                 Branch::Mul(ns) => Branch::Mul(ns.map(f)),
-//                 Branch::Min(ns) => Branch::Min(ns.map(f)),
-//                 Branch::Max(ns) => Branch::Max(ns.map(f)),
-
-//                 Branch::Sin(n) => Branch::Sin(f(n)),
-//                 Branch::Cos(n) => Branch::Cos(f(n)),
-//                 Branch::Tan(n) => Branch::Tan(f(n)),
-
-//                 Branch::Asin(n) => Branch::Asin(f(n)),
-//                 Branch::Acos(n) => Branch::Acos(f(n)),
-//                 Branch::Atan(n) => Branch::Atan(f(n)),
-
-//                 Branch::Sinh(n) => Branch::Sinh(f(n)),
-//                 Branch::Cosh(n) => Branch::Cosh(f(n)),
-//                 Branch::Tanh(n) => Branch::Tanh(f(n)),
-
-//                 Branch::Asinh(n) => Branch::Asinh(f(n)),
-//                 Branch::Acosh(n) => Branch::Acosh(f(n)),
-//                 Branch::Atanh(n) => Branch::Atanh(f(n)),
-
-//                 Branch::Arg(n) => Branch::Arg(f(n)),
-//                 Branch::Conj(n) => Branch::Conj(f(n)),
-//                 Branch::Norm(n) => Branch::Norm(f(n)),
-//                 Branch::Sign(n) => Branch::Sign(f(n)),
-
-//                 Branch::Real(n) => Branch::Real(f(n)),
-//                 Branch::Imag(n) => Branch::Imag(f(n)),
-
-//                 Branch::Pow { base, exp } => {
-//                     Branch::Pow { base: f(base), exp: f(exp) }
-//                 }
-
-//                 Branch::Log { base, arg } => {
-//                     Branch::Log { base: f(base), arg: f(arg) }
-//                 }
-
-//                 Branch::Atan2 { x: a, y: b } => {
-//                     Branch::Atan2 { x: f(a), y: f(b) }
-//                 }
-
-//                 Branch::Matrix(matrix) => Branch::Matrix(Matrix {
-//                     shape: matrix.shape,
-//                     elements: matrix.elements.into_iter().map(f).collect(),
-//                 }),
-
-//                 Branch::Transpose(n) => Branch::Transpose(f(n)),
-//                 Branch::Det(n) => Branch::Det(f(n)),
-//                 Branch::Rank(n) => Branch::Rank(f(n)),
-//                 Branch::Trace(n) => Branch::Trace(f(n)),
-
-//                 Branch::Conditional { cond, pass, fail } => {
-//                     Branch::Conditional {
-//                         cond: cond.map(&mut *f),
-//                         pass: f(pass),
-//                         fail: f(fail),
-//                     }
-//                 }
-//             }),
-//         }
-//     }
-// }
-
-// impl<N> Branch<N> {
-//     pub fn as_binary(&self) -> Option<[&N; 2]> {
-//         match self {
-//             Branch::Add([a, b])
-//             | Branch::Mul([a, b])
-//             | Branch::Min([a, b])
-//             | Branch::Max([a, b]) => Some([a, b]),
-//             _ => None,
-//         }
-//     }
-
-//     pub fn as_binary_mut(&mut self) -> Option<[&mut N; 2]> {
-//         match self {
-//             Branch::Add([a, b])
-//             | Branch::Mul([a, b])
-//             | Branch::Min([a, b])
-//             | Branch::Max([a, b]) => Some([a, b]),
-//             _ => None,
-//         }
-//     }
-// }
-
-// impl<N> Condition<N> {
-//     pub fn for_each_child<'a>(&'a self, f: &mut impl FnMut(&'a N)) {
-//         match self {
-//             Condition::Eq(a, b)
-//             | Condition::Ne(a, b)
-//             | Condition::Lt(a, b)
-//             | Condition::Le(a, b)
-//             | Condition::Gt(a, b)
-//             | Condition::Ge(a, b) => {
-//                 f(a);
-//                 f(b);
-//             }
-//             Condition::And(cs) | Condition::Or(cs) => {
-//                 for c in cs.iter() {
-//                     c.for_each_child(f)
-//                 }
-//             }
-//             Condition::Not(c) => c.for_each_child(f),
-//         }
-//     }
-
-//     pub fn for_each_child_mut<'a>(&'a mut self, f: &mut impl FnMut(&'a mut N)) {
-//         match self {
-//             Condition::Eq(a, b)
-//             | Condition::Ne(a, b)
-//             | Condition::Lt(a, b)
-//             | Condition::Le(a, b)
-//             | Condition::Gt(a, b)
-//             | Condition::Ge(a, b) => {
-//                 f(a);
-//                 f(b);
-//             }
-//             Condition::And(cs) | Condition::Or(cs) => {
-//                 for c in cs.iter_mut() {
-//                     c.for_each_child_mut(f)
-//                 }
-//             }
-//             Condition::Not(c) => c.for_each_child_mut(f),
-//         }
-//     }
-
-//     pub fn map<T>(self, f: &mut impl FnMut(N) -> T) -> Condition<T> {
-//         match self {
-//             Condition::Eq(a, b) => Condition::Eq(f(a), f(b)),
-//             Condition::Ne(a, b) => Condition::Ne(f(a), f(b)),
-//             Condition::Lt(a, b) => Condition::Lt(f(a), f(b)),
-//             Condition::Le(a, b) => Condition::Le(f(a), f(b)),
-//             Condition::Gt(a, b) => Condition::Gt(f(a), f(b)),
-//             Condition::Ge(a, b) => Condition::Ge(f(a), f(b)),
-
-//             Condition::And(conditions) => Condition::And(
-//                 conditions.into_iter().map(|c| c.map(f)).collect(),
-//             ),
-
-//             Condition::Or(conditions) => Condition::Or(
-//                 conditions.into_iter().map(|c| c.map(f)).collect(),
-//             ),
-
-//             Condition::Not(condition) => {
-//                 Condition::Not(Box::new(condition.map(f)))
-//             }
-//         }
-//     }
-
-//     pub fn children(&self) -> SmallVec<[&N; 2]> {
-//         let mut out = SmallVec::new();
-//         self.push_children(&mut out);
-//         out
-//     }
-
-//     pub fn children_mut(&mut self) -> SmallVec<[&mut N; 2]> {
-//         let mut out = SmallVec::new();
-//         self.push_children_mut(&mut out);
-//         out
-//     }
-
-//     pub fn into_children(self) -> SmallVec<[N; 2]> {
-//         let mut out = SmallVec::new();
-//         self.push_into_children(&mut out);
-//         out
-//     }
-
-//     // The `push_*` helpers write into a single shared buffer so that nested
-//     // And/Or/Not conditions don't allocate an intermediate collection per level.
-
-//     fn push_children<'a>(&'a self, out: &mut SmallVec<[&'a N; 2]>) {
-//         match self {
-//             Condition::Eq(a, b)
-//             | Condition::Ne(a, b)
-//             | Condition::Lt(a, b)
-//             | Condition::Le(a, b)
-//             | Condition::Gt(a, b)
-//             | Condition::Ge(a, b) => {
-//                 out.push(a);
-//                 out.push(b);
-//             }
-
-//             Condition::And(conditions) | Condition::Or(conditions) => {
-//                 for c in conditions.iter() {
-//                     c.push_children(out);
-//                 }
-//             }
-
-//             Condition::Not(condition) => condition.push_children(out),
-//         }
-//     }
-
-//     fn push_children_mut<'a>(&'a mut self, out: &mut SmallVec<[&'a mut N; 2]>) {
-//         match self {
-//             Condition::Eq(a, b)
-//             | Condition::Ne(a, b)
-//             | Condition::Lt(a, b)
-//             | Condition::Le(a, b)
-//             | Condition::Gt(a, b)
-//             | Condition::Ge(a, b) => {
-//                 out.push(a);
-//                 out.push(b);
-//             }
-
-//             Condition::And(conditions) | Condition::Or(conditions) => {
-//                 for c in conditions.iter_mut() {
-//                     c.push_children_mut(out);
-//                 }
-//             }
-
-//             Condition::Not(condition) => condition.push_children_mut(out),
-//         }
-//     }
-
-//     fn push_into_children(self, out: &mut SmallVec<[N; 2]>) {
-//         match self {
-//             Condition::Eq(a, b)
-//             | Condition::Ne(a, b)
-//             | Condition::Lt(a, b)
-//             | Condition::Le(a, b)
-//             | Condition::Gt(a, b)
-//             | Condition::Ge(a, b) => {
-//                 out.push(a);
-//                 out.push(b);
-//             }
-
-//             Condition::And(conditions) | Condition::Or(conditions) => {
-//                 for c in conditions.into_vec() {
-//                     c.push_into_children(out);
-//                 }
-//             }
-
-//             Condition::Not(condition) => (*condition).push_into_children(out),
-//         }
-//     }
-
-//     pub fn hash_structure<H: Hasher>(&self, state: &mut H) {
-//         std::mem::discriminant(self).hash(state);
-//         match self {
-//             Condition::And(conds) | Condition::Or(conds) => {
-//                 conds.len().hash(state);
-//                 for c in conds.iter() {
-//                     c.hash_structure(state);
-//                 }
-//             }
-//             Condition::Not(cond) => {
-//                 cond.hash_structure(state);
-//             }
-//             _ => (),
-//         }
-//     }
-// }
-
-// impl<N> Matrix<N> {
-//     // pub fn from_fn(
-//     //     rows: impl Into<usize>,
-//     //     cols: impl Into<usize>,
-//     //     f: FnMut(usize, usize) -> Expr,
-//     // ) -> Matrix {
-//     // }
-
-//     pub fn from_elements(shape: Shape, elements: Box<[N]>) -> Matrix<N> {
-//         assert_eq!(shape.cols.get() * shape.rows.get(), elements.len());
-//         Self { shape, elements }
-//     }
-
-//     pub fn fill(rows: impl Into<usize>, cols: impl Into<usize>, el: N) -> Self
-//     where
-//         N: Clone, {
-//         let rows = rows.into();
-//         let cols = cols.into();
-//         Self {
-//             shape: Shape::rect(rows, cols),
-//             elements: vec![el; rows * cols].into_boxed_slice(),
-//         }
-//     }
-
-//     /// Returns (rows, cols) for this matrix
-//     pub fn shape(&self) -> Shape {
-//         self.shape
-//     }
-
-//     pub fn rows(&self) -> NonZero<usize> {
-//         self.shape.rows
-//     }
-
-//     pub fn cols(&self) -> NonZero<usize> {
-//         self.shape.cols
-//     }
-
-//     pub fn elements(&self) -> &[N] {
-//         &self.elements
-//     }
-
-//     pub fn elements_mut(&mut self) -> &mut [N] {
-//         &mut self.elements
-//     }
-
-//     pub fn into_elements(self) -> Box<[N]> {
-//         self.elements
-//     }
-
-//     pub fn map<T>(self, f: &mut impl FnMut(N) -> T) -> Matrix<T> {
-//         Matrix {
-//             shape: self.shape,
-//             elements: self.elements.into_iter().map(f).collect(),
-//         }
-//     }
-
-//     pub fn into_map(self, f: &mut impl FnMut(N) -> N) -> Matrix<N> {
-//         Matrix {
-//             shape: self.shape,
-//             elements: self.elements.into_iter().map(f).collect(),
-//         }
-//     }
-// }
-
-// impl Leaf {
-//     pub fn shape(&self) -> Shape {
-//         match self {
-//             Leaf::Symbol(symbol) => symbol.shape(),
-//             Leaf::Constant(constant) => constant.quantity().value().shape(),
-//             Leaf::Quantity(quantity) => quantity.value().shape(),
-//         }
-//     }
-// }
-
-// impl<N> Index<usize> for Matrix<N> {
-//     type Output = [N];
-
-//     fn index(&self, row: usize) -> &Self::Output {
-//         let start = row * self.shape.cols.get();
-//         let end = start + self.shape.cols.get();
-//         &self.elements[start..end]
-//     }
-// }
-
-// impl<N> IndexMut<usize> for Matrix<N> {
-//     fn index_mut(&mut self, row: usize) -> &mut Self::Output {
-//         let start = row * self.shape.cols.get();
-//         let end = start + self.shape.cols.get();
-//         &mut self.elements[start..end]
-//     }
-// }
-
-// impl From<f64> for Leaf {
-//     fn from(value: f64) -> Self {
-//         Leaf::Quantity(value * Unitless)
-//     }
-// }
-
-// impl From<i64> for Leaf {
-//     fn from(value: i64) -> Self {
-//         Leaf::Quantity(value * Unitless)
-//     }
-// }
-
-// impl From<Complex64> for Leaf {
-//     fn from(value: Complex64) -> Self {
-//         Leaf::Quantity(value * Unitless)
-//     }
-// }
-
-// impl From<Value> for Leaf {
-//     fn from(value: Value) -> Self {
-//         Leaf::Quantity(value * Unitless)
-//     }
-// }
-
-// impl From<Quantity> for Leaf {
-//     fn from(value: Quantity) -> Self {
-//         Leaf::Quantity(value)
-//     }
-// }
-
-// impl From<Constant> for Leaf {
-//     fn from(s: Constant) -> Self {
-//         Leaf::Constant(s)
-//     }
-// }
-
-// impl From<Symbol> for Leaf {
-//     fn from(s: Symbol) -> Self {
-//         Leaf::Symbol(s)
-//     }
-// }
-
-// impl From<Variable> for Leaf {
-//     fn from(s: Variable) -> Self {
-//         Leaf::Symbol(s.symbol())
-//     }
-// }
-
-// impl From<Connector> for Leaf {
-//     fn from(s: Connector) -> Self {
-//         Leaf::Symbol(s.variable().symbol())
-//     }
-// }
-
-// impl From<VariableBuilder<'_>> for Leaf {
-//     fn from(s: VariableBuilder<'_>) -> Self {
-//         Leaf::Symbol(s.variable().symbol())
-//     }
-// }
-
-// impl From<ConnectorBuilder<'_>> for Leaf {
-//     fn from(s: ConnectorBuilder<'_>) -> Self {
-//         Leaf::Symbol(s.connector().variable().symbol())
-//     }
-// }
-
-// impl<T: Clone> From<&T> for Leaf
-// where
-//     Leaf: From<T>,
-// {
-//     fn from(s: &T) -> Self {
-//         s.clone().into()
-//     }
-// }
-
-// impl<N> From<Leaf> for Node<N> {
-//     fn from(l: Leaf) -> Self {
-//         Node::Leaf(l)
-//     }
-// }
+impl<O, C> Operation<O, C> {
+    pub fn for_each_operand(&self, mut f: impl FnMut(&O)) {
+        match self {
+            binary!(a, b) => {
+                f(a);
+                f(b)
+            }
+            unary!(x) => f(x),
+            Operation::Conditional { pass, fail, .. } => {
+                f(pass);
+                f(fail)
+            }
+        }
+    }
+
+    pub fn operand(&self, at: usize) -> Option<&O> {
+        match self {
+            binary!(a, b) => [a, b].get(at).copied(),
+            unary!(x) => {
+                if at == 0 {
+                    Some(x)
+                } else {
+                    None
+                }
+            }
+            Operation::Conditional { pass, fail, .. } => {
+                [pass, fail].get(at).copied()
+            }
+        }
+    }
+
+    pub fn collect_operands<'s>(&'s self, into: &mut Vec<&'s O>) {
+        match self {
+            binary!(a, b) => {
+                into.push(a);
+                into.push(b);
+            }
+            unary!(x) => {
+                into.push(x);
+            }
+            Operation::Conditional { pass, fail, .. } => {
+                into.push(pass);
+                into.push(fail);
+            }
+        }
+    }
+
+    pub fn condition(&self) -> Option<&C> {
+        match self {
+            Operation::Conditional { cond, .. } => Some(cond),
+            _ => None,
+        }
+    }
+
+    /// Maps this operations's children (operands and conditions) into some other types using the given functions.
+    /// Returns the operation with all children mapped.
+    pub fn map<NewO, NewC>(
+        &self,
+        mut o: impl FnMut(&O) -> NewO,
+        mut c: impl FnMut(&C) -> NewC,
+    ) -> Operation<NewO, NewC> {
+        self.map_with(&mut (), |_, op| o(op), |_, cond| c(cond))
+    }
+
+    /// Like [`Operation::map`], except it can also take and pass a mutable state to the mapping functions.
+    ///
+    /// This is useful when the mapping depends on mutating some exterior state for both conditions and operands.
+    /// The borrow checker forbids accessing the state mutably to both closures at once, so you need to take it as an argument
+    pub fn map_with<S, NewO, NewC>(
+        &self,
+        s: &mut S,
+
+        mut o: impl FnMut(&mut S, &O) -> NewO,
+        mut c: impl FnMut(&mut S, &C) -> NewC,
+    ) -> Operation<NewO, NewC> {
+        match self {
+            Operation::Add([a, b]) => Operation::Add([o(s, a), o(s, b)]),
+            Operation::Mul([a, b]) => Operation::Mul([o(s, a), o(s, b)]),
+            Operation::Min([a, b]) => Operation::Min([o(s, a), o(s, b)]),
+            Operation::Max([a, b]) => Operation::Max([o(s, a), o(s, b)]),
+            Operation::Sin(a) => Operation::Sin(o(s, a)),
+            Operation::Cos(a) => Operation::Cos(o(s, a)),
+            Operation::Tan(a) => Operation::Tan(o(s, a)),
+            Operation::Asin(a) => Operation::Asin(o(s, a)),
+            Operation::Acos(a) => Operation::Acos(o(s, a)),
+            Operation::Atan(a) => Operation::Atan(o(s, a)),
+            Operation::Atan2 { x, y } => {
+                Operation::Atan2 { x: o(s, x), y: o(s, y) }
+            }
+            Operation::Sinh(a) => Operation::Sinh(o(s, a)),
+            Operation::Cosh(a) => Operation::Cosh(o(s, a)),
+            Operation::Tanh(a) => Operation::Tanh(o(s, a)),
+            Operation::Asinh(a) => Operation::Asinh(o(s, a)),
+            Operation::Acosh(a) => Operation::Acosh(o(s, a)),
+            Operation::Atanh(a) => Operation::Atanh(o(s, a)),
+            Operation::Arg(a) => Operation::Arg(o(s, a)),
+            Operation::Conj(a) => Operation::Conj(o(s, a)),
+            Operation::Real(a) => Operation::Real(o(s, a)),
+            Operation::Imag(a) => Operation::Imag(o(s, a)),
+            Operation::Norm(a) => Operation::Norm(o(s, a)),
+            Operation::Sign(a) => Operation::Sign(o(s, a)),
+            Operation::Pow { base, exp } => {
+                Operation::Pow { base: o(s, base), exp: o(s, exp) }
+            }
+            Operation::Log { base, arg } => {
+                Operation::Log { base: o(s, base), arg: o(s, arg) }
+            }
+            Operation::Transpose(a) => Operation::Transpose(o(s, a)),
+            Operation::Det(a) => Operation::Det(o(s, a)),
+            Operation::Rank(a) => Operation::Rank(o(s, a)),
+            Operation::Trace(a) => Operation::Trace(o(s, a)),
+            Operation::Conditional { cond, pass, fail } => {
+                Operation::Conditional {
+                    cond: c(s, cond),
+                    pass: o(s, pass),
+                    fail: o(s, fail),
+                }
+            }
+        }
+    }
+}
+
+impl<O, C> Condition<O, C> {
+    pub fn operand(&self, at: usize) -> Option<&O> {
+        match self {
+            Condition::Eq(a, b)
+            | Condition::Ne(a, b)
+            | Condition::Lt(a, b)
+            | Condition::Le(a, b)
+            | Condition::Gt(a, b)
+            | Condition::Ge(a, b) => [a, b].get(at).copied(),
+            _ => None,
+        }
+    }
+
+    pub fn condition(&self, at: usize) -> Option<&C> {
+        match self {
+            Condition::And(conds) | Condition::Or(conds) => conds.get(at),
+            Condition::Not(x) if at == 0 => Some(x),
+            _ => None,
+        }
+    }
+
+    /// Maps this condition's children (operands and conditions) into some other types using the given functions.
+    /// Returns the condition with all children mapped.
+    pub fn map<NewO, NewC>(
+        &self,
+        mut o: impl FnMut(&O) -> NewO,
+        mut c: impl FnMut(&C) -> NewC,
+    ) -> Condition<NewO, NewC> {
+        self.map_with(&mut (), |_, op| o(op), |_, cond| c(cond))
+    }
+
+    /// Like [`Condition::map`], except it can also take and pass a mutable state to the mapping functions.
+    ///
+    /// This is useful when the mapping depends on mutating some exterior state for both conditions and operands.
+    /// The borrow checker forbids accessing the state mutably to both closures at once, so you need to take it as an argument
+    pub fn map_with<S, NewO, NewC>(
+        &self,
+        s: &mut S,
+        mut o: impl FnMut(&mut S, &O) -> NewO,
+        mut c: impl FnMut(&mut S, &C) -> NewC,
+    ) -> Condition<NewO, NewC> {
+        match self {
+            Condition::Eq(a, b) => Condition::Eq(o(s, a), o(s, b)),
+            Condition::Ne(a, b) => Condition::Ne(o(s, a), o(s, b)),
+            Condition::Lt(a, b) => Condition::Lt(o(s, a), o(s, b)),
+            Condition::Le(a, b) => Condition::Le(o(s, a), o(s, b)),
+            Condition::Gt(a, b) => Condition::Gt(o(s, a), o(s, b)),
+            Condition::Ge(a, b) => Condition::Ge(o(s, a), o(s, b)),
+            Condition::And([a, b]) => Condition::And([c(s, a), c(s, b)]),
+            Condition::Or([a, b]) => Condition::Or([c(s, a), c(s, b)]),
+            Condition::Not(x) => Condition::Not(c(s, x)),
+        }
+    }
+}
+
+impl<O> Matrix<O> {
+    // pub fn from_fn(
+    //     rows: impl Into<usize>,
+    //     cols: impl Into<usize>,
+    //     f: FnMut(usize, usize) -> Expr,
+    // ) -> Matrix {
+    // }
+
+    pub fn from_elements(shape: Shape, elements: Box<[O]>) -> Matrix<O> {
+        assert_eq!(shape.cols.get() * shape.rows.get(), elements.len());
+        Self { shape, elements }
+    }
+
+    pub fn fill(rows: impl Into<usize>, cols: impl Into<usize>, el: O) -> Self
+    where
+        O: Clone, {
+        let rows = rows.into();
+        let cols = cols.into();
+        Self {
+            shape: Shape::rect(rows, cols),
+            elements: vec![el; rows * cols].into_boxed_slice(),
+        }
+    }
+
+    /// Returns the shape of this matrix
+    pub fn shape(&self) -> Shape {
+        self.shape
+    }
+
+    pub fn rows(&self) -> NonZero<usize> {
+        self.shape.rows
+    }
+
+    pub fn cols(&self) -> NonZero<usize> {
+        self.shape.cols
+    }
+
+    pub fn elements(&self) -> &[O] {
+        &self.elements
+    }
+
+    pub fn elements_mut(&mut self) -> &mut [O] {
+        &mut self.elements
+    }
+
+    pub fn into_elements(self) -> Box<[O]> {
+        self.elements
+    }
+
+    pub fn map<T>(&self, f: impl FnMut(&O) -> T) -> Matrix<T> {
+        Matrix {
+            shape: self.shape,
+            elements: self.elements.iter().map(f).collect(),
+        }
+    }
+
+    pub fn into_map<T>(self, f: impl FnMut(O) -> T) -> Matrix<T> {
+        Matrix {
+            shape: self.shape,
+            elements: self.elements.into_iter().map(f).collect(),
+        }
+    }
+}
+
+impl<O> Index<usize> for Matrix<O> {
+    type Output = [O];
+
+    fn index(&self, row: usize) -> &Self::Output {
+        let start = row * self.shape.cols.get();
+        let end = start + self.shape.cols.get();
+        &self.elements[start..end]
+    }
+}
+
+impl<O> IndexMut<usize> for Matrix<O> {
+    fn index_mut(&mut self, row: usize) -> &mut Self::Output {
+        let start = row * self.shape.cols.get();
+        let end = start + self.shape.cols.get();
+        &mut self.elements[start..end]
+    }
+}
+
+impl Leaf {
+    pub fn shape(&self) -> Shape {
+        match self {
+            Leaf::Symbol(symbol) => symbol.shape(),
+            Leaf::Constant(constant) => constant.quantity().value().shape(),
+            Leaf::Quantity(quantity) => quantity.value().shape(),
+        }
+    }
+}
+
+impl From<f64> for Leaf {
+    fn from(value: f64) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<i64> for Leaf {
+    fn from(value: i64) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<Complex64> for Leaf {
+    fn from(value: Complex64) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<Value> for Leaf {
+    fn from(value: Value) -> Self {
+        Leaf::Quantity(value * Unitless)
+    }
+}
+
+impl From<Quantity> for Leaf {
+    fn from(value: Quantity) -> Self {
+        Leaf::Quantity(value)
+    }
+}
+
+impl From<Constant> for Leaf {
+    fn from(s: Constant) -> Self {
+        Leaf::Constant(s)
+    }
+}
+
+impl From<Symbol> for Leaf {
+    fn from(s: Symbol) -> Self {
+        Leaf::Symbol(s)
+    }
+}
+
+impl From<Variable> for Leaf {
+    fn from(s: Variable) -> Self {
+        Leaf::Symbol(s.symbol())
+    }
+}
+
+impl From<Connector> for Leaf {
+    fn from(s: Connector) -> Self {
+        Leaf::Symbol(s.variable().symbol())
+    }
+}
+
+impl From<VariableBuilder<'_>> for Leaf {
+    fn from(s: VariableBuilder<'_>) -> Self {
+        Leaf::Symbol(s.variable().symbol())
+    }
+}
+
+impl From<ConnectorBuilder<'_>> for Leaf {
+    fn from(s: ConnectorBuilder<'_>) -> Self {
+        Leaf::Symbol(s.connector().variable().symbol())
+    }
+}
+
+impl<T: Clone> From<&T> for Leaf
+where
+    Leaf: From<T>,
+{
+    fn from(s: &T) -> Self {
+        s.clone().into()
+    }
+}
+
+impl<O, T, M> From<T> for Operand<O, Leaf, M>
+where
+    T: Into<Leaf>,
+{
+    fn from(l: T) -> Self {
+        Operand::Leaf(l.into())
+    }
+}
 
 // impl<N, T> From<T> for Node<N>
 // where

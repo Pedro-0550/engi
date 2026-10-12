@@ -24,8 +24,8 @@ use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 use crate::{
     core::value,
     expr::{
-        Expr, Node,
-        dag::{Branch, Leaf},
+        Expr, Operand,
+        dag::{Leaf, Operation},
         domain::{Domain, Realized},
     },
     symbol::{
@@ -192,10 +192,10 @@ impl Realized {
             expr: &Expr,
             symbols: &AHashMap<Symbol, Value>,
             bcx: &mut FunctionBuilder<'_>,
-            fns: &MathFns,
+            funcs: &MathFns,
         ) -> Value {
-            expr.clone().fold(|_, _, node| match node {
-                Node::Leaf(leaf) => match leaf {
+            expr.fold(|_, folded| match folded {
+                Operand::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => {
                         symbols.get(&symbol).copied().unwrap()
                     }
@@ -219,43 +219,46 @@ impl Realized {
                         bcx.ins().f64const(qty.re)
                     }
                 },
-                Node::Branch(branch) => match branch {
-                    Branch::Add([a, b]) => bcx.ins().fadd(a, b),
-                    Branch::Mul([a, b]) => bcx.ins().fmul(a, b),
-                    Branch::Min([a, b]) => bcx.ins().fmin(a, b),
-                    Branch::Max([a, b]) => bcx.ins().fmax(a, b),
-                    Branch::Sin(v) => fns.sin(bcx, v),
-                    Branch::Cos(v) => fns.cos(bcx, v),
-                    Branch::Tan(v) => fns.tan(bcx, v),
-                    Branch::Asin(v) => fns.asin(bcx, v),
-                    Branch::Acos(v) => fns.acos(bcx, v),
-                    Branch::Atan(v) => fns.atan(bcx, v),
-                    Branch::Sinh(v) => fns.sinh(bcx, v),
-                    Branch::Cosh(v) => fns.cosh(bcx, v),
-                    Branch::Tanh(v) => fns.tanh(bcx, v),
-                    Branch::Asinh(v) => fns.asinh(bcx, v),
-                    Branch::Acosh(v) => fns.acosh(bcx, v),
-                    Branch::Atanh(v) => fns.atanh(bcx, v),
-                    Branch::Arg(_) => todo!(),
-                    Branch::Conj(v) => v,
-                    Branch::Norm(v) => fns.abs(bcx, v),
-                    Branch::Sign(v) => fns.signum(bcx, v),
-                    Branch::Real(v) => v,
-                    Branch::Imag(_) => bcx.ins().f64const(0.0),
-                    Branch::Pow { base, exp } => fns.powf(bcx, base, exp),
-                    Branch::Log { base, arg } => {
-                        let a = fns.ln(bcx, arg);
-                        let b = fns.ln(bcx, base);
+                Operand::Matrix(_) => panic!(
+                    "Only scalar expressions can be compiled.
+                    The fact a matrix is present here indicates a soundness issue in scalarize."
+                ),
+                Operand::Operation(operation) => match operation {
+                    Operation::Add([a, b]) => bcx.ins().fadd(*a, *b),
+                    Operation::Mul([a, b]) => bcx.ins().fmul(*a, *b),
+                    Operation::Min([a, b]) => bcx.ins().fmin(*a, *b),
+                    Operation::Max([a, b]) => bcx.ins().fmax(*a, *b),
+                    Operation::Sin(v) => funcs.sin(bcx, *v),
+                    Operation::Cos(v) => funcs.cos(bcx, *v),
+                    Operation::Tan(v) => funcs.tan(bcx, *v),
+                    Operation::Asin(v) => funcs.asin(bcx, *v),
+                    Operation::Acos(v) => funcs.acos(bcx, *v),
+                    Operation::Atan(v) => funcs.atan(bcx, *v),
+                    Operation::Sinh(v) => funcs.sinh(bcx, *v),
+                    Operation::Cosh(v) => funcs.cosh(bcx, *v),
+                    Operation::Tanh(v) => funcs.tanh(bcx, *v),
+                    Operation::Asinh(v) => funcs.asinh(bcx, *v),
+                    Operation::Acosh(v) => funcs.acosh(bcx, *v),
+                    Operation::Atanh(v) => funcs.atanh(bcx, *v),
+                    Operation::Arg(_) => todo!(),
+                    Operation::Conj(v) =>* v,
+                    Operation::Norm(v) => funcs.abs(bcx, *v),
+                    Operation::Sign(v) => funcs.signum(bcx, *v),
+                    Operation::Real(v) => *v,
+                    Operation::Imag(_) => bcx.ins().f64const(0.0),
+                    Operation::Pow { base, exp } => funcs.powf(bcx, *base, *exp),
+                    Operation::Log { base, arg } => {
+                        let a = funcs.ln(bcx, *arg);
+                        let b = funcs.ln(bcx, *base);
 
                         bcx.ins().fdiv(a, b)
                     }
-                    Branch::Atan2 { x: a, y: b } => fns.atan2(bcx, a, b),
-                    Branch::Matrix(matrix) => todo!(),
-                    Branch::Transpose(_) => todo!(),
-                    Branch::Det(_) => todo!(),
-                    Branch::Rank(_) => todo!(),
-                    Branch::Trace(_) => todo!(),
-                    Branch::Conditional { cond, pass, fail } => {
+                    Operation::Atan2 { x: a, y: b } => funcs.atan2(bcx, *a, *b),
+                    Operation::Transpose(_) => todo!(),
+                    Operation::Det(_) => todo!(),
+                    Operation::Rank(_) => todo!(),
+                    Operation::Trace(_) => todo!(),
+                    Operation::Conditional { cond, pass, fail } => {
                         todo!()
                     }
                 },
@@ -268,7 +271,12 @@ impl Realized {
         );
 
         bcx.ins().store(MemFlagsData::trusted(), re, output_ptr, 0);
-        bcx.ins().store(MemFlagsData::trusted(), im, output_ptr, 8);
+        bcx.ins().store(
+            MemFlagsData::trusted(),
+            im,
+            output_ptr,
+            size_of::<f64>() as i32,
+        );
 
         bcx.ins().return_(&[]);
         bcx.seal_all_blocks();
