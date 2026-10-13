@@ -35,8 +35,8 @@ use crate::{
         },
         shape::Shape,
     },
-    model::Variable,
-    simplify::{self, EquivalencyGraph, rules},
+    model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
+    simplify::{self, EquivalencyGraph, pattern::Wildcard, rules},
     symbol::{
         Symbol,
         constants::{Constant, e},
@@ -46,36 +46,42 @@ use crate::{
 
 /// A mathematical expression based on a directed acryllic graph
 ///
-/// An Expr is just a [`Dag`] where an `Operand::Operation` refers to an operation.
-/// In other words, a node refers to other nodes.
-///
-/// This is in contrast to an [`EquivalencyGraph`], where a node refers to a class.
+/// The W parameter is used for wildcards, its [`!`] (`never`) by default since wildcards shouldn't be present in
+/// normal expressions, only e-graph patterns, which are of type `Expr<Wildcard>`.
 #[derive(Clone)]
-pub struct Expr {
-    dag: Dag<Operand, OperationId>,
+pub struct Expr<W = !>
+where
+    W: Eq + Hash, {
+    dag: Dag<Operand<W>, OperationId, LeafId, MatrixId>,
 }
 
-/// An [`Operation`]'s operand. Can be either a leaf, a matrix, or the result of another operation.
-/// This is decoupled from the DAG because in Exprs an operand refers to either an operation, a matrix or a leaf,
-/// while in an equivalency graph it refers only to classes.
+/// An [`Operation`]'s operand. This is like a node handle in traditional DAGs
 #[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant)]
-pub enum Operand<O = OperationId, L = LeafId, M = MatrixId> {
+pub enum Operand<W = !, O = OperationId, L = LeafId, M = MatrixId> {
     Leaf(L),
     Matrix(M),
     Operation(O),
+    Wildcard(W),
+    Symbol(Symbol),
 }
 
-type FetchedOperand<'a> =
-    Operand<&'a Operation<Operand, ConditionId>, &'a Leaf, &'a Matrix<Operand>>;
+pub type FetchedOperand<'a, W = !> = Operand<
+    W,
+    &'a Operation<Operand<W>, ConditionId>,
+    &'a Leaf,
+    &'a Matrix<Operand<W>>,
+>;
 
-type BuiltOperand =
-    Operand<Operation<Operand, ConditionId>, Leaf, Matrix<Operand>>;
+pub type BuiltOperand<W = !> =
+    Operand<W, Operation<Operand<W>, ConditionId>, Leaf, Matrix<Operand<W>>>;
 
-type FoldedOperand<'a, T> =
-    Operand<Operation<&'a T, ()>, &'a Leaf, Matrix<&'a T>>;
+pub type FoldedOperand<'a, T> =
+    Operand<!, Operation<&'a T, ()>, &'a Leaf, Matrix<&'a T>>;
 
-pub struct EditContext<'e> {
-    expr: Cell<Option<&'e mut Expr>>,
+pub struct EditContext<'e, W = !>
+where
+    W: Eq + Hash, {
+    expr: Cell<Option<&'e mut Expr<W>>>,
 }
 
 #[derive(Eq, Clone, Copy, PartialEq)]
@@ -86,19 +92,10 @@ enum Order {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl Expr {
-    pub fn fetch(&self, op: Operand) -> FetchedOperand<'_> {
-        match op {
-            Operand::Leaf(id) => Operand::Leaf(&self.dag.leaves[id]),
-            Operand::Matrix(id) => Operand::Matrix(&self.dag.matrices[id]),
-            Operand::Operation(id) => {
-                Operand::Operation(&self.dag.operations[id])
-            }
-        }
-    }
-}
-
-impl FetchedOperand<'_> {
+impl<W> FetchedOperand<'_, W>
+where
+    W: Copy,
+{
     // pub fn iter_children(&self) -> slice::Iter<'_, Operand> {
     //     match self {
     //         Operand::Leaf(_) => [].iter(),
@@ -107,24 +104,32 @@ impl FetchedOperand<'_> {
     //     }
     // }
 
-    pub fn for_each_operand(&self, f: impl FnMut(&Operand)) {
+    pub fn for_each_operand(&self, f: impl FnMut(&Operand<W>)) {
         match self {
-            Operand::Leaf(_) => (),
             Operand::Matrix(m) => m.elements().iter().for_each(f),
             Operand::Operation(op) => op.for_each_operand(f),
+            _ => (),
         }
     }
 
-    pub fn child(&self, at: usize) -> Option<Operand> {
+    pub fn child(&self, at: usize) -> Option<Operand<W>> {
         match self {
-            Operand::Leaf(_) => None,
             Operand::Matrix(m) => m.elements().get(at).copied(),
             Operand::Operation(op) => op.operand(at).copied(),
+            _ => None,
         }
     }
 }
 
-impl<O, L, M> Operand<O, L, M> {
+impl<W, O, L, M> Operand<W, O, L, M> {
+    pub fn as_symbol(&self) -> Option<&Symbol> {
+        if let Self::Symbol(v) = self { Some(v) } else { None }
+    }
+
+    pub fn as_wildcard(&self) -> Option<&W> {
+        if let Self::Wildcard(v) = self { Some(v) } else { None }
+    }
+
     pub fn as_leaf(&self) -> Option<&L> {
         if let Self::Leaf(v) = self { Some(v) } else { None }
     }
@@ -138,7 +143,23 @@ impl<O, L, M> Operand<O, L, M> {
     }
 }
 
-impl Expr {
+impl<W> Expr<W>
+where
+    W: Hash + Eq + Clone + Copy,
+{
+    #[inline(always)]
+    pub fn fetch(&self, op: Operand<W>) -> FetchedOperand<'_, W> {
+        match op {
+            Operand::Leaf(id) => Operand::Leaf(&self.dag.leaves[id]),
+            Operand::Matrix(id) => Operand::Matrix(&self.dag.matrices[id]),
+            Operand::Operation(id) => {
+                Operand::Operation(&self.dag.operations[id])
+            }
+            Operand::Wildcard(w) => Operand::Wildcard(w),
+            Operand::Symbol(symbol) => Operand::Symbol(symbol),
+        }
+    }
+
     pub fn size(&self) -> usize {
         self.dag.operations.len()
             + self.dag.conditions.len()
@@ -146,34 +167,44 @@ impl Expr {
             + self.dag.matrices.len()
     }
 
-    pub fn root(&self) -> Option<Operand> {
+    pub fn root(&self) -> Option<Operand<W>> {
         self.dag.root
     }
 
-    pub fn edit(&mut self) -> EditContext<'_> {
+    pub fn edit(&mut self) -> EditContext<'_, W> {
         EditContext { expr: Cell::new(Some(self)) }
     }
 
-    pub fn as_single(&self) -> Option<Operand> {
-        if self.size() == 1 { self.dag.root } else { None }
+    pub fn as_single(&self) -> Option<FetchedOperand<W>> {
+        if self.size() == 1 {
+            self.dag.root.map(|op| self.fetch(op))
+        } else {
+            None
+        }
     }
 
-    pub fn substituted(&self, bindings: &AHashMap<Symbol, Expr>) -> Expr {
+    /// Substitutes every occurance of the given symbols with their bound expressions.
+    /// Returns Some if at least one substitution was made, None otherwise.
+    pub fn substituted(
+        &self,
+        bindings: &AHashMap<Symbol, Expr<W>>,
+    ) -> Option<Expr<W>> {
         if bindings.is_empty() {
-            return self.clone();
+            return None;
         }
 
-        struct RebuildContext<'a> {
+        struct RebuildContext<'a, W: Copy + Eq + Hash> {
             mapped_conds: AHashMap<ConditionId, ConditionId>,
-            mapped_ops: AHashMap<Operand, Operand>,
-            bindings: &'a AHashMap<Symbol, Expr>,
-            out: Expr,
-            src: &'a Expr,
+            mapped_ops: AHashMap<Operand<W>, Operand<W>>,
+            bindings: &'a AHashMap<Symbol, Expr<W>>,
+            out: Expr<W>,
+            src: &'a Expr<W>,
+            changed: bool,
         }
 
-        fn rebuild_condition(
+        fn rebuild_condition<W: Copy + Eq + Hash>(
             cond: ConditionId,
-            ctx: &mut RebuildContext<'_>,
+            ctx: &mut RebuildContext<'_, W>,
         ) -> ConditionId {
             if let Some(&existing) = ctx.mapped_conds.get(&cond) {
                 return existing;
@@ -191,21 +222,19 @@ impl Expr {
             mapped_id
         }
 
-        fn rebuild_operand(
-            op: Operand,
-            ctx: &mut RebuildContext<'_>,
-        ) -> Operand {
+        fn rebuild_operand<W: Copy + Eq + Hash>(
+            op: Operand<W>,
+            ctx: &mut RebuildContext<'_, W>,
+        ) -> Operand<W> {
             if let Some(&existing) = ctx.mapped_ops.get(&op) {
                 return existing;
             }
 
             let new_op = match op {
-                Operand::Leaf(id) => {
-                    let leaf = &ctx.src.dag.leaves[id];
-                    if let Leaf::Symbol(s) = leaf
-                        && ctx.bindings.contains_key(&s)
-                    {
+                Operand::Symbol(s) => {
+                    if ctx.bindings.contains_key(&s) {
                         let bound = &ctx.bindings[&s];
+                        ctx.changed = true;
                         ctx.out.import(
                             bound,
                             bound.root().expect(
@@ -213,7 +242,7 @@ impl Expr {
                             ),
                         )
                     } else {
-                        Operand::Leaf(ctx.out.dag.leaves.insert(leaf.clone()))
+                        Operand::Symbol(s)
                     }
                 }
                 Operand::Matrix(id) => {
@@ -232,6 +261,10 @@ impl Expr {
                         ctx.out.dag.operations.insert(mapped_operation),
                     )
                 }
+                Operand::Leaf(id) => Operand::Leaf(
+                    ctx.out.dag.leaves.insert(ctx.src.dag.leaves[id].clone()),
+                ),
+                Operand::Wildcard(w) => Operand::Wildcard(w),
             };
 
             ctx.mapped_ops.insert(op, new_op);
@@ -244,44 +277,52 @@ impl Expr {
             bindings,
             out: Expr::new(),
             src: &self,
+            changed: false,
         };
 
         let root = rebuild_operand(
             self.root().expect("Cannot substitute for a rootless expression"),
             &mut ctx,
         );
-        ctx.out.set_root(root);
-        ctx.out
+
+        if ctx.changed {
+            ctx.out.set_root(root);
+            Some(ctx.out)
+        } else {
+            None
+        }
     }
 
-    pub fn push(&mut self, operand: BuiltOperand) -> Operand {
+    pub fn push(&mut self, operand: BuiltOperand<W>) -> Operand<W> {
         let op = match operand {
             Operand::Leaf(l) => Operand::Leaf(self.dag.leaves.insert(l)),
             Operand::Matrix(m) => Operand::Matrix(self.dag.matrices.insert(m)),
             Operand::Operation(op) => {
                 Operand::Operation(self.dag.operations.insert(op))
             }
+            Operand::Wildcard(w) => Operand::Wildcard(w),
+            Operand::Symbol(symbol) => Operand::Symbol(symbol),
         };
         op
     }
 
-    pub fn push_root(&mut self, new_root: BuiltOperand) -> Operand {
+    pub fn push_root(&mut self, new_root: BuiltOperand<W>) -> Operand<W> {
         let op = self.push(new_root);
         self.dag.root = Some(op);
         op
     }
 
-    pub fn set_root(&mut self, new_root: Operand) {
+    pub fn set_root(&mut self, new_root: Operand<W>) {
         self.dag.root = Some(new_root);
     }
 
-    fn dfs(&self, order: Order) -> Vec<Operand> {
+    fn dfs(&self, order: Order) -> Vec<Operand<W>> {
         let mut visit = Vec::with_capacity(self.size());
 
-        fn dfs_inner<'e>(
-            expr: &'e Expr,
-            current: Operand,
-            into: &mut Vec<Operand>,
+        fn dfs_inner<'e, W: Hash + Eq + Copy>(
+            expr: &'e Expr<W>,
+            current: Operand<W>,
+            into: &mut Vec<Operand<W>>,
             order: &Order,
         ) {
             if *order == Order::Pre {
@@ -304,6 +345,95 @@ impl Expr {
             &order,
         );
         visit
+    }
+
+    /// Imports an entire operand's subtree from another Expr, mapping Ids appropriately
+    pub fn import(&mut self, src: &Expr<W>, src_id: Operand<W>) -> Operand<W> {
+        struct ImportContext<'a, W: Copy + Hash + Eq> {
+            dest: &'a mut Expr<W>,
+            src: &'a Expr<W>,
+            mapped_ops: AHashMap<Operand<W>, Operand<W>>,
+            mapped_conds: AHashMap<ConditionId, ConditionId>,
+        }
+
+        fn import_condition<W: Copy + Hash + Eq>(
+            src_id: ConditionId,
+            ctx: &mut ImportContext<'_, W>,
+        ) -> ConditionId {
+            if let Some(&existing) = ctx.mapped_conds.get(&src_id) {
+                return existing;
+            }
+
+            let mapped = ctx.src.dag.conditions[src_id].map_with(
+                ctx,
+                |ctx, op| import_operand(*op, ctx),
+                |ctx, cond| import_condition(*cond, ctx),
+            );
+
+            let mapped_id = ctx.dest.dag.conditions.insert(mapped);
+            ctx.mapped_conds.insert(src_id, mapped_id);
+
+            mapped_id
+        }
+
+        fn import_operand<W: Copy + Hash + Eq>(
+            src_op: Operand<W>,
+            ctx: &mut ImportContext<'_, W>,
+        ) -> Operand<W> {
+            if let Some(&mapped) = ctx.mapped_ops.get(&src_op) {
+                return mapped;
+            }
+
+            let mapped_op = match ctx.src.fetch(src_op) {
+                Operand::Leaf(l) => {
+                    Operand::Leaf(ctx.dest.dag.leaves.insert(l.clone()))
+                }
+                Operand::Matrix(mat) => {
+                    let mapped_matrix = mat.map(|op| import_operand(*op, ctx));
+                    Operand::Matrix(ctx.dest.dag.matrices.insert(mapped_matrix))
+                }
+                Operand::Operation(op) => {
+                    let mapped_operation = op.map_with(
+                        ctx,
+                        |ctx, op| import_operand(*op, ctx),
+                        |ctx, cond| import_condition(*cond, ctx),
+                    );
+                    Operand::Operation(
+                        ctx.dest.dag.operations.insert(mapped_operation),
+                    )
+                }
+                Operand::Wildcard(w) => Operand::Wildcard(w),
+                Operand::Symbol(symbol) => Operand::Symbol(symbol),
+            };
+
+            ctx.mapped_ops.insert(src_op, mapped_op);
+            mapped_op
+        }
+
+        let mut ctx = ImportContext {
+            dest: self,
+            mapped_conds: AHashMap::new(),
+            mapped_ops: AHashMap::new(),
+            src,
+        };
+
+        import_operand(src_id, &mut ctx)
+    }
+
+    pub fn new() -> Self {
+        Self { dag: Dag::new() }
+    }
+
+    pub fn symbols(&self) -> impl Iterator<Item = Symbol> {
+        self.dag.leaves.iter().filter_map(|x| x.as_symbol().copied())
+    }
+}
+
+impl Expr<!> {
+    pub fn simplified(&self) -> Expr {
+        let mut egraph = EquivalencyGraph::build(&*self);
+        egraph.rewrite(&[rules::algebraic(), rules::trig()].concat());
+        egraph.extract()
     }
 
     pub fn fold<T: Clone>(
@@ -336,6 +466,8 @@ impl Expr {
                 Operand::Operation(op) => Operand::Operation(
                     op.map(|child| mapped.get(child).unwrap(), |_| ()),
                 ),
+                Operand::Symbol(symbol) => Operand::Symbol(symbol),
+                Operand::Wildcard(never) => never, // ! never exists
             };
 
             let result = f(op, mapped_node);
@@ -343,91 +475,6 @@ impl Expr {
         }
 
         mapped.remove(&root).expect("root node should be folded")
-    }
-
-    /// Imports an entire operand's subtree from another Expr, mapping Ids appropriately
-    pub fn import(&mut self, src: &Expr, src_id: Operand) -> Operand {
-        struct ImportContext<'a> {
-            dest: &'a mut Expr,
-            src: &'a Expr,
-            mapped_ops: AHashMap<Operand, Operand>,
-            mapped_conds: AHashMap<ConditionId, ConditionId>,
-        }
-
-        fn import_condition(
-            src_id: ConditionId,
-            ctx: &mut ImportContext<'_>,
-        ) -> ConditionId {
-            if let Some(&existing) = ctx.mapped_conds.get(&src_id) {
-                return existing;
-            }
-
-            let mapped = ctx.src.dag.conditions[src_id].map_with(
-                ctx,
-                |ctx, op| import_operand(*op, ctx),
-                |ctx, cond| import_condition(*cond, ctx),
-            );
-
-            let mapped_id = ctx.dest.dag.conditions.insert(mapped);
-            ctx.mapped_conds.insert(src_id, mapped_id);
-
-            mapped_id
-        }
-
-        fn import_operand(
-            src_op: Operand,
-            ctx: &mut ImportContext<'_>,
-        ) -> Operand {
-            if let Some(&mapped) = ctx.mapped_ops.get(&src_op) {
-                return mapped;
-            }
-
-            let mapped_op = match ctx.src.fetch(src_op) {
-                Operand::Leaf(l) => {
-                    Operand::Leaf(ctx.dest.dag.leaves.insert(l.clone()))
-                }
-                Operand::Matrix(mat) => {
-                    let mapped_matrix = mat.map(|op| import_operand(*op, ctx));
-                    Operand::Matrix(ctx.dest.dag.matrices.insert(mapped_matrix))
-                }
-                Operand::Operation(op) => {
-                    let mapped_operation = op.map_with(
-                        ctx,
-                        |ctx, op| import_operand(*op, ctx),
-                        |ctx, cond| import_condition(*cond, ctx),
-                    );
-                    Operand::Operation(
-                        ctx.dest.dag.operations.insert(mapped_operation),
-                    )
-                }
-            };
-
-            ctx.mapped_ops.insert(src_op, mapped_op);
-            mapped_op
-        }
-
-        let mut ctx = ImportContext {
-            dest: self,
-            mapped_conds: AHashMap::new(),
-            mapped_ops: AHashMap::new(),
-            src,
-        };
-
-        import_operand(src_id, &mut ctx)
-    }
-
-    pub fn new() -> Self {
-        Self { dag: Dag::new() }
-    }
-
-    pub fn symbols(&self) -> impl Iterator<Item = Symbol> {
-        self.dag.leaves.iter().filter_map(|x| x.as_symbol().copied())
-    }
-
-    pub fn simplified(&self) -> Expr {
-        let mut egraph = EquivalencyGraph::build(&*self);
-        egraph.rewrite(&[rules::algebraic(), rules::trig()].concat());
-        egraph.extract()
     }
 }
 
@@ -444,6 +491,36 @@ impl Expr {
 // }
 
 /* -------------------------------------------------------------------------- */
+
+impl<W> From<Symbol> for Operand<W> {
+    fn from(s: Symbol) -> Self {
+        Operand::Symbol(s)
+    }
+}
+
+impl<W> From<Variable> for Operand<W> {
+    fn from(s: Variable) -> Self {
+        Operand::Symbol(s.symbol())
+    }
+}
+
+impl<W> From<Connector> for Operand<W> {
+    fn from(s: Connector) -> Self {
+        Operand::Symbol(s.variable().symbol())
+    }
+}
+
+impl<W> From<VariableBuilder<'_>> for Operand<W> {
+    fn from(s: VariableBuilder<'_>) -> Self {
+        Operand::Symbol(s.variable().symbol())
+    }
+}
+
+impl<W> From<ConnectorBuilder<'_>> for Operand<W> {
+    fn from(s: ConnectorBuilder<'_>) -> Self {
+        Operand::Symbol(s.connector().variable().symbol())
+    }
+}
 
 impl Mul<Expr> for Expr {
     type Output = Expr;

@@ -195,10 +195,10 @@ impl Realized {
             funcs: &MathFns,
         ) -> Value {
             expr.fold(|_, folded| match folded {
+                Operand::Symbol(symbol) => {
+                    symbols.get(&symbol).copied().unwrap()
+                }
                 Operand::Leaf(leaf) => match leaf {
-                    Leaf::Symbol(symbol) => {
-                        symbols.get(&symbol).copied().unwrap()
-                    }
                     Leaf::Constant(constant) => {
                         let qty = constant
                             .quantity()

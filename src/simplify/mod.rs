@@ -25,10 +25,8 @@ use crate::{
         value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
-        Expr,
-        dag::{
-            self, Branch, BranchKind, Leaf, LeafKind, Matrix, Node, NodeKind,
-        },
+        Expr, FetchedOperand, Operand,
+        dag::{self, Dag, Leaf, LeafKind, Matrix, OperationId, OperationKind},
         domain::Domain,
         shape::Shape,
     },
@@ -48,19 +46,7 @@ mod test;
 /* --------------------------------- STRUCTS -------------------------------- */
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Default, PartialOrd, Ord)]
-pub struct ClassId(dag::Idx);
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-struct NodeId(dag::Idx);
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct LeafId(dag::Idx);
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct MatrixId(dag::Idx);
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct ConditionalId(dag::Idx);
+pub struct ClassId(dag::Size);
 
 pub struct Substitution {
     bindings: AHashMap<Wildcard, ClassId>,
@@ -68,32 +54,24 @@ pub struct Substitution {
 
 #[derive(Default)]
 pub struct EquivalencyGraph {
-    node_cons: AHashMap<EquivalencyNode, ClassId>,
-    nodes: Vec<EquivalencyNode>,
-
-    leaf_cons: AHashMap<Leaf, LeafId>,
-    leaves: Vec<Leaf>,
-
-    matrix_cons: AHashMap<Matrix<ClassId>, MatrixId>,
-    matrices: Vec<Matrix<ClassId>>,
+    dag: Dag<ClassId, ClassId, ClassId, ClassId>,
 
     classes: Vec<EquivalencyClass>,
     worklist: Vec<ClassId>,
     matchlist: Vec<ClassId>,
-
-    root: ClassId,
 }
 
 pub struct EquivalencyClass {
     // while this does use a bit more memory, its 12% faster over a hashmap,
-    // even though a hashmap would only need to hash NodeKind which is 2 bytes..
+    // even though a hashmap would only need to hash 2 bytes..
     // I guess its done so often that its worth it, at least thats what i got from profiling
-    nodes_by_kind: [Vec<NodeId>; {
-        variant_count::<LeafKind>() + variant_count::<BranchKind>()
+    operands_by_kind: [Vec<Operand>; {
+        variant_count::<LeafKind>() + variant_count::<OperationKind>() + 1 // 1 for matrix
     }],
-    nodes: Vec<NodeId>,
+    operands: Vec<Operand>,
+    child_of: Vec<Operand>,
+
     parent: Cell<ClassId>,
-    child_of: Vec<NodeId>,
     analysis: Analysis,
 }
 
@@ -103,34 +81,33 @@ pub struct Analysis {
     qty: Option<Quantity>,
 }
 
-#[derive(Clone, Eq, PartialEq)]
-enum EquivalencyNode {
-    Leaf(LeafKind, LeafId),
-    Branch(Branch<ClassId, MatrixId, ConditionalId>),
-}
-
 impl EquivalencyClass {
     pub fn domain(&self) -> Domain {
-        self.domain
+        self.analysis.domain
     }
 
     pub fn shape(&self) -> Shape {
-        self.shape
+        self.analysis.shape
     }
 }
 
-impl NodeKind {
-    fn id(&self) -> usize {
+impl FetchedOperand<'_> {
+    fn key(&self) -> u8 {
         match self {
-            NodeKind::Leaf(kind) => *kind as usize,
-            NodeKind::Branch(kind) => {
-                *kind as usize + variant_count::<LeafKind>()
+            Operand::Leaf(leaf) => leaf.kind() as u8,
+            Operand::Operation(op) => {
+                op.kind() as u8 + (variant_count::<LeafKind>() as u8)
+            }
+            Operand::Matrix(_) => {
+                variant_count::<OperationKind>() as u8
+                    + variant_count::<LeafKind>() as u8
+                    + 1
             }
         }
     }
 }
 
-impl EquivalencyExpr {
+impl Operand {
     fn build(
         graph: &mut EquivalencyGraph,
         pat: &Pattern,

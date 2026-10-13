@@ -10,7 +10,7 @@ use crate::simplify::pattern::{
 macro_rules! wildcards {
     ($($var:ident),* $(,)?) => {
         $(
-            let $var: Wildcard = Wildcard(${index()});
+            const $var: Wildcard = Wildcard(${index()});
         )*
     };
 }
@@ -26,7 +26,7 @@ macro_rules! rule {
                 $(
                     Condition {
                         over: Box::new($over),
-                        f: Rc::new(move |$ctx| { $b }),
+                        f: ( |$ctx| { $b }),
                     }
                 ),*
             )?
@@ -43,7 +43,7 @@ macro_rules! rule {
                 $(
                     Condition {
                         over: Box::new($over),
-                        f: Rc::new(move |$ctx| { $b }),
+                        f: ( |$ctx| { $b }),
                     }
                 ),*
             )?
@@ -52,7 +52,7 @@ macro_rules! rule {
                 $(
                     Condition {
                         over: Box::new($over),
-                        f: Rc::new(move |$ctx| { $b }),
+                        f: ( |$ctx| { $b }),
                     }
                 ),*
             )?
@@ -60,9 +60,9 @@ macro_rules! rule {
     };
 }
 
-pub fn algebraic() -> Vec<Rule> {
-    wildcards!(x, y, a, b);
+wildcards!(x, y, a, b);
 
+pub fn algebraic() -> Vec<Rule> {
     [
         rule!({ x + y } -> { y + x }),
         rule!({ x + 0 } -> { x }),
@@ -78,9 +78,9 @@ pub fn algebraic() -> Vec<Rule> {
 
         rule!({ x * y } -> { y * x } when [
             |ctx| {
-                let x = ctx.shape(x);
-                let y = ctx.shape(y);
-                x.is_scalar() || y.is_scalar()
+                let x_s = ctx.shape(x);
+                let y_s = ctx.shape(y);
+                x_s.is_scalar() || y_s.is_scalar()
             } over [x, y]
         ]),
         rule!({ x * (a + b) } <-> { x * a + x * b }),
@@ -100,29 +100,29 @@ pub fn algebraic() -> Vec<Rule> {
 
         rule!({ x.pow(a) * x.pow(b) } <-> { x.pow(a + b) } when [
             |ctx| {
-                let x = ctx.domain(x);
+                let x_d = ctx.domain(x);
 
-                x.is_real()
+                x_d.is_real()
             } over [x],
             |ctx| {
-                let a = ctx.domain(a);
+                let a_d = ctx.domain(a);
 
-                a.is_real()
+                a_d.is_real()
             } over [a],
             |ctx| {
-                let b = ctx.domain(b);
+                let b_d = ctx.domain(b);
 
-                b.is_real()
+                b_d.is_real()
             } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                let a = ctx.domain(a);
-                let b = ctx.domain(b);
+                let x_d = ctx.domain(x);
+                let a_d = ctx.domain(a);
+                let b_d = ctx.domain(b);
 
-                x.re.is_pos() || (
-                    !x.re.has_zero()
-                    && a.is_integer()
-                    && b.is_integer()
+                x_d.re.is_pos() || (
+                    !x_d.re.has_zero()
+                    && a_d.is_integer()
+                    && b_d.is_integer()
                 )
             } over [x, a, b]
         ]),

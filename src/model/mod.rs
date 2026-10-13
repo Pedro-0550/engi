@@ -111,7 +111,7 @@ pub trait InterfaceArrayExt<I: InterfaceBuilder> {
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct AssembledModel {
     pub name: String,
     pub equations: Vec<Equation>,
@@ -165,7 +165,7 @@ pub struct ConnectorId {
 #[derive(Clone, Hash, Debug, PartialEq, PartialOrd, Eq)]
 pub struct ModelPath(Vec<usize>);
 
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct System {
     models: RefCell<Vec<AssembledModel>>,
     adjacency: RefCell<AHashMap<InterfaceId, AHashSet<InterfaceId>>>,
@@ -173,7 +173,7 @@ pub struct System {
     var_association: RefCell<AHashMap<VariableId, Associated>>,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct CompiledSystem {
     blocks: Vec<Vec<Expr>>,
 }
@@ -185,19 +185,19 @@ pub struct SolvedSystem {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Variable(Symbol);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct VariableBuilder<'s> {
     id: VariableId,
     system: &'s System,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub struct ConnectorBuilder<'s> {
     id: ConnectorId,
     system: &'s System,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, Clone)]
 pub enum Associated {
     Guess(Quantity),
     Binding(Expr),
@@ -500,10 +500,9 @@ impl System {
                 let mut resid = eq.residual();
 
                 loop {
-                    let step = resid.substituted(&bindings);
-                    if step == resid {
+                    let Some(step) = resid.substituted(&bindings) else {
                         break;
-                    }
+                    };
                     resid = step;
                 }
 
@@ -511,7 +510,13 @@ impl System {
 
                 println!("{}", resid);
 
-                if resid == 0 { None } else { Some(resid) }
+                if try { resid.as_single()?.as_leaf()?.as_quantity()? }
+                    .is_some_and(|x| x.value() == 0)
+                {
+                    None
+                } else {
+                    Some(resid)
+                }
             })
             .collect();
 

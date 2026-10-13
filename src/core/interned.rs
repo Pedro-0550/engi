@@ -6,7 +6,7 @@ use std::{
     ops::Deref,
     sync::{
         self, LazyLock, RwLock, RwLockReadGuard,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{Atomic, AtomicUsize, Ordering},
     },
 };
 
@@ -18,6 +18,8 @@ use dashmap::{
     },
 };
 
+use crate::expr::dag;
+
 /* --------------------------------- STRUCTS -------------------------------- */
 
 // TODO: Inventory for pre-interned values
@@ -26,10 +28,10 @@ pub struct Interned<T: Hash + Eq> {
     element_to_handle: LazyLock<DashMap<T, Handle<T>>>,
     handle_to_element: LazyLock<DashMap<Handle<T>, T>>,
 
-    next_id: AtomicUsize,
+    next_id: Atomic<dag::Size>,
 }
 
-pub struct Handle<T>(pub(crate) usize, PhantomData<T>);
+pub struct Handle<T>(pub(crate) dag::Size, PhantomData<T>);
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
@@ -42,7 +44,7 @@ where
         Self {
             element_to_handle: LazyLock::new(|| DashMap::new()),
             handle_to_element: LazyLock::new(|| DashMap::new()),
-            next_id: AtomicUsize::new(0),
+            next_id: Atomic::<dag::Size>::new(0),
         }
     }
 
@@ -60,7 +62,7 @@ where
         id
     }
 
-    pub(crate) fn insert_at(&self, id: usize, val: T) {
+    pub(crate) fn insert_at(&self, id: dag::Size, val: T) {
         let handle = Handle::new(id);
 
         self.handle_to_element.insert(handle, val.clone());
@@ -101,7 +103,7 @@ where
 }
 
 impl<T> Handle<T> {
-    pub(crate) const fn new(id: usize) -> Self {
+    pub(crate) const fn new(id: dag::Size) -> Self {
         Self(id, PhantomData)
     }
 }

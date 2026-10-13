@@ -3,17 +3,17 @@ use std::num::NonZero;
 use super::dag::Leaf;
 use crate::expr::{
     Expr, FoldedOperand, Operand, OperationId,
-    dag::{Matrix, Operation},
+    dag::{self, Matrix, Operation},
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Shape {
-    pub rows: NonZero<usize>,
-    pub cols: NonZero<usize>,
+    pub rows: NonZero<dag::Size>,
+    pub cols: NonZero<dag::Size>,
 }
 
-impl From<(usize, usize)> for Shape {
-    fn from(value: (usize, usize)) -> Self {
+impl From<(dag::Size, dag::Size)> for Shape {
+    fn from(value: (dag::Size, dag::Size)) -> Self {
         Self::rect(value.0, value.1)
     }
 }
@@ -24,8 +24,8 @@ impl Shape {
     // If this changes in the future, use checked version instead.
     pub const SCALAR: Self = unsafe {
         Shape {
-            cols: NonZero::<usize>::new_unchecked(1),
-            rows: NonZero::<usize>::new_unchecked(1),
+            cols: NonZero::<dag::Size>::new_unchecked(1),
+            rows: NonZero::<dag::Size>::new_unchecked(1),
         }
     };
 
@@ -33,11 +33,11 @@ impl Shape {
         Self { rows: self.cols, cols: self.rows }
     }
 
-    pub fn square(size: usize) -> Self {
+    pub fn square(size: dag::Size) -> Self {
         Self { rows: size.try_into().unwrap(), cols: size.try_into().unwrap() }
     }
 
-    pub fn rect(rows: usize, cols: usize) -> Self {
+    pub fn rect(rows: dag::Size, cols: dag::Size) -> Self {
         Self { rows: rows.try_into().unwrap(), cols: cols.try_into().unwrap() }
     }
 
@@ -69,8 +69,8 @@ impl Shape {
 impl FoldedOperand<'_, Shape> {
     pub fn shape(&self) -> Shape {
         match self {
+            Operand::Symbol(symbol) => symbol.shape(),
             Operand::Leaf(leaf) => match leaf {
-                Leaf::Symbol(symbol) => symbol.shape(),
                 Leaf::Constant(constant) => constant.quantity().value().shape(),
                 Leaf::Quantity(quantity) => quantity.value().shape(),
             },
@@ -198,6 +198,7 @@ impl FoldedOperand<'_, Shape> {
                 }
             },
             Operand::Matrix(mat) => mat.shape(),
+            Operand::Wildcard(never) => *never,
         }
     }
 }

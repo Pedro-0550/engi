@@ -1,6 +1,6 @@
 /* --------------------------------- STRUCTS -------------------------------- */
 
-use std::{collections::HashMap, ops::Neg, rc::Rc};
+use std::{collections::HashMap, mem, ops::Neg, rc::Rc};
 
 use ahash::AHashMap;
 // use cranelift::codegen::ir::Constant;
@@ -10,15 +10,14 @@ use num::{complex::Complex64, pow::Pow};
 use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{
-        Expr,
+        Expr, Operand,
+        dag::{self, Dag, LeafId, MatrixId, OperationId, OperationKind},
         domain::Domain,
         shape::Shape,
-        dag::{Branch, Node, NodeKind},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::{
-        ClassId, EquivalencyClass, EquivalencyExpr, EquivalencyGraph,
-        EquivalencyNode, EquivalencyNodeStructure, Leaf, Substitution,
+        ClassId, EquivalencyClass, EquivalencyGraph, Leaf, Substitution,
     },
     symbol::{
         Symbol,
@@ -27,16 +26,19 @@ use crate::{
     units::{Quantity, Unit},
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Reg(usize);
+// This should be updated if we ever use more than 4 wildcard ids in rules
+pub const MAX_WILDCARD: usize = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Wildcard(pub(crate) usize);
+pub struct Reg(u8);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Wildcard(pub(crate) u8);
 
 pub struct Program {
     code: Vec<Instruction>,
-    allocations: AHashMap<Wildcard, Reg>,
-    register_count: usize,
+    allocations: [Option<Reg>; MAX_WILDCARD],
+    register_count: u8,
 }
 
 pub struct Machine;
@@ -44,7 +46,7 @@ pub struct Machine;
 #[derive(Clone)]
 pub struct Condition {
     pub over: Box<[Wildcard]>,
-    pub f: Rc<dyn Fn(ConditionContext<'_>) -> bool>,
+    pub f: fn(ConditionContext<'_>) -> bool,
 }
 
 #[derive(Clone)]
@@ -57,31 +59,39 @@ pub struct Rule {
 struct CompilerState {
     instructions: Vec<Instruction>,
     next: Reg,
-    allocations: AHashMap<Wildcard, Reg>,
+    allocations: [Option<Reg>; MAX_WILDCARD],
 }
 
 pub struct ConditionContext<'a> {
     registers: &'a [ClassId],
-    allocations: &'a AHashMap<Wildcard, Reg>,
+    allocations: [Option<Reg>; MAX_WILDCARD],
     graph: &'a EquivalencyGraph,
 }
 
 pub enum Instruction {
-    Bind { structure: EquivalencyNodeStructure, target: Reg, out: Reg },
+    Bind { structure: OperandStructure, target: Reg, out: Reg },
     Compare { a: Reg, b: Reg },
-    If { f: Rc<dyn Fn(ConditionContext<'_>) -> bool> },
+    If { f: fn(ConditionContext<'_>) -> bool },
 }
 
-#[derive(PartialEq, Clone, Eq)]
-pub enum Pattern {
-    Wildcard(Wildcard),
-    Node(Node<Box<Pattern>>),
+type Pattern = Expr<Wildcard>;
+
+/// Encapusalates all information required to check if two operands can be bound:
+/// * Leaves need to be equal, and since leaves are interned we can just compile tailored for each expr and compare IDs
+/// * Matrices only need to be of the same shape
+/// * Operations only need to be of the same kind
+pub enum OperandStructure {
+    Leaf(LeafId),
+    Matrix(Shape),
+    Operation(OperationKind),
 }
+
+/* -------------------------------------------------------------------------- */
 
 impl<'a> ConditionContext<'a> {
     pub fn class(&self, wildcard: Wildcard) -> Option<&'a EquivalencyClass> {
         let reg = self.allocations.get(&wildcard)?;
-        let class_id = self.registers[reg.0];
+        let class_id = self.registers[reg.0 as usize];
 
         let canonical_id = self.graph.find(class_id);
         Some(&self.graph.classes[canonical_id.0])
@@ -97,13 +107,6 @@ impl<'a> ConditionContext<'a> {
 }
 
 impl Pattern {
-    pub(crate) fn kind(&self) -> Option<NodeKind> {
-        match self {
-            Pattern::Wildcard(_) => None,
-            Pattern::Node(n) => Some(n.kind()),
-        }
-    }
-
     pub(crate) fn compile(&self, conditions: &[Condition]) -> Program {
         let mut state = CompilerState {
             instructions: Vec::new(),
@@ -332,12 +335,12 @@ impl From<Quantity> for Pattern {
 impl_op_permutations!(
     types = [
         i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value,
-        Constant, &Constant, Symbol, &Symbol, Wildcard, &Wildcard, Pattern,
-        &Pattern
+        Constant, &Constant, Symbol, &Symbol, Pattern, &Pattern, Wildcard,
+        &Wildcard, Expr, &Expr
     ],
     exclude_permutations = [
         i64, f64, Quantity, &Quantity, Value, &Value, Complex64, &Complex64,
-        Symbol, &Symbol, Constant, &Constant
+        Symbol, &Symbol, Constant, &Constant, Expr, &Expr
     ],
     exclude_specific = [],
     into = Pattern,
@@ -383,7 +386,6 @@ impl_op_permutations!(
             exp: Box::new(rhs),
         }))
     },
-    partial_eq = { lhs == rhs }
 );
 
 impl Neg for Pattern {
@@ -415,6 +417,17 @@ impl Neg for &Wildcard {
 
     fn neg(self) -> Self::Output {
         -1 * self
+    }
+}
+
+impl From<Expr<!>> for Pattern {
+    fn from(value: Expr<!>) -> Self {
+        const _: () =
+            assert!(size_of::<Operand<!>>() == size_of::<Operand<Wildcard>>());
+
+        // SAFETY: ! never happens, so its safe to just "discard" it,
+        // and we know Operand is the same size with or without it
+        unsafe { mem::transmute(value) }
     }
 }
 

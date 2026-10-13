@@ -7,13 +7,13 @@ use crate::{expr::Expr, symbol::Symbol};
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(Clone, PartialEq, Debug, Hash, Eq)]
+#[derive(Clone, Debug)]
 pub struct Equation {
     lhs: Expr,
     rhs: Expr,
 }
 
-#[derive(Clone, PartialEq, Debug, Hash, Eq)]
+#[derive(Clone, Debug)]
 pub enum Inequality {
     Greater,
     GreaterOrEq,
@@ -21,7 +21,7 @@ pub enum Inequality {
     LessOrEq,
 }
 
-#[derive(Clone, PartialEq, Debug, Hash, Eq)]
+#[derive(Clone, Debug)]
 pub struct Constraint {
     lhs: Expr,
     rhs: Expr,

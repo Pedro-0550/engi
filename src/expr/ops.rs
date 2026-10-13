@@ -1,5 +1,6 @@
 use std::{
     cell::{LazyCell, OnceCell},
+    hash::Hash,
     ops::Neg,
     rc::Rc,
 };
@@ -21,69 +22,6 @@ use crate::{
 };
 
 /* -------------------------------------------------------------------------- */
-
-// impl_op_permutations! {
-//     types = [
-//         i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, &Symbol,
-//         Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>,
-//         ConnectorBuilder<'_>, &ConnectorBuilder<'_>, Leaf, &Leaf
-//     ],
-//     exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Complex64, &Complex64],
-//     exclude_specific = [(Leaf, Leaf), (Leaf, &Leaf), (&Leaf, Leaf), (&Leaf, &Leaf)],
-//     into = Leaf,
-//     out = Expr,
-
-//     add = {
-//         assert_eq!(
-//             lhs.shape(),
-//             rhs.shape(),
-//             "Tried to add two expressions of different shapes"
-//         );
-
-//         lhs + rhs
-//     },
-
-//     mul = {
-//         assert!(
-//             lhs.shape().cols == lhs.shape().rows
-//                 || (lhs.shape() == rhs.shape() && lhs.shape().is_vec()),
-//             "Matrix multiplication requires compatible shapes"
-//         );
-
-//         lhs * rhs
-//     },
-
-//     div = {
-//         lhs * rhs.pow(Leaf::from(-1))
-//     },
-
-//     sub = {
-//         lhs + (-rhs)
-//     },
-
-//     pow = {
-//         assert!(
-//             lhs.shape().is_square_mat() || lhs.shape().is_scalar(),
-//             "Only square matrices can be raised to a power"
-//         );
-
-//         assert!(
-//             rhs.shape().is_square_mat() || rhs.shape().is_scalar(),
-//             "Only square matrices can be an exponent"
-//         );
-
-//         assert!(
-//             !(lhs.shape().is_square_mat() && rhs.shape().is_square_mat()),
-//             "Cannot raise a matrix to the power of another matrix yet"
-//         );
-
-//         lhs.pow(rhs)
-//     },
-
-//     partial_eq = {
-//         lhs == rhs
-//     }
-// }
 
 impl_op_permutations!(
     types = [
@@ -116,9 +54,9 @@ impl_op_permutations!(
         lhs.pow(rhs)
     },
 
-    partial_eq = {
-        lhs == rhs
-    }
+    // partial_eq = {
+    //     lhs == rhs
+    // }
 );
 
 /* -------------------------------------------------------------------------- */
@@ -155,15 +93,16 @@ impl Neg for &Symbol {
     }
 }
 
-impl From<&Expr> for Expr {
-    fn from(value: &Expr) -> Self {
+impl<W: Copy + Eq + Hash> From<&Expr<W>> for Expr<W> {
+    fn from(value: &Expr<W>) -> Self {
         value.clone()
     }
 }
 
-impl<T> From<T> for Expr
+impl<W, T> From<T> for Expr<W>
 where
-    T: Into<BuiltOperand>,
+    T: Into<BuiltOperand<W>>,
+    W: Copy + Eq + Hash,
 {
     fn from(value: T) -> Self {
         let mut expr = Self::new();
@@ -188,7 +127,7 @@ impl EditContext<'_> {
     }
 
     pub fn symbol(&self, symbol: Symbol) -> Operand {
-        self.push(Operand::Leaf(Leaf::Symbol(symbol)))
+        self.push(Operand::Symbol(symbol))
     }
 
     pub fn constant(&self, constant: Constant) -> Operand {

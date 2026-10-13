@@ -22,6 +22,7 @@ use ordered_float::OrderedFloat;
 use crate::{
     core::util::{ArcExt, impl_as_variant, impl_op_permutations},
     expr::{
+        dag,
         domain::{Domain, Interval},
         shape::Shape,
     },
@@ -83,7 +84,9 @@ impl Value {
     pub fn shape(&self) -> Shape {
         match self {
             Value::Set(set) => todo!(),
-            Value::Matrix(mat) => Shape::rect(mat.nrows(), mat.ncols()),
+            Value::Matrix(mat) => {
+                Shape::rect(mat.nrows() as dag::Size, mat.ncols() as dag::Size)
+            }
             Value::Scalar(complex) => Shape::SCALAR,
         }
     }

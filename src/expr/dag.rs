@@ -14,7 +14,7 @@ use num::complex::Complex64;
 
 use crate::{
     core::{util::impl_as_variant, value::Value},
-    expr::{Operand, domain::Domain, shape::Shape},
+    expr::{Operand, dag, domain::Domain, shape::Shape},
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::ClassId,
     symbol::{Symbol, constants::Constant},
@@ -158,7 +158,6 @@ pub enum Condition<O, C> {
 #[derive(PartialEq, Clone, Eq, Hash, Kinded, IsVariant)]
 #[kinded(derive(Hash))]
 pub enum Leaf {
-    Symbol(Symbol),
     Constant(Constant),
     Quantity(Quantity),
 }
@@ -180,11 +179,11 @@ pub struct Consed<T: Hash + Eq, K, Id = K> {
 /// Operations, conditions, matrices and leafs are hashconsed and referenced with strongly typed Ids.
 ///
 /// When used with the DAG, [`Node`]s, [`Condition`]s, and every Id are lightweight and [`Copy`]
-#[derive(PartialEq, Eq, Clone)]
-pub struct Dag<O: Hash + Eq, K> {
-    pub(crate) operations: Consed<Operation<O, ConditionId>, K, OperationId>,
-    pub(crate) leaves: Consed<Leaf, LeafId>,
-    pub(crate) matrices: Consed<Matrix<O>, MatrixId>,
+#[derive(Clone, Default)]
+pub struct Dag<O: Hash + Eq, OKey, LKey, MKey> {
+    pub(crate) operations: Consed<Operation<O, ConditionId>, OKey, OperationId>,
+    pub(crate) leaves: Consed<Leaf, LKey, LeafId>,
+    pub(crate) matrices: Consed<Matrix<O>, MKey, MatrixId>,
     pub(crate) conditions: Consed<Condition<O, ConditionId>, ConditionId>,
 
     pub(crate) root: Option<O>,
@@ -194,29 +193,29 @@ pub struct Dag<O: Hash + Eq, K> {
 pub type Idx = usize;
 
 #[cfg(not(feature = "large_exprs"))]
-pub type Idx = u16;
+pub type Size = u16;
 
 /// An unique index for a [`Leaf`], valid only within one [`Dag`]
 #[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct LeafId(Idx);
+pub struct LeafId(Size);
 
 /// An unique index for a [`Node`], valid only within the same [`Dag`]
 #[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct OperationId(Idx);
+pub struct OperationId(Size);
 
 /// An unique index for a [`Matrix`], valid only within the same [`Dag`]
 #[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct MatrixId(Idx);
+pub struct MatrixId(Size);
 
 /// An unique index for a [`Condition`], valid only within the same [`Dag`]
 #[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct ConditionId(Idx);
+pub struct ConditionId(Size);
 
 /* -------------------------------------------------------------------------- */
 
 impl_as_variant!(Leaf, [Symbol => Symbol, Quantity => Quantity, Constant => Constant]);
 
-impl<O, K> Dag<O, K>
+impl<O, OKey, LKey, MKey> Dag<O, OKey, LKey, MKey>
 where
     O: Hash + Eq,
 {
@@ -234,14 +233,18 @@ where
 impl<T, K, Id> Consed<T, K, Id>
 where
     T: Hash + Eq + Clone,
-    K: From<Idx> + Copy,
+    K: From<Size> + Copy,
 {
+    pub fn contains(&self, val: &T) -> bool {
+        self.cons.contains_key(val)
+    }
+
     pub fn insert(&mut self, val: T) -> K {
         if let Some(existing) = self.cons.get(&val) {
             *existing
         } else {
             let idx = self.values.len();
-            let key = K::from(idx as Idx);
+            let key = K::from(idx as Size);
 
             self.values.push(val.clone());
             self.cons.insert(val, key);
@@ -249,19 +252,6 @@ where
             key
         }
     }
-
-    // /// Forcefully inserts a new value, without hash-consing it.
-    // pub fn insert_unconsed(&mut self, val: T) -> K {
-    //     let idx = self.values.len();
-    //     let key = K::from(idx as Idx);
-    //     self.values.push(val);
-    //     key
-    // }
-
-    // /// Conses a previously unconsed value, inserted with insert_unconsed
-    // pub fn conse(&mut self, val: T, key: K) {
-    //     self.cons.insert(val, key);
-    // }
 
     pub fn len(&self) -> usize {
         self.values.len()
@@ -309,12 +299,12 @@ where
 impl<T, K, Id> Index<Id> for Consed<T, K, Id>
 where
     T: Hash + Eq,
-    Idx: From<Id>,
+    Size: From<Id>,
 {
     type Output = T;
 
     fn index(&self, index: Id) -> &Self::Output {
-        &self.values[Idx::from(index) as usize]
+        &self.values[Size::from(index) as usize]
     }
 }
 
@@ -504,18 +494,22 @@ impl<O> Matrix<O> {
     // }
 
     pub fn from_elements(shape: Shape, elements: Box<[O]>) -> Matrix<O> {
-        assert_eq!(shape.cols.get() * shape.rows.get(), elements.len());
+        assert_eq!(shape.cols.get() * shape.rows.get(), elements.len() as Size);
         Self { shape, elements }
     }
 
-    pub fn fill(rows: impl Into<usize>, cols: impl Into<usize>, el: O) -> Self
+    pub fn fill(
+        rows: impl Into<dag::Size>,
+        cols: impl Into<dag::Size>,
+        with: O,
+    ) -> Self
     where
         O: Clone, {
         let rows = rows.into();
         let cols = cols.into();
         Self {
             shape: Shape::rect(rows, cols),
-            elements: vec![el; rows * cols].into_boxed_slice(),
+            elements: vec![with; (rows * cols) as usize].into_boxed_slice(),
         }
     }
 
@@ -524,11 +518,11 @@ impl<O> Matrix<O> {
         self.shape
     }
 
-    pub fn rows(&self) -> NonZero<usize> {
+    pub fn rows(&self) -> NonZero<Size> {
         self.shape.rows
     }
 
-    pub fn cols(&self) -> NonZero<usize> {
+    pub fn cols(&self) -> NonZero<Size> {
         self.shape.cols
     }
 
@@ -563,16 +557,16 @@ impl<O> Index<usize> for Matrix<O> {
     type Output = [O];
 
     fn index(&self, row: usize) -> &Self::Output {
-        let start = row * self.shape.cols.get();
-        let end = start + self.shape.cols.get();
+        let start = (row as dag::Size * self.shape.cols.get()) as usize;
+        let end = (start as dag::Size + self.shape.cols.get()) as usize;
         &self.elements[start..end]
     }
 }
 
 impl<O> IndexMut<usize> for Matrix<O> {
     fn index_mut(&mut self, row: usize) -> &mut Self::Output {
-        let start = row * self.shape.cols.get();
-        let end = start + self.shape.cols.get();
+        let start = (row as dag::Size * self.shape.cols.get()) as usize;
+        let end = (start as dag::Size + self.shape.cols.get()) as usize;
         &mut self.elements[start..end]
     }
 }
@@ -580,7 +574,6 @@ impl<O> IndexMut<usize> for Matrix<O> {
 impl Leaf {
     pub fn shape(&self) -> Shape {
         match self {
-            Leaf::Symbol(symbol) => symbol.shape(),
             Leaf::Constant(constant) => constant.quantity().value().shape(),
             Leaf::Quantity(quantity) => quantity.value().shape(),
         }
@@ -623,36 +616,6 @@ impl From<Constant> for Leaf {
     }
 }
 
-impl From<Symbol> for Leaf {
-    fn from(s: Symbol) -> Self {
-        Leaf::Symbol(s)
-    }
-}
-
-impl From<Variable> for Leaf {
-    fn from(s: Variable) -> Self {
-        Leaf::Symbol(s.symbol())
-    }
-}
-
-impl From<Connector> for Leaf {
-    fn from(s: Connector) -> Self {
-        Leaf::Symbol(s.variable().symbol())
-    }
-}
-
-impl From<VariableBuilder<'_>> for Leaf {
-    fn from(s: VariableBuilder<'_>) -> Self {
-        Leaf::Symbol(s.variable().symbol())
-    }
-}
-
-impl From<ConnectorBuilder<'_>> for Leaf {
-    fn from(s: ConnectorBuilder<'_>) -> Self {
-        Leaf::Symbol(s.connector().variable().symbol())
-    }
-}
-
 impl<T: Clone> From<&T> for Leaf
 where
     Leaf: From<T>,
@@ -662,7 +625,7 @@ where
     }
 }
 
-impl<O, T, M> From<T> for Operand<O, Leaf, M>
+impl<W, O, T, M> From<T> for Operand<W, O, Leaf, M>
 where
     T: Into<Leaf>,
 {
