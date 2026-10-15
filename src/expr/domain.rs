@@ -550,8 +550,8 @@ impl From<f64> for Interval {
 impl FoldedOperand<'_, Domain> {
     pub fn domain(&self) -> Domain {
         match self {
-            Operand::Symbol(symbol) => symbol.domain(),
             Operand::Leaf(leaf) => match leaf {
+                Leaf::Symbol(symbol) => symbol.domain(),
                 Leaf::Constant(constant) => {
                     constant.quantity().value().domain()
                 }
@@ -673,11 +673,15 @@ impl Expr {
             let ctx = working.edit();
 
             match folded {
-                Operand::Symbol(symbol) => (
-                    symbol.real().map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
-                    symbol.imag().map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
-                ),
                 Operand::Leaf(leaf) => match leaf {
+                    Leaf::Symbol(symbol) => (
+                        symbol
+                            .real()
+                            .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
+                        symbol
+                            .imag()
+                            .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
+                    ),
                     Leaf::Constant(constant) => {
                         let [re_qty, im_qty] = constant.quantity().realize();
 

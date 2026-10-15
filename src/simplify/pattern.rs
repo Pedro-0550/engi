@@ -3,12 +3,13 @@
 use std::{collections::HashMap, mem, ops::Neg, rc::Rc};
 
 use ahash::AHashMap;
+use derive_more::Into;
 // use cranelift::codegen::ir::Constant;
 use kinded::Kinded;
 use num::{complex::Complex64, pow::Pow};
 
 use crate::{
-    core::{util::impl_op_permutations, value::Value},
+    core::{index::Indexed, util::impl_op_permutations, value::Value},
     expr::{
         Expr, Operand,
         dag::{self, Dag, LeafId, MatrixId, OperationId, OperationKind},
@@ -26,18 +27,21 @@ use crate::{
     units::{Quantity, Unit},
 };
 
+type Allocations = Indexed<[Option<RegisterId>; WILDCARD_COUNT], Wildcard>;
+type Registers = Indexed<Vec<ClassId>, RegisterId>;
+
 // This should be updated if we ever use more than 4 wildcard ids in rules
-pub const MAX_WILDCARD: usize = 4;
+pub const WILDCARD_COUNT: usize = 4;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Reg(u8);
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Into)]
+pub struct RegisterId(u8);
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Into)]
 pub struct Wildcard(pub(crate) u8);
 
 pub struct Program {
     code: Vec<Instruction>,
-    allocations: [Option<Reg>; MAX_WILDCARD],
+    allocations: Allocations,
     register_count: u8,
 }
 
@@ -58,23 +62,23 @@ pub struct Rule {
 
 struct CompilerState {
     instructions: Vec<Instruction>,
-    next: Reg,
-    allocations: [Option<Reg>; MAX_WILDCARD],
+    next: RegisterId,
+    allocations: Allocations,
 }
 
 pub struct ConditionContext<'a> {
-    registers: &'a [ClassId],
-    allocations: [Option<Reg>; MAX_WILDCARD],
+    registers: &'a Registers,
+    allocations: &'a Allocations,
     graph: &'a EquivalencyGraph,
 }
 
 pub enum Instruction {
-    Bind { structure: OperandStructure, target: Reg, out: Reg },
-    Compare { a: Reg, b: Reg },
+    Bind { structure: OperandStructure, target: RegisterId, out: RegisterId },
+    Compare { a: RegisterId, b: RegisterId },
     If { f: fn(ConditionContext<'_>) -> bool },
 }
 
-type Pattern = Expr<Wildcard>;
+pub type Pattern = Expr<Wildcard>;
 
 /// Encapusalates all information required to check if two operands can be bound:
 /// * Leaves need to be equal, and since leaves are interned we can just compile tailored for each expr and compare IDs
@@ -90,11 +94,11 @@ pub enum OperandStructure {
 
 impl<'a> ConditionContext<'a> {
     pub fn class(&self, wildcard: Wildcard) -> Option<&'a EquivalencyClass> {
-        let reg = self.allocations.get(&wildcard)?;
-        let class_id = self.registers[reg.0 as usize];
+        let reg = self.allocations[wildcard]?;
+        let class_id = self.registers[reg];
 
-        let canonical_id = self.graph.find(class_id);
-        Some(&self.graph.classes[canonical_id.0])
+        let root_id = self.graph.find(class_id);
+        Some(&self.graph.classes[root_id])
     }
 
     pub fn domain(&self, wildcard: Wildcard) -> Domain {
@@ -110,13 +114,13 @@ impl Pattern {
     pub(crate) fn compile(&self, conditions: &[Condition]) -> Program {
         let mut state = CompilerState {
             instructions: Vec::new(),
-            next: Reg(1),
-            allocations: AHashMap::new(),
+            next: RegisterId(1),
+            allocations: [None; WILDCARD_COUNT].into(),
         };
 
         Self::compile_inner(
             self,
-            Reg(0),
+            RegisterId(0),
             &mut conditions.iter().map(Option::Some).collect::<Box<[_]>>(),
             &mut state,
         );
@@ -130,7 +134,7 @@ impl Pattern {
 
     fn compile_inner(
         &self,
-        target: Reg,
+        target: RegisterId,
         conditions: &mut [Option<&Condition>],
         state: &mut CompilerState,
     ) {
@@ -178,7 +182,11 @@ impl Pattern {
                     });
 
                     for (i, child) in children.iter().enumerate() {
-                        child.compile_inner(Reg(out.0 + i), conditions, state);
+                        child.compile_inner(
+                            RegisterId(out.0 + i),
+                            conditions,
+                            state,
+                        );
                     }
                 }
             },
@@ -193,11 +201,11 @@ impl Machine {
         root: ClassId,
         out: &mut Vec<Substitution>,
     ) {
-        let mut registers = vec![root; program.register_count];
+        let mut registers = vec![root; program.register_count as usize].into();
 
         fn execute_inner(
             pc: usize,
-            registers: &mut [ClassId],
+            registers: &mut Registers,
             graph: &EquivalencyGraph,
             program: &Program,
             out: &mut Vec<Substitution>,
@@ -207,8 +215,8 @@ impl Machine {
                     bindings: program
                         .allocations
                         .iter()
-                        .map(|(wildcard, reg)| {
-                            (*wildcard, graph.find(registers[reg.0]))
+                        .filter_map(|(wildcard, reg)| {
+                            Some((wildcard, graph.find(registers[(*reg)?])))
                         })
                         .collect(),
                 });
@@ -217,8 +225,8 @@ impl Machine {
 
             match &program.code[pc] {
                 Instruction::Bind { structure, target, out: bind_out } => {
-                    let target_id = registers[target.0];
-                    let target_class = &graph.classes[graph.find(target_id).0];
+                    let target_id = registers[*target];
+                    let target_class = &graph.classes[graph.find(target_id)];
                     let exprs =
                         &target_class.exprs_by_kind[structure.kind().id()];
 
@@ -244,8 +252,8 @@ impl Machine {
                     }
                 }
                 Instruction::Compare { a, b } => {
-                    let a_id = registers[a.0];
-                    let b_id = registers[b.0];
+                    let a_id = registers[*a];
+                    let b_id = registers[*b];
 
                     if graph.find(a_id) == graph.find(b_id) {
                         execute_inner(pc + 1, registers, graph, program, out);
@@ -255,7 +263,7 @@ impl Machine {
                     let ctx = ConditionContext {
                         allocations: &program.allocations,
                         graph,
-                        registers,
+                        registers: (&*registers).into(),
                     };
 
                     if f(ctx) {
@@ -266,69 +274,6 @@ impl Machine {
         }
 
         execute_inner(0, &mut registers, graph, program, out);
-    }
-}
-
-impl<T> From<&T> for Pattern
-where
-    Pattern: From<T>,
-{
-    default fn from(value: &T) -> Self {
-        value.into()
-    }
-}
-
-impl From<&Pattern> for Pattern {
-    fn from(expr: &Pattern) -> Self {
-        expr.clone()
-    }
-}
-
-impl From<f64> for Pattern {
-    fn from(v: f64) -> Self {
-        Pattern::Node(Node::Leaf(Leaf::Quantity(v.into())))
-    }
-}
-
-impl From<i64> for Pattern {
-    fn from(v: i64) -> Self {
-        Pattern::Node(Node::Leaf(Leaf::Quantity(v.into())))
-    }
-}
-
-impl From<Value> for Pattern {
-    fn from(v: Value) -> Self {
-        Pattern::Node(Node::Leaf(Leaf::Quantity(v * Unit::Unitless)))
-    }
-}
-
-impl From<Complex64> for Pattern {
-    fn from(v: Complex64) -> Self {
-        Pattern::Node(Node::Leaf(Leaf::Quantity(v * Unit::Unitless)))
-    }
-}
-
-impl From<Wildcard> for Pattern {
-    fn from(v: Wildcard) -> Self {
-        Pattern::Wildcard(v)
-    }
-}
-
-impl From<Symbol> for Pattern {
-    fn from(v: Symbol) -> Self {
-        Pattern::Node(Node::Leaf(Leaf::Symbol(v)))
-    }
-}
-
-impl From<Constant> for Pattern {
-    fn from(v: Constant) -> Self {
-        Pattern::Node(Node::Leaf(Leaf::Constant(v)))
-    }
-}
-
-impl From<Quantity> for Pattern {
-    fn from(v: Quantity) -> Self {
-        Pattern::Node(Node::Leaf(Leaf::Quantity(v)))
     }
 }
 
@@ -417,6 +362,30 @@ impl Neg for &Wildcard {
 
     fn neg(self) -> Self::Output {
         -1 * self
+    }
+}
+
+impl Into<usize> for Wildcard {
+    fn into(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<usize> for Wildcard {
+    fn from(v: usize) -> Wildcard {
+        Wildcard(v as u8)
+    }
+}
+
+impl Into<usize> for RegisterId {
+    fn into(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<usize> for RegisterId {
+    fn from(v: usize) -> RegisterId {
+        RegisterId(v as u8)
     }
 }
 

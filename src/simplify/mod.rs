@@ -21,11 +21,12 @@ use xxhash_rust::xxh3::Xxh3Builder;
 
 use crate::{
     core::{
+        index::Indexed,
         interned::Interned,
         value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
-        Expr, FetchedOperand, Operand,
+        BuiltOperand, Expr, FetchedOperand, Operand,
         dag::{self, Dag, Leaf, LeafKind, Matrix, OperationId, OperationKind},
         domain::Domain,
         shape::Shape,
@@ -56,7 +57,7 @@ pub struct Substitution {
 pub struct EquivalencyGraph {
     dag: Dag<ClassId, ClassId, ClassId, ClassId>,
 
-    classes: Vec<EquivalencyClass>,
+    classes: Indexed<Vec<EquivalencyClass>, ClassId>,
     worklist: Vec<ClassId>,
     matchlist: Vec<ClassId>,
 }
@@ -91,6 +92,12 @@ impl EquivalencyClass {
     }
 }
 
+impl Into<usize> for ClassId {
+    fn into(self) -> usize {
+        self.0 as usize
+    }
+}
+
 impl FetchedOperand<'_> {
     fn key(&self) -> u8 {
         match self {
@@ -103,55 +110,65 @@ impl FetchedOperand<'_> {
                     + variant_count::<LeafKind>() as u8
                     + 1
             }
+            Operand::Wildcard(_) => {
+                variant_count::<OperationKind>() as u8
+                    + variant_count::<LeafKind>() as u8
+                    + 2
+            }
         }
     }
 }
 
-impl Operand {
+impl Operand<Wildcard> {
     fn build(
+        &self,
+        pat: Pattern,
         graph: &mut EquivalencyGraph,
-        pat: &Pattern,
         sub: &Substitution,
     ) -> ClassId {
-        match pat {
-            Pattern::Wildcard(w) => sub.bindings[w],
-            Pattern::Node(node) => match node {
-                Node::Leaf(leaf) => {
-                    let expr = EquivalencyExpr {
-                        key: OnceCell::new(),
-                        node: EquivalencyNode::Leaf(leaf.clone()),
-                    };
+        match pat.fetch(*self) {
+            // Pattern::Wildcard(w) => sub.bindings[w],
+            // Pattern::Node(node) => match node {
+            //     Node::Leaf(leaf) => {
+            //         let expr = EquivalencyExpr {
+            //             key: OnceCell::new(),
+            //             node: EquivalencyNode::Leaf(leaf.clone()),
+            //         };
 
-                    graph.add(expr)
-                }
-                Node::Branch(branch) => {
-                    let expr = EquivalencyExpr {
-                        key: OnceCell::new(),
-                        node: node
-                            .clone()
-                            .map(&mut |x| Self::build(graph, &x, sub)),
-                    };
+            //         graph.add(expr)
+            //     }
+            //     Node::Branch(branch) => {
+            //         let expr = EquivalencyExpr {
+            //             key: OnceCell::new(),
+            //             node: node
+            //                 .clone()
+            //                 .map(&mut |x| Self::build(graph, &x, sub)),
+            //         };
 
-                    graph.add(expr)
-                }
-            },
+            //         graph.add(expr)
+            //     }
+            // },
+            Operand::Leaf(b) => graph.add(Operand::Leaf(b)),
+            Operand::Matrix(_) => todo!(),
+            Operand::Operation(_) => todo!(),
+            Operand::Wildcard(w) => sub.bindings[&w],
         }
     }
 
-    fn key(&self) -> Key {
-        *self.key.get_or_init(|| {
-            let mut hasher = Xxh3Builder::new().with_seed(1).build();
+    // fn key(&self) -> Key {
+    //     *self.key.get_or_init(|| {
+    //         let mut hasher = Xxh3Builder::new().with_seed(1).build();
 
-            self.node.structure().hash(&mut hasher);
+    //         self.node.structure().hash(&mut hasher);
 
-            // for child in self.node.children() {
-            //     child.hash(&mut hasher);
-            // }
-            self.node.for_each_child(|child| child.hash(&mut hasher));
+    //         // for child in self.node.children() {
+    //         //     child.hash(&mut hasher);
+    //         // }
+    //         self.node.for_each_child(|child| child.hash(&mut hasher));
 
-            Key(hasher.digest128())
-        })
-    }
+    //         Key(hasher.digest128())
+    //     })
+    // }
 }
 
 impl PartialEq for EquivalencyExpr {
@@ -167,53 +184,59 @@ impl Hash for EquivalencyExpr {
 }
 
 impl EquivalencyGraph {
-    fn add(&mut self, expr: EquivalencyExpr) -> ClassId {
-        if let Some(existing) = self.cons.get(&expr.key()) {
-            return self.find(*existing);
-        } else {
-            let expr_id = ExprId(self.exprs.len());
-            let class_id = ClassId(self.classes.len());
-            self.cons.insert(expr.key(), class_id);
-
-            let qty = self.evaluate_expr(&expr);
-
-            let class = EquivalencyClass {
-                parent: Cell::new(class_id),
-                exprs: vec![expr_id],
-                exprs_by_kind: array::from_fn(|i| {
-                    if expr.node.kind().id() == i {
-                        vec![expr_id]
-                    } else {
-                        vec![]
-                    }
-                }),
-                domain: self.domain(&expr),
-                shape: self.shape(&expr),
-                qty: qty.clone(),
-                child_of: vec![],
-            };
-
-            expr.node.for_each_child(|child_id| {
-                let child = self.find(*child_id);
-                self.classes[child.0].child_of.push(expr_id);
-            });
-
-            self.matchlist.push(class_id);
-            self.exprs.push(expr);
-            self.classes.push(class);
-
-            if let Some(ref q) = qty {
-                let qty_expr = EquivalencyExpr {
-                    node: Node::Leaf(q.clone().into()),
-                    key: OnceCell::new(),
-                };
-
-                let qty_class = self.add(qty_expr);
-                self.union(class_id, qty_class);
-            }
-
-            class_id
+    fn add(&mut self, op: BuiltOperand) -> ClassId {
+        match op {
+            Operand::Leaf(_) => todo!(),
+            Operand::Matrix(_) => todo!(),
+            Operand::Operation(_) => todo!(),
+            Operand::Wildcard(_) => todo!(),
         }
+        // if let Some(existing) = self.cons.get(&expr.key()) {
+        //     return self.find(*existing);
+        // } else {
+        //     let expr_id = ExprId(self.exprs.len());
+        //     let class_id = ClassId(self.classes.len());
+        //     self.cons.insert(expr.key(), class_id);
+
+        //     let qty = self.evaluate_expr(&expr);
+
+        //     let class = EquivalencyClass {
+        //         parent: Cell::new(class_id),
+        //         exprs: vec![expr_id],
+        //         exprs_by_kind: array::from_fn(|i| {
+        //             if expr.node.kind().id() == i {
+        //                 vec![expr_id]
+        //             } else {
+        //                 vec![]
+        //             }
+        //         }),
+        //         domain: self.domain(&expr),
+        //         shape: self.shape(&expr),
+        //         qty: qty.clone(),
+        //         child_of: vec![],
+        //     };
+
+        //     expr.node.for_each_child(|child_id| {
+        //         let child = self.find(*child_id);
+        //         self.classes[child.0].child_of.push(expr_id);
+        //     });
+
+        //     self.matchlist.push(class_id);
+        //     self.exprs.push(expr);
+        //     self.classes.push(class);
+
+        //     if let Some(ref q) = qty {
+        //         let qty_expr = EquivalencyExpr {
+        //             node: Node::Leaf(q.clone().into()),
+        //             key: OnceCell::new(),
+        //         };
+
+        //         let qty_class = self.add(qty_expr);
+        //         self.union(class_id, qty_class);
+        //     }
+
+        //     class_id
+        // }
     }
 
     fn evaluate_expr(&self, expr: &EquivalencyExpr) -> Option<Quantity> {

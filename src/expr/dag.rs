@@ -158,6 +158,7 @@ pub enum Condition<O, C> {
 #[derive(PartialEq, Clone, Eq, Hash, Kinded, IsVariant)]
 #[kinded(derive(Hash))]
 pub enum Leaf {
+    Symbol(Symbol),
     Constant(Constant),
     Quantity(Quantity),
 }
@@ -576,6 +577,7 @@ impl Leaf {
         match self {
             Leaf::Constant(constant) => constant.quantity().value().shape(),
             Leaf::Quantity(quantity) => quantity.value().shape(),
+            Leaf::Symbol(symbol) => symbol.shape(),
         }
     }
 }
@@ -613,6 +615,36 @@ impl From<Quantity> for Leaf {
 impl From<Constant> for Leaf {
     fn from(s: Constant) -> Self {
         Leaf::Constant(s)
+    }
+}
+
+impl From<Symbol> for Leaf {
+    fn from(s: Symbol) -> Self {
+        Leaf::Symbol(s)
+    }
+}
+
+impl From<Variable> for Leaf {
+    fn from(s: Variable) -> Self {
+        Leaf::Symbol(s.symbol())
+    }
+}
+
+impl From<Connector> for Leaf {
+    fn from(s: Connector) -> Self {
+        Leaf::Symbol(s.variable().symbol())
+    }
+}
+
+impl From<VariableBuilder<'_>> for Leaf {
+    fn from(s: VariableBuilder<'_>) -> Self {
+        Leaf::Symbol(s.variable().symbol())
+    }
+}
+
+impl From<ConnectorBuilder<'_>> for Leaf {
+    fn from(s: ConnectorBuilder<'_>) -> Self {
+        Leaf::Symbol(s.connector().variable().symbol())
     }
 }
 

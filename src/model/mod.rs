@@ -633,7 +633,9 @@ impl System {
                 .collect();
 
             for resid in &mut block {
-                *resid = resid.substituted(&bindings);
+                if let Some(subbed) = resid.substituted(&bindings) {
+                    *resid = subbed;
+                }
             }
 
             println!(

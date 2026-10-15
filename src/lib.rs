@@ -21,6 +21,7 @@
 
 pub mod core {
     pub mod graph;
+    pub mod index;
     pub mod interned;
     pub mod util;
     pub mod value;

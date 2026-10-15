@@ -62,7 +62,6 @@ pub enum Operand<W = !, O = OperationId, L = LeafId, M = MatrixId> {
     Matrix(M),
     Operation(O),
     Wildcard(W),
-    Symbol(Symbol),
 }
 
 pub type FetchedOperand<'a, W = !> = Operand<
@@ -122,10 +121,6 @@ where
 }
 
 impl<W, O, L, M> Operand<W, O, L, M> {
-    pub fn as_symbol(&self) -> Option<&Symbol> {
-        if let Self::Symbol(v) = self { Some(v) } else { None }
-    }
-
     pub fn as_wildcard(&self) -> Option<&W> {
         if let Self::Wildcard(v) = self { Some(v) } else { None }
     }
@@ -156,7 +151,6 @@ where
                 Operand::Operation(&self.dag.operations[id])
             }
             Operand::Wildcard(w) => Operand::Wildcard(w),
-            Operand::Symbol(symbol) => Operand::Symbol(symbol),
         }
     }
 
@@ -193,13 +187,18 @@ where
             return None;
         }
 
+        if !self.dag.leaves.iter().any(|leaf| {
+            leaf.as_symbol().map(|s| bindings.contains_key(s)).unwrap_or(false)
+        }) {
+            return None;
+        }
+
         struct RebuildContext<'a, W: Copy + Eq + Hash> {
             mapped_conds: AHashMap<ConditionId, ConditionId>,
             mapped_ops: AHashMap<Operand<W>, Operand<W>>,
             bindings: &'a AHashMap<Symbol, Expr<W>>,
             out: Expr<W>,
             src: &'a Expr<W>,
-            changed: bool,
         }
 
         fn rebuild_condition<W: Copy + Eq + Hash>(
@@ -231,10 +230,11 @@ where
             }
 
             let new_op = match op {
-                Operand::Symbol(s) => {
-                    if ctx.bindings.contains_key(&s) {
+                Operand::Leaf(id) => {
+                    if let Leaf::Symbol(s) = ctx.src.dag.leaves[id]
+                        && ctx.bindings.contains_key(&s)
+                    {
                         let bound = &ctx.bindings[&s];
-                        ctx.changed = true;
                         ctx.out.import(
                             bound,
                             bound.root().expect(
@@ -242,7 +242,12 @@ where
                             ),
                         )
                     } else {
-                        Operand::Symbol(s)
+                        Operand::Leaf(
+                            ctx.out
+                                .dag
+                                .leaves
+                                .insert(ctx.src.dag.leaves[id].clone()),
+                        )
                     }
                 }
                 Operand::Matrix(id) => {
@@ -261,9 +266,7 @@ where
                         ctx.out.dag.operations.insert(mapped_operation),
                     )
                 }
-                Operand::Leaf(id) => Operand::Leaf(
-                    ctx.out.dag.leaves.insert(ctx.src.dag.leaves[id].clone()),
-                ),
+
                 Operand::Wildcard(w) => Operand::Wildcard(w),
             };
 
@@ -277,20 +280,14 @@ where
             bindings,
             out: Expr::new(),
             src: &self,
-            changed: false,
         };
 
-        let root = rebuild_operand(
+        rebuild_operand(
             self.root().expect("Cannot substitute for a rootless expression"),
             &mut ctx,
         );
 
-        if ctx.changed {
-            ctx.out.set_root(root);
-            Some(ctx.out)
-        } else {
-            None
-        }
+        Some(ctx.out)
     }
 
     pub fn push(&mut self, operand: BuiltOperand<W>) -> Operand<W> {
@@ -301,7 +298,6 @@ where
                 Operand::Operation(self.dag.operations.insert(op))
             }
             Operand::Wildcard(w) => Operand::Wildcard(w),
-            Operand::Symbol(symbol) => Operand::Symbol(symbol),
         };
         op
     }
@@ -403,7 +399,6 @@ where
                     )
                 }
                 Operand::Wildcard(w) => Operand::Wildcard(w),
-                Operand::Symbol(symbol) => Operand::Symbol(symbol),
             };
 
             ctx.mapped_ops.insert(src_op, mapped_op);
@@ -466,7 +461,6 @@ impl Expr<!> {
                 Operand::Operation(op) => Operand::Operation(
                     op.map(|child| mapped.get(child).unwrap(), |_| ()),
                 ),
-                Operand::Symbol(symbol) => Operand::Symbol(symbol),
                 Operand::Wildcard(never) => never, // ! never exists
             };
 
@@ -491,36 +485,6 @@ impl Expr<!> {
 // }
 
 /* -------------------------------------------------------------------------- */
-
-impl<W> From<Symbol> for Operand<W> {
-    fn from(s: Symbol) -> Self {
-        Operand::Symbol(s)
-    }
-}
-
-impl<W> From<Variable> for Operand<W> {
-    fn from(s: Variable) -> Self {
-        Operand::Symbol(s.symbol())
-    }
-}
-
-impl<W> From<Connector> for Operand<W> {
-    fn from(s: Connector) -> Self {
-        Operand::Symbol(s.variable().symbol())
-    }
-}
-
-impl<W> From<VariableBuilder<'_>> for Operand<W> {
-    fn from(s: VariableBuilder<'_>) -> Self {
-        Operand::Symbol(s.variable().symbol())
-    }
-}
-
-impl<W> From<ConnectorBuilder<'_>> for Operand<W> {
-    fn from(s: ConnectorBuilder<'_>) -> Self {
-        Operand::Symbol(s.connector().variable().symbol())
-    }
-}
 
 impl Mul<Expr> for Expr {
     type Output = Expr;
