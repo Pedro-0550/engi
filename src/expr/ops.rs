@@ -127,7 +127,7 @@ impl EditContext<'_> {
     }
 
     pub fn symbol(&self, symbol: Symbol) -> Operand {
-        self.push(Operand::Symbol(symbol))
+        self.push(Operand::Leaf(Leaf::Symbol(symbol)))
     }
 
     pub fn constant(&self, constant: Constant) -> Operand {

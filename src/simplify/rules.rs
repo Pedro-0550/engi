@@ -10,7 +10,7 @@ use crate::simplify::pattern::{
 macro_rules! wildcards {
     ($($var:ident),* $(,)?) => {
         $(
-            const $var: Wildcard = Wildcard(${index()});
+            const $var: Wildcard = Wildcard::from(${index()} as usize);
         )*
     };
 }
@@ -254,8 +254,6 @@ pub fn algebraic() -> Vec<Rule> {
 }
 
 pub fn trig() -> Vec<Rule> {
-    wildcards!(x);
-
     [
         rule!({ cos(x).pow(2) + sin(x).pow(2) } -> { 1 }),
         rule!({ sin(x) / cos(x) } <-> { tan(x) }),

@@ -36,18 +36,16 @@ impl Expr {
             (
                 op,
                 match d_op {
-                    Operand::Symbol(symbol) => {
-                        let ctx = dx.edit();
-
-                        if wrt == symbol {
-                            ctx.one()
-                        } else {
-                            ctx.zero()
-                        }
-                    }
                     Operand::Leaf(leaf) => {
                         let ctx = dx.edit();
                         match leaf {
+                            Leaf::Symbol(symbol) => {
+                                if wrt == *symbol {
+                                    ctx.one()
+                                } else {
+                                    ctx.zero()
+                                }
+                            }
                             Leaf::Constant(_) => ctx.zero(),
                             Leaf::Quantity(_) => ctx.zero(),
                         }

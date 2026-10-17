@@ -9,16 +9,24 @@ use kinded::Kinded;
 use num::{complex::Complex64, pow::Pow};
 
 use crate::{
-    core::{index::Indexed, util::impl_op_permutations, value::Value},
+    core::{
+        index::{Indexed, Size},
+        util::impl_op_permutations,
+        value::Value,
+    },
     expr::{
-        Expr, Operand,
-        dag::{self, Dag, LeafId, MatrixId, OperationId, OperationKind},
+        Expr, Operand, OperandKind, Order,
+        dag::{
+            self, Dag, LeafId, LeafKind, MatrixId, OperationId, OperationKind,
+        },
         domain::Domain,
         shape::Shape,
     },
+    id,
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::{
-        ClassId, EquivalencyClass, EquivalencyGraph, Leaf, Substitution,
+        ClassId, EquivalencyClass, EquivalencyDag, EquivalencyGraph, Leaf,
+        Substitution,
     },
     symbol::{
         Symbol,
@@ -33,16 +41,13 @@ type Registers = Indexed<Vec<ClassId>, RegisterId>;
 // This should be updated if we ever use more than 4 wildcard ids in rules
 pub const WILDCARD_COUNT: usize = 4;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Into)]
-pub struct RegisterId(u8);
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Into)]
-pub struct Wildcard(pub(crate) u8);
+id!(Wildcard, u8);
+id!(RegisterId);
 
 pub struct Program {
     code: Vec<Instruction>,
     allocations: Allocations,
-    register_count: u8,
+    register_count: Size,
 }
 
 pub struct Machine;
@@ -73,8 +78,14 @@ pub struct ConditionContext<'a> {
 }
 
 pub enum Instruction {
-    Bind { structure: OperandStructure, target: RegisterId, out: RegisterId },
+    /// Bind tries to match the given structure against the nodes in the target register's pointed class.
+    /// On the first structure match, it pushes this operand's children classes to the registers starting at out.
+    /// Backtracks if there are no matches.
+    Bind { structure: Structure, target: RegisterId, out: RegisterId },
+    /// Compare checks if the classes in a and b are of equal parent, i.e. they are the same class.
+    /// If not, backtracks
     Compare { a: RegisterId, b: RegisterId },
+    /// If runs the given condition function, backtracks if it returns false.
     If { f: fn(ConditionContext<'_>) -> bool },
 }
 
@@ -84,13 +95,25 @@ pub type Pattern = Expr<Wildcard>;
 /// * Leaves need to be equal, and since leaves are interned we can just compile tailored for each expr and compare IDs
 /// * Matrices only need to be of the same shape
 /// * Operations only need to be of the same kind
-pub enum OperandStructure {
-    Leaf(LeafId),
+pub enum Structure {
+    Leaf(LeafKind, LeafId),
     Matrix(Shape),
     Operation(OperationKind),
 }
 
 /* -------------------------------------------------------------------------- */
+
+impl Structure {
+    fn kind(&self) -> OperandKind {
+        match self {
+            Structure::Leaf(leaf_kind, _) => OperandKind::Leaf(*leaf_kind),
+            Structure::Matrix(shape) => OperandKind::Matrix,
+            Structure::Operation(operation_kind) => {
+                OperandKind::Operation(*operation_kind)
+            }
+        }
+    }
+}
 
 impl<'a> ConditionContext<'a> {
     pub fn class(&self, wildcard: Wildcard) -> Option<&'a EquivalencyClass> {
@@ -111,18 +134,23 @@ impl<'a> ConditionContext<'a> {
 }
 
 impl Pattern {
-    pub(crate) fn compile(&self, conditions: &[Condition]) -> Program {
+    pub(crate) fn compile(
+        &self,
+        conditions: &[Condition],
+        tailored_to: &mut EquivalencyDag,
+    ) -> Program {
         let mut state = CompilerState {
             instructions: Vec::new(),
             next: RegisterId(1),
             allocations: [None; WILDCARD_COUNT].into(),
         };
 
-        Self::compile_inner(
-            self,
+        self.compile_inner(
+            self.root().expect("Cannot compile a rootless pattern.. what are you even trying to do"),
             RegisterId(0),
-            &mut conditions.iter().map(Option::Some).collect::<Box<[_]>>(),
+            &conditions,
             &mut state,
+            tailored_to,
         );
 
         Program {
@@ -134,62 +162,81 @@ impl Pattern {
 
     fn compile_inner(
         &self,
+        op: Operand<Wildcard>,
         target: RegisterId,
-        conditions: &mut [Option<&Condition>],
+        conditions: &[Condition],
         state: &mut CompilerState,
+        tailored_to: &mut EquivalencyDag,
     ) {
-        match self {
-            Pattern::Wildcard(w) => {
-                if let Some(&allocated) = state.allocations.get(w) {
+        match self.fetch(op) {
+            Operand::Wildcard(w) => {
+                if let Some(allocated) = state.allocations[w] {
                     state
                         .instructions
                         .push(Instruction::Compare { a: allocated, b: target });
                 } else {
-                    state.allocations.insert(*w, target);
+                    state.allocations[w] = Some(target);
                 }
-
-                for cd in conditions {
-                    if let Some(cond) = cd.take_if(|cond| {
-                        cond.over
-                            .iter()
-                            .all(|x| state.allocations.contains_key(x))
-                    }) {
-                        state
-                            .instructions
-                            .push(Instruction::If { f: cond.f.clone() });
+                for cond in conditions {
+                    if cond.over.iter().all(|w| state.allocations[*w].is_some())
+                    {
+                        state.instructions.push(Instruction::If { f: cond.f });
                     }
                 }
             }
-            Pattern::Node(node) => match node {
-                Node::Leaf(leaf) => match leaf {
-                    _ => state.instructions.push(Instruction::Bind {
-                        structure: EquivalencyNodeStructure::Leaf(leaf.clone()),
-                        target,
-                        out: state.next,
-                    }),
-                },
-                Node::Branch(branch) => {
-                    let out = state.next;
-                    let children = node.children();
-                    state.next.0 += node.children().len();
 
-                    state.instructions.push(Instruction::Bind {
-                        structure: EquivalencyNodeStructure::Branch(
-                            branch.kind(),
-                        ),
-                        target,
-                        out,
-                    });
+            Operand::Leaf(l) => {
+                let leaf_id = tailored_to.leaves.push(l.clone());
+                state.instructions.push(Instruction::Bind {
+                    structure: Structure::Leaf(l.kind(), leaf_id),
+                    target,
+                    out: state.next,
+                });
+            }
 
-                    for (i, child) in children.iter().enumerate() {
-                        child.compile_inner(
-                            RegisterId(out.0 + i),
-                            conditions,
-                            state,
-                        );
-                    }
+            Operand::Operation(o) => {
+                let out = state.next;
+                let len = o.len();
+                state.next.0 += len as u16;
+
+                state.instructions.push(Instruction::Bind {
+                    structure: Structure::Operation(o.kind()),
+                    target,
+                    out,
+                });
+
+                for i in 0..len {
+                    let child = o.operand(i).unwrap();
+                    self.compile_inner(
+                        *child,
+                        RegisterId(out.0 + i as u16),
+                        conditions,
+                        state,
+                        tailored_to,
+                    );
                 }
-            },
+            }
+
+            Operand::Matrix(m) => {
+                let out = state.next;
+                state.next.0 += m.elements().len() as u16;
+
+                state.instructions.push(Instruction::Bind {
+                    structure: Structure::Matrix(m.shape()),
+                    target,
+                    out,
+                });
+
+                for (i, child) in m.elements().iter().enumerate() {
+                    self.compile_inner(
+                        *child,
+                        RegisterId(out.0 + i as u16),
+                        conditions,
+                        state,
+                        tailored_to,
+                    );
+                }
+            }
         }
     }
 }
@@ -227,19 +274,50 @@ impl Machine {
                 Instruction::Bind { structure, target, out: bind_out } => {
                     let target_id = registers[*target];
                     let target_class = &graph.classes[graph.find(target_id)];
-                    let exprs =
-                        &target_class.exprs_by_kind[structure.kind().id()];
+                    let operands = &target_class.operands_by_kind
+                        [structure.kind().id() as usize];
 
-                    for expr_id in exprs {
-                        let expr = &graph.exprs[expr_id.0];
+                    for op in operands {
+                        let matches = match (op, structure) {
+                            (
+                                Operand::Leaf(id_op),
+                                Structure::Leaf(_, id_s),
+                            ) => id_op == id_s,
+                            (Operand::Matrix(id), Structure::Matrix(shape)) => {
+                                graph.dag.matrices[*id].shape() == *shape
+                            }
+                            (
+                                Operand::Operation(id),
+                                Structure::Operation(kind),
+                            ) => graph.dag.operations[*id].kind() == *kind,
+                            _ => false,
+                        };
 
-                        if expr.node.structure() == *structure {
+                        if matches {
                             let mut i = 0;
-                            expr.node.for_each_child(|child_id| {
-                                registers[bind_out.0 + i] = *child_id;
+                            match op {
+                                Operand::Matrix(m) => {
+                                    for el in graph.dag.matrices[*m].elements()
+                                    {
+                                        let out = RegisterId(bind_out.0 + i);
+                                        registers[out] = *el;
 
-                                i += 1;
-                            });
+                                        i += 1;
+                                    }
+                                }
+                                Operand::Operation(op) => {
+                                    graph.dag.operations[*op].for_each_operand(
+                                        |child| {
+                                            let out =
+                                                RegisterId(bind_out.0 + i);
+                                            registers[out] = *child;
+
+                                            i += 1;
+                                        },
+                                    );
+                                }
+                                _ => (),
+                            }
 
                             execute_inner(
                                 pc + 1,
@@ -362,30 +440,6 @@ impl Neg for &Wildcard {
 
     fn neg(self) -> Self::Output {
         -1 * self
-    }
-}
-
-impl Into<usize> for Wildcard {
-    fn into(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl From<usize> for Wildcard {
-    fn from(v: usize) -> Wildcard {
-        Wildcard(v as u8)
-    }
-}
-
-impl Into<usize> for RegisterId {
-    fn into(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl From<usize> for RegisterId {
-    fn from(v: usize) -> RegisterId {
-        RegisterId(v as u8)
     }
 }
 

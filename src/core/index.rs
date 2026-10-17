@@ -3,7 +3,52 @@ use std::{
     ops::{self, Deref, DerefMut, Index, IndexMut},
 };
 
+use derive_more::{From, Into};
+
 use crate::expr::dag;
+
+#[cfg(feature = "large_exprs")]
+pub type Size = usize;
+
+#[cfg(not(feature = "large_exprs"))]
+pub type Size = u16;
+
+#[macro_export]
+macro_rules! id {
+    ($(#[$meta:meta])* $n:ident, $t:ty) => {
+        #[derive(
+            Copy,
+            Clone,
+            Hash,
+            Eq,
+            PartialEq,
+            Ord,
+            PartialOrd,
+            derive_more::Into,
+            derive_more::From,
+        )]
+        #[repr(transparent)]
+        $(#[$meta])*
+        pub struct $n($t);
+
+        const impl From<usize> for $n {
+            fn from(v: usize) -> $n {
+                $n(v as $t)
+            }
+        }
+
+        const impl Into<usize> for $n {
+            fn into(self) -> usize {
+                self.0 as usize
+            }
+        }
+    };
+    ($(#[$meta:meta])* $n:ident) => {
+        id!($(#[$meta])* $n, crate::core::index::Size);
+    };
+}
+
+/* --------------------------------- STRUCTS -------------------------------- */
 
 #[repr(transparent)]
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -11,6 +56,8 @@ pub struct Indexed<T, I> {
     collection: T,
     _phantom: PhantomData<I>,
 }
+
+/* ---------------------------------- IMPLS --------------------------------- */
 
 impl<T, I> Indexed<T, I> {
     pub fn iter<U>(&self) -> impl Iterator<Item = (I, &U)>
@@ -37,6 +84,27 @@ impl<T, I> Indexed<T, I> {
         T: AsMut<[U]>,
         I: Into<usize>, {
         self.collection.as_mut().get_mut(idx.into())
+    }
+
+    pub fn len<U>(&self) -> usize
+    where
+        T: AsRef<[U]>, {
+        self.collection.as_ref().len()
+    }
+}
+
+impl<U, I> Indexed<Vec<U>, I>
+where
+    I: From<usize>,
+{
+    pub fn push(&mut self, val: U) -> I {
+        let idx = self.len();
+        self.collection.push(val);
+        I::from(idx)
+    }
+
+    pub fn next(&self) -> I {
+        I::from(self.len())
     }
 }
 

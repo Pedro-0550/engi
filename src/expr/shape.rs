@@ -1,19 +1,22 @@
 use std::num::NonZero;
 
 use super::dag::Leaf;
-use crate::expr::{
-    Expr, FoldedOperand, Operand, OperationId,
-    dag::{self, Matrix, Operation},
+use crate::{
+    core::index::Size,
+    expr::{
+        Expr, FoldedOperand, Operand, OperationId,
+        dag::{self, Matrix, Operation},
+    },
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Shape {
-    pub rows: NonZero<dag::Size>,
-    pub cols: NonZero<dag::Size>,
+    pub rows: NonZero<Size>,
+    pub cols: NonZero<Size>,
 }
 
-impl From<(dag::Size, dag::Size)> for Shape {
-    fn from(value: (dag::Size, dag::Size)) -> Self {
+impl From<(Size, Size)> for Shape {
+    fn from(value: (Size, Size)) -> Self {
         Self::rect(value.0, value.1)
     }
 }
@@ -24,8 +27,8 @@ impl Shape {
     // If this changes in the future, use checked version instead.
     pub const SCALAR: Self = unsafe {
         Shape {
-            cols: NonZero::<dag::Size>::new_unchecked(1),
-            rows: NonZero::<dag::Size>::new_unchecked(1),
+            cols: NonZero::<Size>::new_unchecked(1),
+            rows: NonZero::<Size>::new_unchecked(1),
         }
     };
 
@@ -33,11 +36,11 @@ impl Shape {
         Self { rows: self.cols, cols: self.rows }
     }
 
-    pub fn square(size: dag::Size) -> Self {
+    pub fn square(size: Size) -> Self {
         Self { rows: size.try_into().unwrap(), cols: size.try_into().unwrap() }
     }
 
-    pub fn rect(rows: dag::Size, cols: dag::Size) -> Self {
+    pub fn rect(rows: Size, cols: Size) -> Self {
         Self { rows: rows.try_into().unwrap(), cols: cols.try_into().unwrap() }
     }
 
@@ -69,8 +72,8 @@ impl Shape {
 impl FoldedOperand<'_, Shape> {
     pub fn shape(&self) -> Shape {
         match self {
-            Operand::Symbol(symbol) => symbol.shape(),
             Operand::Leaf(leaf) => match leaf {
+                Leaf::Symbol(symbol) => symbol.shape(),
                 Leaf::Constant(constant) => constant.quantity().value().shape(),
                 Leaf::Quantity(quantity) => quantity.value().shape(),
             },
@@ -186,9 +189,9 @@ impl FoldedOperand<'_, Shape> {
                     Shape::SCALAR
                 }
                 Operation::Transpose(u) => u.transpose(),
-                Operation::Det(_) => todo!(),
-                Operation::Rank(_) => todo!(),
-                Operation::Trace(_) => todo!(),
+                Operation::Det(_) => Shape::SCALAR,
+                Operation::Rank(_) => Shape::SCALAR,
+                Operation::Trace(_) => Shape::SCALAR,
                 Operation::Conditional { pass, fail, .. } => {
                     assert_eq!(
                         pass, fail,

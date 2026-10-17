@@ -19,7 +19,6 @@ use cranelift::{
 };
 use itertools::Itertools;
 use num::{Complex, complex::Complex64};
-use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 
 use crate::{
     core::value,
@@ -49,8 +48,6 @@ macro_rules! impl_math_fns {
             $($unary: FuncRef,)*
             $($binary: FuncRef,)*
         }
-
-
             $(unsafe extern "C" fn $unary(x: f64) -> f64 {
                 x.$unary()
             })*
@@ -195,10 +192,10 @@ impl Realized {
             funcs: &MathFns,
         ) -> Value {
             expr.fold(|_, folded| match folded {
-                Operand::Symbol(symbol) => {
-                    symbols.get(&symbol).copied().unwrap()
-                }
                 Operand::Leaf(leaf) => match leaf {
+                    Leaf::Symbol(symbol) => {
+                        symbols.get(&symbol).copied().unwrap()
+                    }
                     Leaf::Constant(constant) => {
                         let qty = constant
                             .quantity()

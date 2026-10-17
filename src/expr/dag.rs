@@ -7,16 +7,16 @@ use std::{
 };
 
 use ahash::AHashMap;
-use arrayvec::ArrayVec;
 use derive_more::{Deref, From, Into, IsVariant};
 use kinded::Kinded;
 use num::complex::Complex64;
 
 use crate::{
-    core::{util::impl_as_variant, value::Value},
+    core::{consed::Consed, index::Size, util::impl_as_variant, value::Value},
     expr::{Operand, dag, domain::Domain, shape::Shape},
+    id,
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
-    simplify::ClassId,
+    simplify::{ClassId, pattern::Wildcard},
     symbol::{Symbol, constants::Constant},
     units::{Quantity, Unit::Unitless},
 };
@@ -121,7 +121,6 @@ pub enum Operation<O, C> {
 }
 
 const _: () = assert!(size_of::<Operation<Operand, ConditionId>>() <= 10);
-const _: () = assert!(size_of::<Operation<ClassId, ConditionId>>() <= 8);
 
 /// Dynamically sized row-major matrix
 #[derive(Eq, PartialEq, Clone, Hash)]
@@ -168,14 +167,6 @@ pub struct BoxedMatrix(Matrix<FlattenedOperand>);
 pub struct BoxedOperation(Box<Operation<FlattenedOperand, BoxedCondition>>);
 pub struct BoxedCondition(Box<Condition<FlattenedOperand, BoxedCondition>>);
 
-/// Hash-consing Vec<T> with support for strongly-typed indices
-#[derive(PartialEq, Eq, Clone)]
-pub struct Consed<T: Hash + Eq, K, Id = K> {
-    cons: AHashMap<T, K>,
-    values: Vec<T>,
-    _phantom: PhantomData<Id>,
-}
-
 /// Mathematical expression DAG.
 /// Operations, conditions, matrices and leafs are hashconsed and referenced with strongly typed Ids.
 ///
@@ -190,27 +181,25 @@ pub struct Dag<O: Hash + Eq, OKey, LKey, MKey> {
     pub(crate) root: Option<O>,
 }
 
-#[cfg(feature = "large_exprs")]
-pub type Idx = usize;
+id!(
+    /// An unique index for a [`Leaf`], valid only within the same [`Dag`]
+    LeafId
+);
 
-#[cfg(not(feature = "large_exprs"))]
-pub type Size = u16;
+id!(
+    /// An unique index for an [`Operation`], valid only within the same [`Dag`]
+    OperationId
+);
 
-/// An unique index for a [`Leaf`], valid only within one [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct LeafId(Size);
+id!(
+    /// An unique index for a [`Matrix`], valid only within the same [`Dag`]
+    MatrixId
+);
 
-/// An unique index for a [`Node`], valid only within the same [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct OperationId(Size);
-
-/// An unique index for a [`Matrix`], valid only within the same [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct MatrixId(Size);
-
-/// An unique index for a [`Condition`], valid only within the same [`Dag`]
-#[derive(PartialEq, Eq, Deref, Hash, Clone, Copy, From, Into)]
-pub struct ConditionId(Size);
+id!(
+    /// An unique index for a [`Condition`], valid only within the same [`Dag`]
+    ConditionId
+);
 
 /* -------------------------------------------------------------------------- */
 
@@ -231,85 +220,15 @@ where
     }
 }
 
-impl<T, K, Id> Consed<T, K, Id>
-where
-    T: Hash + Eq + Clone,
-    K: From<Size> + Copy,
-{
-    pub fn contains(&self, val: &T) -> bool {
-        self.cons.contains_key(val)
-    }
-
-    pub fn insert(&mut self, val: T) -> K {
-        if let Some(existing) = self.cons.get(&val) {
-            *existing
-        } else {
-            let idx = self.values.len();
-            let key = K::from(idx as Size);
-
-            self.values.push(val.clone());
-            self.cons.insert(val, key);
-
-            key
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        self.values.iter()
-    }
-}
-
-impl<T, K, Id> Default for Consed<T, K, Id>
-where
-    T: Hash + Eq,
-{
-    fn default() -> Self {
-        Self {
-            cons: Default::default(),
-            values: Default::default(),
-            _phantom: Default::default(),
-        }
-    }
-}
-
-impl<T, K, Id> IntoIterator for Consed<T, K, Id>
-where
-    T: Hash + Eq,
-{
-    type Item = T;
-    type IntoIter = vec::IntoIter<T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.values.into_iter()
-    }
-}
-
-impl<T, K, Id> AsRef<[T]> for Consed<T, K, Id>
-where
-    T: Hash + Eq,
-{
-    fn as_ref(&self) -> &[T] {
-        &self.values
-    }
-}
-
-impl<T, K, Id> Index<Id> for Consed<T, K, Id>
-where
-    T: Hash + Eq,
-    Size: From<Id>,
-{
-    type Output = T;
-
-    fn index(&self, index: Id) -> &Self::Output {
-        &self.values[Size::from(index) as usize]
-    }
-}
-
 impl<O, C> Operation<O, C> {
+    pub fn len(&self) -> u8 {
+        match self {
+            binary!(a, b) => 2,
+            unary!(x) => 1,
+            Operation::Conditional { pass, fail, .. } => 2,
+        }
+    }
+
     pub fn for_each_operand(&self, mut f: impl FnMut(&O)) {
         match self {
             binary!(a, b) => {
@@ -324,9 +243,9 @@ impl<O, C> Operation<O, C> {
         }
     }
 
-    pub fn operand(&self, at: usize) -> Option<&O> {
+    pub fn operand(&self, at: u8) -> Option<&O> {
         match self {
-            binary!(a, b) => [a, b].get(at).copied(),
+            binary!(a, b) => [a, b].get(at as usize).copied(),
             unary!(x) => {
                 if at == 0 {
                     Some(x)
@@ -335,7 +254,7 @@ impl<O, C> Operation<O, C> {
                 }
             }
             Operation::Conditional { pass, fail, .. } => {
-                [pass, fail].get(at).copied()
+                [pass, fail].get(at as usize).copied()
             }
         }
     }
@@ -499,11 +418,7 @@ impl<O> Matrix<O> {
         Self { shape, elements }
     }
 
-    pub fn fill(
-        rows: impl Into<dag::Size>,
-        cols: impl Into<dag::Size>,
-        with: O,
-    ) -> Self
+    pub fn fill(rows: impl Into<Size>, cols: impl Into<Size>, with: O) -> Self
     where
         O: Clone, {
         let rows = rows.into();
@@ -558,16 +473,16 @@ impl<O> Index<usize> for Matrix<O> {
     type Output = [O];
 
     fn index(&self, row: usize) -> &Self::Output {
-        let start = (row as dag::Size * self.shape.cols.get()) as usize;
-        let end = (start as dag::Size + self.shape.cols.get()) as usize;
+        let start = (row as Size * self.shape.cols.get()) as usize;
+        let end = (start as Size + self.shape.cols.get()) as usize;
         &self.elements[start..end]
     }
 }
 
 impl<O> IndexMut<usize> for Matrix<O> {
     fn index_mut(&mut self, row: usize) -> &mut Self::Output {
-        let start = (row as dag::Size * self.shape.cols.get()) as usize;
-        let end = (start as dag::Size + self.shape.cols.get()) as usize;
+        let start = (row as Size * self.shape.cols.get()) as usize;
+        let end = (start as Size + self.shape.cols.get()) as usize;
         &mut self.elements[start..end]
     }
 }
@@ -663,6 +578,12 @@ where
 {
     fn from(l: T) -> Self {
         Operand::Leaf(l.into())
+    }
+}
+
+impl<O, L, M> From<Wildcard> for Operand<Wildcard, O, L, M> {
+    fn from(w: Wildcard) -> Self {
+        Operand::Wildcard(w)
     }
 }
 

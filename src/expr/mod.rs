@@ -11,27 +11,26 @@ use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
     iter::empty,
-    mem,
+    mem::{self, variant_count},
     ops::{Add, Div, Mul, Neg, Sub},
     slice,
     sync::mpsc::Iter,
 };
 
 use ahash::AHashMap;
-use derive_more::IsVariant;
+use derive_more::{From, IsVariant};
 use faer::{linalg::svd::ComputeSvdVectors::No, traits::ByRef};
 use itertools::Itertools;
 use kinded::Kinded;
 use num::complex::{Complex64, c64};
 use ordered_float::Pow;
-use xxhash_rust::xxh3::{Xxh3, Xxh3Builder};
 
 use crate::{
     core::{util::impl_as_variant, value::Value},
     expr::{
         dag::{
-            Condition, ConditionId, Dag, Leaf, LeafId, Matrix, MatrixId,
-            Operation, OperationId,
+            Condition, ConditionId, Dag, Leaf, LeafId, LeafKind, Matrix,
+            MatrixId, Operation, OperationId, OperationKind,
         },
         shape::Shape,
     },
@@ -52,7 +51,7 @@ use crate::{
 pub struct Expr<W = !>
 where
     W: Eq + Hash, {
-    dag: Dag<Operand<W>, OperationId, LeafId, MatrixId>,
+    pub(crate) dag: Dag<Operand<W>, OperationId, LeafId, MatrixId>,
 }
 
 /// An [`Operation`]'s operand. This is like a node handle in traditional DAGs
@@ -62,6 +61,14 @@ pub enum Operand<W = !, O = OperationId, L = LeafId, M = MatrixId> {
     Matrix(M),
     Operation(O),
     Wildcard(W),
+}
+
+#[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant)]
+pub enum OperandKind {
+    Leaf(LeafKind),
+    Operation(OperationKind),
+    Matrix,
+    Wildcard,
 }
 
 pub type FetchedOperand<'a, W = !> = Operand<
@@ -84,12 +91,31 @@ where
 }
 
 #[derive(Eq, Clone, Copy, PartialEq)]
-enum Order {
+pub enum Order {
     Post,
     Pre,
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
+
+impl OperandKind {
+    pub fn id(&self) -> u8 {
+        match self {
+            OperandKind::Leaf(leaf_kind) => *leaf_kind as u8,
+            OperandKind::Operation(operation_kind) => {
+                *operation_kind as u8 + variant_count::<LeafKind>() as u8
+            }
+            OperandKind::Matrix => {
+                1 + variant_count::<OperationKind>() as u8
+                    + variant_count::<LeafKind>() as u8
+            }
+            OperandKind::Wildcard => {
+                2 + variant_count::<OperationKind>() as u8
+                    + variant_count::<LeafKind>() as u8
+            }
+        }
+    }
+}
 
 impl<W> FetchedOperand<'_, W>
 where
@@ -114,8 +140,30 @@ where
     pub fn child(&self, at: usize) -> Option<Operand<W>> {
         match self {
             Operand::Matrix(m) => m.elements().get(at).copied(),
-            Operand::Operation(op) => op.operand(at).copied(),
+            Operand::Operation(op) => op.operand(at as u8).copied(),
             _ => None,
+        }
+    }
+}
+
+impl<W, O, C, M> Operand<W, Operation<O, C>, Leaf, M> {
+    pub fn kind(&self) -> OperandKind {
+        match self {
+            Operand::Leaf(l) => OperandKind::Leaf(l.kind()),
+            Operand::Matrix(m) => OperandKind::Matrix,
+            Operand::Operation(op) => OperandKind::Operation(op.kind()),
+            Operand::Wildcard(_) => OperandKind::Wildcard,
+        }
+    }
+}
+
+impl<W, O, C, M> Operand<W, &Operation<O, C>, &Leaf, M> {
+    pub fn kind(&self) -> OperandKind {
+        match self {
+            Operand::Leaf(l) => OperandKind::Leaf(l.kind()),
+            Operand::Matrix(m) => OperandKind::Matrix,
+            Operand::Operation(op) => OperandKind::Operation(op.kind()),
+            Operand::Wildcard(_) => OperandKind::Wildcard,
         }
     }
 }
@@ -187,7 +235,7 @@ where
             return None;
         }
 
-        if !self.dag.leaves.iter().any(|leaf| {
+        if !self.dag.leaves.iter().any(|(_, leaf)| {
             leaf.as_symbol().map(|s| bindings.contains_key(s)).unwrap_or(false)
         }) {
             return None;
@@ -312,7 +360,7 @@ where
         self.dag.root = Some(new_root);
     }
 
-    fn dfs(&self, order: Order) -> Vec<Operand<W>> {
+    pub fn dfs(&self, order: Order) -> Vec<Operand<W>> {
         let mut visit = Vec::with_capacity(self.size());
 
         fn dfs_inner<'e, W: Hash + Eq + Copy>(
@@ -420,7 +468,7 @@ where
     }
 
     pub fn symbols(&self) -> impl Iterator<Item = Symbol> {
-        self.dag.leaves.iter().filter_map(|x| x.as_symbol().copied())
+        self.dag.leaves.iter().filter_map(|(_, leaf)| leaf.as_symbol().copied())
     }
 }
 

@@ -17,20 +17,24 @@ use itertools::Itertools;
 use kinded::Kinded;
 use nlopt::Algorithm::Newuoa;
 use num::{One, Zero, complex::ComplexFloat, pow::Pow as _};
-use xxhash_rust::xxh3::Xxh3Builder;
 
 use crate::{
     core::{
+        consed::Insertion::{self, Existed},
         index::Indexed,
         interned::Interned,
         value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
         BuiltOperand, Expr, FetchedOperand, Operand,
-        dag::{self, Dag, Leaf, LeafKind, Matrix, OperationId, OperationKind},
+        dag::{
+            self, ConditionId, Dag, Leaf, LeafKind, Matrix, Operation,
+            OperationId, OperationKind,
+        },
         domain::Domain,
         shape::Shape,
     },
+    id,
     simplify::pattern::{Machine, Pattern, Program, Rule, Wildcard},
     symbol::{Symbol, constants::Constant},
     units::Quantity,
@@ -46,17 +50,16 @@ mod test;
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Default, PartialOrd, Ord)]
-pub struct ClassId(dag::Size);
+id!(ClassId);
 
 pub struct Substitution {
     bindings: AHashMap<Wildcard, ClassId>,
 }
 
-#[derive(Default)]
-pub struct EquivalencyGraph {
-    dag: Dag<ClassId, ClassId, ClassId, ClassId>,
+type EquivalencyDag = Dag<ClassId, ClassId, ClassId, ClassId>;
 
+pub struct EquivalencyGraph {
+    dag: EquivalencyDag,
     classes: Indexed<Vec<EquivalencyClass>, ClassId>,
     worklist: Vec<ClassId>,
     matchlist: Vec<ClassId>,
@@ -89,12 +92,6 @@ impl EquivalencyClass {
 
     pub fn shape(&self) -> Shape {
         self.analysis.shape
-    }
-}
-
-impl Into<usize> for ClassId {
-    fn into(self) -> usize {
-        self.0 as usize
     }
 }
 
@@ -171,135 +168,141 @@ impl Operand<Wildcard> {
     // }
 }
 
-impl PartialEq for EquivalencyExpr {
-    fn eq(&self, other: &Self) -> bool {
-        self.key() == other.key()
-    }
-}
+// impl PartialEq for EquivalencyExpr {
+//     fn eq(&self, other: &Self) -> bool {
+//         self.key() == other.key()
+//     }
+// }
 
-impl Hash for EquivalencyExpr {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u128(self.key().0);
-    }
-}
+// impl Hash for EquivalencyExpr {
+//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+//         state.write_u128(self.key().0);
+//     }
+// }
 
 impl EquivalencyGraph {
-    fn add(&mut self, op: BuiltOperand) -> ClassId {
-        match op {
-            Operand::Leaf(_) => todo!(),
-            Operand::Matrix(_) => todo!(),
-            Operand::Operation(_) => todo!(),
-            Operand::Wildcard(_) => todo!(),
+    fn add(
+        &mut self,
+        built_op: Operand<
+            !,
+            Operation<ClassId, ConditionId>,
+            Leaf,
+            Matrix<ClassId>,
+        >,
+    ) -> ClassId {
+        let next_id = self.classes.next();
+        let op = match built_op {
+            Operand::Leaf(leaf) => {
+                match self.dag.leaves.insert_with(leaf, next_id) {
+                    Insertion::Existed(existing) => return self.find(existing),
+                    Insertion::Added(id) => Operand::Leaf(id),
+                }
+            }
+            Operand::Matrix(m) => {
+                match self.dag.matrices.insert_with(m, next_id) {
+                    Insertion::Existed(existing) => return self.find(existing),
+                    Insertion::Added(id) => Operand::Matrix(id),
+                }
+            }
+            Operand::Operation(c) => {
+                match self.dag.operations.insert_with(c, next_id) {
+                    Insertion::Existed(existing) => return self.find(existing),
+                    Insertion::Added(id) => Operand::Operation(id),
+                }
+            }
+            Operand::Wildcard(_) => unreachable!(),
+        };
+
+        let qty = self.evaluate(op);
+
+        let class = EquivalencyClass {
+            operands_by_kind: array::from_fn(|i| {
+                if built_op.kind().id() == i as u8 { vec![op] } else { vec![] }
+            }),
+            operands: vec![op],
+            child_of: vec![],
+            parent: Cell::new(next_id),
+            analysis: Analysis {
+                domain: self.domain(op),
+                shape: self.shape(op),
+                qty,
+            },
+        };
+
+        self.matchlist.push(next_id);
+        self.worklist.push(next_id);
+        self.classes.push(class);
+
+        if let Some(ref q) = qty {
+            let qty_class = self.add(q.into());
+            self.union(next_id, qty_class);
         }
-        // if let Some(existing) = self.cons.get(&expr.key()) {
-        //     return self.find(*existing);
-        // } else {
-        //     let expr_id = ExprId(self.exprs.len());
-        //     let class_id = ClassId(self.classes.len());
-        //     self.cons.insert(expr.key(), class_id);
 
-        //     let qty = self.evaluate_expr(&expr);
-
-        //     let class = EquivalencyClass {
-        //         parent: Cell::new(class_id),
-        //         exprs: vec![expr_id],
-        //         exprs_by_kind: array::from_fn(|i| {
-        //             if expr.node.kind().id() == i {
-        //                 vec![expr_id]
-        //             } else {
-        //                 vec![]
-        //             }
-        //         }),
-        //         domain: self.domain(&expr),
-        //         shape: self.shape(&expr),
-        //         qty: qty.clone(),
-        //         child_of: vec![],
-        //     };
-
-        //     expr.node.for_each_child(|child_id| {
-        //         let child = self.find(*child_id);
-        //         self.classes[child.0].child_of.push(expr_id);
-        //     });
-
-        //     self.matchlist.push(class_id);
-        //     self.exprs.push(expr);
-        //     self.classes.push(class);
-
-        //     if let Some(ref q) = qty {
-        //         let qty_expr = EquivalencyExpr {
-        //             node: Node::Leaf(q.clone().into()),
-        //             key: OnceCell::new(),
-        //         };
-
-        //         let qty_class = self.add(qty_expr);
-        //         self.union(class_id, qty_class);
-        //     }
-
-        //     class_id
-        // }
+        next_id
     }
 
-    fn evaluate_expr(&self, expr: &EquivalencyExpr) -> Option<Quantity> {
-        match expr
-            .node
-            .clone()
-            .map(&mut |c| self.classes[self.find(c).0].qty.clone())
-        {
-            Node::Leaf(leaf) => match leaf {
+    fn evaluate(&self, op: Operand) -> Option<Quantity> {
+        match op {
+            Operand::Leaf(id) => match &self.dag.leaves[id] {
                 Leaf::Quantity(quantity) => Some(quantity.clone()),
                 _ => None,
             },
-            Node::Branch(branch) => Some(match branch {
-                Branch::Add([a, b]) => {
-                    if a.as_ref()?.value().is_zero() {
-                        return b;
-                    } else if b.as_ref()?.value().is_zero() {
-                        return a;
-                    }
+            Operand::Operation(id) => Some(
+                match self.dag.operations[id].map(
+                    |c| self.classes[self.find(*c)].analysis.qty.clone(),
+                    |_| (),
+                ) {
+                    Operation::Add([a, b]) => {
+                        if a.as_ref()?.value().is_zero() {
+                            return b;
+                        } else if b.as_ref()?.value().is_zero() {
+                            return a;
+                        }
 
-                    if a.as_ref()?.unit() == b.as_ref()?.unit() {
-                        a? + b?
-                    } else {
-                        return None;
+                        if a.as_ref()?.unit() == b.as_ref()?.unit() {
+                            a? + b?
+                        } else {
+                            return None;
+                        }
                     }
-                }
-                Branch::Mul([a, b]) => {
-                    if a.as_ref().or(b.as_ref())?.value().is_zero() {
-                        0.0.into()
-                    } else {
-                        a? * b?
+                    Operation::Mul([a, b]) => {
+                        if a.as_ref().or(b.as_ref())?.value().is_zero() {
+                            0.0.into()
+                        } else {
+                            a? * b?
+                        }
                     }
-                }
-                Branch::Min([a, b]) => a?.max(&b?),
-                Branch::Max([a, b]) => a?.min(&b?),
-                Branch::Pow { base, exp } => base?.pow(exp?),
-                Branch::Log { base, arg } => arg?.log(base?),
-                Branch::Atan2 { x, y } => x?.atan2(&y?),
-                Branch::Sin(u) => u?.sin(),
-                Branch::Cos(u) => u?.cos(),
-                Branch::Tan(u) => u?.tan(),
-                Branch::Asin(u) => u?.asin(),
-                Branch::Acos(u) => u?.acos(),
-                Branch::Atan(u) => u?.atan(),
-                Branch::Sinh(u) => u?.sinh(),
-                Branch::Cosh(u) => u?.cosh(),
-                Branch::Tanh(u) => u?.tanh(),
-                Branch::Asinh(u) => u?.asinh(),
-                Branch::Acosh(u) => u?.acosh(),
-                Branch::Atanh(u) => u?.atanh(),
-                Branch::Arg(u) => u?.arg(),
-                Branch::Conj(u) => u?.conj(),
-                Branch::Norm(u) => u?.norm(),
-                Branch::Sign(u) => u?.sign(),
-                Branch::Real(u) => u?.real(),
-                Branch::Imag(u) => u?.imag(),
-                Branch::Matrix(matrix) => todo!(),
-                Branch::Transpose(_) => todo!(),
-                Branch::Det(_) => todo!(),
-                Branch::Rank(_) => todo!(),
-                Branch::Trace(_) => todo!(),
-                Branch::Conditional { cond, pass, fail } => return None,
-            }),
+                    Operation::Min([a, b]) => a?.max(&b?),
+                    Operation::Max([a, b]) => a?.min(&b?),
+                    Operation::Pow { base, exp } => base?.pow(exp?),
+                    Operation::Log { base, arg } => arg?.log(base?),
+                    Operation::Atan2 { x, y } => x?.atan2(&y?),
+                    Operation::Sin(u) => u?.sin(),
+                    Operation::Cos(u) => u?.cos(),
+                    Operation::Tan(u) => u?.tan(),
+                    Operation::Asin(u) => u?.asin(),
+                    Operation::Acos(u) => u?.acos(),
+                    Operation::Atan(u) => u?.atan(),
+                    Operation::Sinh(u) => u?.sinh(),
+                    Operation::Cosh(u) => u?.cosh(),
+                    Operation::Tanh(u) => u?.tanh(),
+                    Operation::Asinh(u) => u?.asinh(),
+                    Operation::Acosh(u) => u?.acosh(),
+                    Operation::Atanh(u) => u?.atanh(),
+                    Operation::Arg(u) => u?.arg(),
+                    Operation::Conj(u) => u?.conj(),
+                    Operation::Norm(u) => u?.norm(),
+                    Operation::Sign(u) => u?.sign(),
+                    Operation::Real(u) => u?.real(),
+                    Operation::Imag(u) => u?.imag(),
+                    Operation::Transpose(_) => todo!(),
+                    Operation::Det(_) => todo!(),
+                    Operation::Rank(_) => todo!(),
+                    Operation::Trace(_) => todo!(),
+                    Operation::Conditional { cond, pass, fail } => return None,
+                },
+            ),
+            Operand::Matrix(_) => todo!(),
         }
     }
 
@@ -320,7 +323,13 @@ impl EquivalencyGraph {
 
         let compiled = rules
             .iter()
-            .map(|r| (r.from.kind(), r.from.compile(&r.conds), &r.to))
+            .map(|r| {
+                (
+                    r.from.root().map(|op| r.from.fetch(op)).unwrap().kind(),
+                    r.from.compile(&r.conds, &mut self.dag),
+                    &r.to,
+                )
+            })
             .collect_vec();
 
         let mut prod = vec![Productivity::default(); compiled.len()];
@@ -360,11 +369,9 @@ impl EquivalencyGraph {
                 prod.matched = 0;
 
                 for class_id in &pending_match {
-                    // why even bother matching if this class
-                    // dosent even contain any nodes with that kind
-                    if let Some(root_kind) = root_kind
-                        && self.classes[class_id.0].exprs_by_kind
-                            [root_kind.id()]
+                    // why even bother matching if this class dosent contain any nodes of that kind
+                    if self.classes[*class_id].operands_by_kind
+                        [root_kind.id() as usize]
                         .is_empty()
                     {
                         continue;

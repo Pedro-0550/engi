@@ -18,7 +18,7 @@ use dashmap::{
     },
 };
 
-use crate::expr::dag;
+use crate::{core::index::Size, expr::dag};
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
@@ -28,10 +28,10 @@ pub struct Interned<T: Hash + Eq> {
     element_to_handle: LazyLock<DashMap<T, Handle<T>>>,
     handle_to_element: LazyLock<DashMap<Handle<T>, T>>,
 
-    next_id: Atomic<dag::Size>,
+    next_id: Atomic<Size>,
 }
 
-pub struct Handle<T>(pub(crate) dag::Size, PhantomData<T>);
+pub struct Handle<T>(pub(crate) Size, PhantomData<T>);
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
@@ -44,7 +44,7 @@ where
         Self {
             element_to_handle: LazyLock::new(|| DashMap::new()),
             handle_to_element: LazyLock::new(|| DashMap::new()),
-            next_id: Atomic::<dag::Size>::new(0),
+            next_id: Atomic::<Size>::new(0),
         }
     }
 
@@ -62,7 +62,7 @@ where
         id
     }
 
-    pub(crate) fn insert_at(&self, id: dag::Size, val: T) {
+    pub(crate) fn insert_at(&self, id: Size, val: T) {
         let handle = Handle::new(id);
 
         self.handle_to_element.insert(handle, val.clone());
@@ -103,7 +103,7 @@ where
 }
 
 impl<T> Handle<T> {
-    pub(crate) const fn new(id: dag::Size) -> Self {
+    pub(crate) const fn new(id: Size) -> Self {
         Self(id, PhantomData)
     }
 }

@@ -18,8 +18,10 @@
 #![feature(try_blocks)]
 #![feature(variant_count)]
 #![feature(never_type)]
+#![feature(const_convert)]
 
 pub mod core {
+    pub mod consed;
     pub mod graph;
     pub mod index;
     pub mod interned;

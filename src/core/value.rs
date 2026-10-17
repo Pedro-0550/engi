@@ -20,7 +20,10 @@ use num::{
 use ordered_float::OrderedFloat;
 
 use crate::{
-    core::util::{ArcExt, impl_as_variant, impl_op_permutations},
+    core::{
+        index::Size,
+        util::{ArcExt, impl_as_variant, impl_op_permutations},
+    },
     expr::{
         dag,
         domain::{Domain, Interval},
@@ -85,7 +88,7 @@ impl Value {
         match self {
             Value::Set(set) => todo!(),
             Value::Matrix(mat) => {
-                Shape::rect(mat.nrows() as dag::Size, mat.ncols() as dag::Size)
+                Shape::rect(mat.nrows() as Size, mat.ncols() as Size)
             }
             Value::Scalar(complex) => Shape::SCALAR,
         }
