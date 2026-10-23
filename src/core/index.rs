@@ -24,6 +24,7 @@ macro_rules! id {
             PartialEq,
             Ord,
             PartialOrd,
+            Default,
             derive_more::Into,
             derive_more::From,
         )]

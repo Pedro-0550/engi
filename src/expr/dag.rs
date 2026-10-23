@@ -243,6 +243,20 @@ impl<O, C> Operation<O, C> {
         }
     }
 
+    pub fn for_each_operand_mut(&mut self, mut f: impl FnMut(&mut O)) {
+        match self {
+            binary!(a, b) => {
+                f(a);
+                f(b)
+            }
+            unary!(x) => f(x),
+            Operation::Conditional { pass, fail, .. } => {
+                f(pass);
+                f(fail)
+            }
+        }
+    }
+
     pub fn operand(&self, at: u8) -> Option<&O> {
         match self {
             binary!(a, b) => [a, b].get(at as usize).copied(),

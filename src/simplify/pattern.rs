@@ -1,6 +1,11 @@
 /* --------------------------------- STRUCTS -------------------------------- */
 
-use std::{collections::HashMap, mem, ops::Neg, rc::Rc};
+use std::{
+    collections::HashMap,
+    mem,
+    ops::{Index, Neg},
+    rc::Rc,
+};
 
 use ahash::AHashMap;
 use derive_more::Into;
@@ -134,6 +139,13 @@ impl<'a> ConditionContext<'a> {
 }
 
 impl Pattern {
+    pub fn build(
+        &self,
+        into: &mut EquivalencyGraph,
+        sub: &Substitution,
+    ) -> ClassId {
+    }
+
     pub(crate) fn compile(
         &self,
         conditions: &[Condition],
@@ -258,15 +270,16 @@ impl Machine {
             out: &mut Vec<Substitution>,
         ) {
             if pc >= program.code.len() {
-                out.push(Substitution {
-                    bindings: program
-                        .allocations
-                        .iter()
-                        .filter_map(|(wildcard, reg)| {
-                            Some((wildcard, graph.find(registers[(*reg)?])))
-                        })
-                        .collect(),
-                });
+                let mut bindings = Indexed::from([None; WILDCARD_COUNT]);
+
+                for (wildcard, reg) in program.allocations.iter() {
+                    let Some(reg) = reg else {
+                        continue;
+                    };
+                    bindings[wildcard] = Some(graph.find(registers[*reg]));
+                }
+
+                out.push(Substitution { bindings });
                 return;
             }
 

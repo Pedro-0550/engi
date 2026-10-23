@@ -63,6 +63,12 @@ where
         }
     }
 
+    pub fn replace_with(&mut self, val: T, at: Idx, key: Key) {}
+
+    pub fn key(&self, v: &T) -> Option<&Key> {
+        self.cons.get(v)
+    }
+
     pub fn len(&self) -> usize {
         self.values.len()
     }

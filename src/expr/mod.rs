@@ -55,7 +55,7 @@ where
 }
 
 /// An [`Operation`]'s operand. This is like a node handle in traditional DAGs
-#[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant)]
+#[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant, PartialOrd, Ord)]
 pub enum Operand<W = !, O = OperationId, L = LeafId, M = MatrixId> {
     Leaf(L),
     Matrix(M),

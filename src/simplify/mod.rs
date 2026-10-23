@@ -1,7 +1,7 @@
 use std::{
     array,
     cell::{Cell, OnceCell},
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, hash_map::Entry},
     hash::{BuildHasher, Hash, RandomState},
     iter::once,
     mem::{self, variant_count},
@@ -21,12 +21,12 @@ use num::{One, Zero, complex::ComplexFloat, pow::Pow as _};
 use crate::{
     core::{
         consed::Insertion::{self, Existed},
-        index::Indexed,
+        index::{Indexed, Size},
         interned::Interned,
         value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
-        BuiltOperand, Expr, FetchedOperand, Operand,
+        Expr, Operand,
         dag::{
             self, ConditionId, Dag, Leaf, LeafKind, Matrix, Operation,
             OperationId, OperationKind,
@@ -35,7 +35,9 @@ use crate::{
         shape::Shape,
     },
     id,
-    simplify::pattern::{Machine, Pattern, Program, Rule, Wildcard},
+    simplify::pattern::{
+        Machine, Pattern, Program, Rule, WILDCARD_COUNT, Wildcard,
+    },
     symbol::{Symbol, constants::Constant},
     units::Quantity,
 };
@@ -53,16 +55,16 @@ mod test;
 id!(ClassId);
 
 pub struct Substitution {
-    bindings: AHashMap<Wildcard, ClassId>,
+    bindings: Indexed<[Option<ClassId>; WILDCARD_COUNT], Wildcard>,
 }
 
-type EquivalencyDag = Dag<ClassId, ClassId, ClassId, ClassId>;
-
+#[derive(Default)]
 pub struct EquivalencyGraph {
     dag: EquivalencyDag,
     classes: Indexed<Vec<EquivalencyClass>, ClassId>,
-    worklist: Vec<ClassId>,
     matchlist: Vec<ClassId>,
+    updatelist: Vec<ClassId>,
+    dirty: Cell<bool>,
 }
 
 pub struct EquivalencyClass {
@@ -73,16 +75,45 @@ pub struct EquivalencyClass {
         variant_count::<LeafKind>() + variant_count::<OperationKind>() + 1 // 1 for matrix
     }],
     operands: Vec<Operand>,
-    child_of: Vec<Operand>,
+    child_of: Vec<ClassId>,
 
     parent: Cell<ClassId>,
     analysis: Analysis,
 }
 
+#[derive(Clone)]
 pub struct Analysis {
     domain: Domain,
     shape: Shape,
     qty: Option<Quantity>,
+}
+
+/* --------------------------------- ALIASES -------------------------------- */
+
+type EquivalencyDag = Dag<ClassId, ClassId, ClassId, ClassId>;
+
+// An equivalency graph's fetched operand, which is different from an expression's fetched operand
+type FetchedOperand<'a> = Operand<
+    !,
+    &'a Operation<ClassId, ConditionId>,
+    &'a Leaf,
+    &'a Matrix<ClassId>,
+>;
+
+type BuiltOperand =
+    Operand<!, Operation<ClassId, ConditionId>, Leaf, Matrix<ClassId>>;
+
+/* ---------------------------------- IMPLS --------------------------------- */
+
+impl Analysis {
+    pub fn merge_with(&mut self, other: Analysis) -> bool {
+        // shapes must be eq
+        // domain merges to the most restrictive of the two
+        // qty merges when one of them is None and needs to be approx eq if both are Some
+        // returns true if the qty changes
+    }
+
+    pub fn update(id: ClassId, graph: &mut EquivalencyGraph) -> Option<Self> {}
 }
 
 impl EquivalencyClass {
@@ -96,76 +127,24 @@ impl EquivalencyClass {
 }
 
 impl FetchedOperand<'_> {
-    fn key(&self) -> u8 {
+    fn key(&self) -> usize {
         match self {
-            Operand::Leaf(leaf) => leaf.kind() as u8,
+            Operand::Leaf(leaf) => leaf.kind() as usize,
             Operand::Operation(op) => {
-                op.kind() as u8 + (variant_count::<LeafKind>() as u8)
+                op.kind() as usize + (variant_count::<LeafKind>() as usize)
             }
             Operand::Matrix(_) => {
-                variant_count::<OperationKind>() as u8
-                    + variant_count::<LeafKind>() as u8
+                variant_count::<OperationKind>() as usize
+                    + variant_count::<LeafKind>() as usize
                     + 1
             }
             Operand::Wildcard(_) => {
-                variant_count::<OperationKind>() as u8
-                    + variant_count::<LeafKind>() as u8
+                variant_count::<OperationKind>() as usize
+                    + variant_count::<LeafKind>() as usize
                     + 2
             }
         }
     }
-}
-
-impl Operand<Wildcard> {
-    fn build(
-        &self,
-        pat: Pattern,
-        graph: &mut EquivalencyGraph,
-        sub: &Substitution,
-    ) -> ClassId {
-        match pat.fetch(*self) {
-            // Pattern::Wildcard(w) => sub.bindings[w],
-            // Pattern::Node(node) => match node {
-            //     Node::Leaf(leaf) => {
-            //         let expr = EquivalencyExpr {
-            //             key: OnceCell::new(),
-            //             node: EquivalencyNode::Leaf(leaf.clone()),
-            //         };
-
-            //         graph.add(expr)
-            //     }
-            //     Node::Branch(branch) => {
-            //         let expr = EquivalencyExpr {
-            //             key: OnceCell::new(),
-            //             node: node
-            //                 .clone()
-            //                 .map(&mut |x| Self::build(graph, &x, sub)),
-            //         };
-
-            //         graph.add(expr)
-            //     }
-            // },
-            Operand::Leaf(b) => graph.add(Operand::Leaf(b)),
-            Operand::Matrix(_) => todo!(),
-            Operand::Operation(_) => todo!(),
-            Operand::Wildcard(w) => sub.bindings[&w],
-        }
-    }
-
-    // fn key(&self) -> Key {
-    //     *self.key.get_or_init(|| {
-    //         let mut hasher = Xxh3Builder::new().with_seed(1).build();
-
-    //         self.node.structure().hash(&mut hasher);
-
-    //         // for child in self.node.children() {
-    //         //     child.hash(&mut hasher);
-    //         // }
-    //         self.node.for_each_child(|child| child.hash(&mut hasher));
-
-    //         Key(hasher.digest128())
-    //     })
-    // }
 }
 
 // impl PartialEq for EquivalencyExpr {
@@ -181,15 +160,19 @@ impl Operand<Wildcard> {
 // }
 
 impl EquivalencyGraph {
-    fn add(
-        &mut self,
-        built_op: Operand<
-            !,
-            Operation<ClassId, ConditionId>,
-            Leaf,
-            Matrix<ClassId>,
-        >,
-    ) -> ClassId {
+    #[inline(always)]
+    pub fn fetch(&self, op: Operand) -> FetchedOperand<'_> {
+        match op {
+            Operand::Leaf(id) => Operand::Leaf(&self.dag.leaves[id]),
+            Operand::Matrix(id) => Operand::Matrix(&self.dag.matrices[id]),
+            Operand::Operation(id) => {
+                Operand::Operation(&self.dag.operations[id])
+            }
+            Operand::Wildcard(w) => w,
+        }
+    }
+
+    fn add(&mut self, built_op: BuiltOperand) -> ClassId {
         let next_id = self.classes.next();
         let op = match built_op {
             Operand::Leaf(leaf) => {
@@ -199,15 +182,35 @@ impl EquivalencyGraph {
                 }
             }
             Operand::Matrix(m) => {
-                match self.dag.matrices.insert_with(m, next_id) {
+                match self
+                    .dag
+                    .matrices
+                    .insert_with(m.map(|el| self.find(*el)), next_id)
+                {
                     Insertion::Existed(existing) => return self.find(existing),
-                    Insertion::Added(id) => Operand::Matrix(id),
+                    Insertion::Added(id) => {
+                        let op = Operand::Matrix(id);
+                        for el in m.elements() {
+                            self.classes[*el].child_of.push(next_id);
+                        }
+                        op
+                    }
                 }
             }
-            Operand::Operation(c) => {
-                match self.dag.operations.insert_with(c, next_id) {
+            Operand::Operation(o) => {
+                match self
+                    .dag
+                    .operations
+                    .insert_with(o.map(|c| self.find(*c), |c| *c), next_id)
+                {
                     Insertion::Existed(existing) => return self.find(existing),
-                    Insertion::Added(id) => Operand::Operation(id),
+                    Insertion::Added(id) => {
+                        let op = Operand::Operation(id);
+                        o.for_each_operand(|c| {
+                            self.classes[*c].child_of.push(next_id)
+                        });
+                        op
+                    }
                 }
             }
             Operand::Wildcard(_) => unreachable!(),
@@ -230,7 +233,6 @@ impl EquivalencyGraph {
         };
 
         self.matchlist.push(next_id);
-        self.worklist.push(next_id);
         self.classes.push(class);
 
         if let Some(ref q) = qty {
@@ -397,12 +399,11 @@ impl EquivalencyGraph {
 
             // Apply
             for (rule_idx, id, to, sub) in matches {
-                let found = EquivalencyExpr::build(self, &to, &sub);
+                let subbed = to.build(self, &sub);
 
-                if self.find(id) != self.find(found) {
-                    self.union(id, found);
+                if self.union(id, subbed).is_some() {
                     self.matchlist.push(id);
-                    self.pending_fold.push(id);
+                    self.updatelist.push(id);
 
                     prod[rule_idx].merged += 1;
                     graph_changed = true;
@@ -426,249 +427,272 @@ impl EquivalencyGraph {
     }
 
     fn rebuild(&mut self) {
+        let mut updatelist = mem::take(&mut self.updatelist);
+
         loop {
-            let mut changed_roots = Vec::new();
+            self.dirty.set(false);
 
-            let mut unions = Vec::with_capacity(self.classes.len());
+            let mut changed = Vec::new();
+
+            // Step 1: move over all the operands in every class to its parent class
             for i in 0..self.classes.len() {
-                unions.push(self.find(ClassId(i)));
-            }
+                let id = ClassId(i as Size);
+                let parent = self.find(id);
 
-            for i in 0..self.classes.len() {
-                let id = ClassId(i);
-                let root = unions[i];
+                if id != parent {
+                    let class = &mut self.classes[id];
 
-                if id != root {
-                    let class = &mut self.classes[id.0];
-
-                    if !class.exprs.is_empty() {
-                        let mut exprs = mem::take(&mut class.exprs);
+                    if !class.operands.is_empty() {
+                        let mut operands = mem::take(&mut class.operands);
                         let mut child_of = mem::take(&mut class.child_of);
-                        let mut exprs_by_kind = class
-                            .exprs_by_kind
+                        let mut operands_by_kind = class
+                            .operands_by_kind
                             .each_mut()
-                            .map(|exprs| mem::take(exprs));
-                        let qty = class.qty.take();
+                            .map(|v| mem::take(v));
+                        let analysis = class.analysis.clone();
 
-                        let parent_class = &mut self.classes[root.0];
-                        parent_class.exprs.append(&mut exprs);
+                        let parent_class = &mut self.classes[parent];
+                        parent_class.operands.append(&mut operands);
                         parent_class.child_of.append(&mut child_of);
 
-                        if let Some(ref parent_qty) = parent_class.qty
-                            && let Some(ref new_qty) = qty
-                        {
-                            // assert_eq!(
-                            //     parent_qty, new_qty,
-                            //     "Constant parts of unioned classes should be equal"
-                            // );
-                        } else {
-                            parent_class.qty = parent_class.qty.take().or(qty)
+                        if parent_class.analysis.merge_with(analysis) {
+                            updatelist.push(parent);
                         }
 
-                        for (i, mut ids) in exprs_by_kind.iter_mut().enumerate()
+                        for (i, mut ids) in
+                            operands_by_kind.iter_mut().enumerate()
                         {
-                            parent_class.exprs_by_kind[i].append(&mut ids);
+                            parent_class.operands_by_kind[i].append(&mut ids);
                         }
 
-                        changed_roots.push(root);
+                        changed.push(parent);
                     }
                 }
             }
 
-            changed_roots.sort_unstable_by_key(|x| x.0);
-            changed_roots.dedup();
+            changed.sort_unstable();
+            changed.dedup();
 
-            for root in changed_roots {
-                self.matchlist.push(root);
+            // Step 2: dedup merged roots & append qty leaves
+            for id in changed {
+                let class = &mut self.classes[id];
 
-                let class = &mut self.classes[root.0];
-                class.exprs.sort_unstable_by_key(|x| x.0);
-                class.exprs.dedup();
+                class.operands.sort_unstable();
+                class.operands.dedup();
 
-                class.child_of.sort_unstable_by_key(|x| x.0);
+                class.child_of.sort_unstable();
                 class.child_of.dedup();
 
-                for entry in &mut class.exprs_by_kind {
-                    entry.sort_unstable_by_key(|x| x.0);
+                for entry in &mut class.operands_by_kind {
+                    entry.sort_unstable();
                     entry.dedup();
+                }
+
+                if let Some(ref qty) = class.analysis.qty {
+                    let qty = qty.clone();
+                    let qty_class = self.add(qty.into());
+                    if let Some(kept) = self.union(id, qty_class) {
+                        self.matchlist.push(kept);
+                    }
                 }
             }
 
-            self.cons.clear();
-            let mut converged = true;
+            // Step 3: canonicalize operation & matrix ids
+            // in this step we also merge classes if any operations in them canonicalize to the same thing
 
-            for class_id in 0..self.classes.len() {
-                let id = ClassId(class_id);
+            for i in 0..self.classes.len() {
+                let id = ClassId(i as u16);
+                let parent = self.find(id);
 
-                if unions[class_id] != id {
+                if parent != id {
                     continue;
                 }
 
-                let class = &self.classes[class_id];
+                let mut operands = {
+                    let class = &mut self.classes[parent];
 
-                for &expr_id in &class.exprs {
-                    let key = {
-                        let expr = &mut self.exprs[expr_id.0];
+                    mem::take(&mut class.operands)
+                };
 
-                        let mut changed = false;
-                        expr.node.for_each_child_mut(|child| {
-                            let root = unions[child.0];
-                            if *child != root {
-                                *child = root;
-                                changed = true;
+                operands.retain_mut(|op| {
+                    let other = match op {
+                        Operand::Leaf(_) => return true,
+                        Operand::Matrix(m) => {
+                            let canon =
+                                self.dag.matrices[*m].map(|x| self.find(*x));
+
+                            match self
+                                .dag
+                                .matrices
+                                .insert_with(canon, self.find(id))
+                            {
+                                Insertion::Existed(other) => other,
+                                Insertion::Added(idx) => {
+                                    *m = idx;
+                                    return true;
+                                }
                             }
-                        });
-
-                        if changed {
-                            expr.key = OnceCell::new();
-                            self.matchlist.push(id);
-                            self.pending_fold.push(id);
                         }
+                        Operand::Operation(o) => {
+                            let canon = self.dag.operations[*o]
+                                .map(|x| self.find(*x), |c| *c);
 
-                        expr.key()
+                            match self
+                                .dag
+                                .operations
+                                .insert_with(canon, self.find(id))
+                            {
+                                Insertion::Existed(other) => other,
+                                Insertion::Added(idx) => {
+                                    *o = idx;
+                                    return true;
+                                }
+                            }
+                        }
+                        Operand::Wildcard(_) => unreachable!(),
                     };
-                    if let Some(&existing) = self.cons.get(&key) {
-                        let root_a = self.find(existing);
-                        let root_b = self.find(id);
 
-                        if root_a != root_b {
-                            self.union(root_a, root_b);
-                            self.matchlist.push(root_a);
-                            self.pending_fold.push(root_a);
+                    let Some(kept) = self.union(other, parent) else {
+                        return true;
+                    };
 
-                            converged = false;
-                        }
-                    } else {
-                        self.cons.insert(key, id);
-                    }
+                    self.matchlist.push(kept);
+                    updatelist.push(kept);
+
+                    false
+                });
+
+                let mut operands_by_kind = array::repeat(Vec::new());
+
+                for op in &operands {
+                    operands_by_kind[self.fetch(*op).key()].push(*op)
+                }
+
+                let class = &mut self.classes[parent];
+                class.operands.append(&mut operands);
+                class.operands_by_kind = operands_by_kind;
+            }
+
+            // Step 4: update analysis-es
+
+            fn update_analysis(graph: &mut EquivalencyGraph, id: ClassId) {
+                let id = graph.find(id);
+                let Some(new) = Analysis::update(id, graph) else {
+                    return;
+                };
+
+                let class = &mut graph.classes[id];
+                let qty = new.qty.clone();
+                class.analysis = new;
+
+                if let Some(qty) = qty {
+                    let qty_class = graph.add(qty.into());
+                    graph.union(id, qty_class);
+                }
+
+                let class = &graph.classes[id];
+                for parent in class.child_of.clone() {
+                    update_analysis(graph, parent);
                 }
             }
 
-            if converged {
-                let mut pending_fold = mem::take(&mut self.pending_fold);
-                pending_fold.sort_unstable();
-                pending_fold.dedup();
+            for id in updatelist.drain(..) {
+                update_analysis(self, id);
+            }
 
-                let mut discovered = Vec::new();
-
-                for id in pending_fold {
-                    let root = self.find(id);
-
-                    if self.classes[root.0].qty.is_some() {
-                        continue;
-                    }
-
-                    for &expr_id in &self.classes[root.0].exprs {
-                        if let Some(qty) =
-                            self.evaluate_expr(&self.exprs[expr_id.0])
-                        {
-                            discovered.push((root, qty));
-                            break;
-                        }
-                    }
-                }
-
-                if !discovered.is_empty() {
-                    for (root, qty) in discovered {
-                        self.classes[root.0].qty = Some(qty.clone());
-
-                        let qty_expr = EquivalencyExpr {
-                            node: Node::Leaf(qty.into()),
-                            key: OnceCell::new(),
-                        };
-
-                        let qty_id = self.add(qty_expr);
-                        let new_root = self.find(root);
-                        let qty_root = self.find(qty_id);
-
-                        if new_root != qty_root {
-                            self.union(new_root, qty_root);
-                            self.matchlist.push(new_root);
-                            self.pending_fold.push(new_root);
-
-                            converged = false;
-                        }
-                    }
-                }
-
-                if converged {
-                    break;
-                }
+            if !self.dirty.get() {
+                break;
             }
         }
     }
 
     fn find(&self, id: ClassId) -> ClassId {
-        let class = &self.classes[id.0];
+        let class = &self.classes[id];
 
         if class.parent.get() != id {
             let up = self.find(class.parent.get());
-            self.classes[id.0].parent.set(up);
+            self.classes[id].parent.set(up);
             up
         } else {
             id
         }
     }
 
-    fn union(&self, a: ClassId, b: ClassId) {
+    /// Merges a and b together, moving the smallest into the largest class.
+    /// Returns the class which was moved into by the other.
+    fn union(&self, a: ClassId, b: ClassId) -> Option<ClassId> {
         let root_a = self.find(a);
         let root_b = self.find(b);
 
         if root_a != root_b {
             assert_eq!(
-                self.classes[root_a.0].shape, self.classes[root_b.0].shape,
+                self.classes[root_a].analysis.shape,
+                self.classes[root_b].analysis.shape,
                 "Cannot union two classes of different shapes"
             );
-            // Merge root_b into root_a
-            self.classes[root_b.0].parent.set(root_a);
+            self.dirty.set(true);
+
+            // Merge smallest into the largest
+            if self.classes[root_a].operands.len()
+                > self.classes[root_b].operands.len()
+            {
+                self.classes[root_b].parent.set(root_a);
+                Some(root_a)
+            } else {
+                self.classes[root_a].parent.set(root_b);
+                Some(root_b)
+            }
+        } else {
+            None
         }
     }
 
     pub(crate) fn extract(&self) -> Expr {
         #[inline]
         fn calculate_cost(
-            node: &EquivalencyNode,
-            best_nodes: &AHashMap<ClassId, (usize, EquivalencyNode)>,
+            node: FetchedOperand<'_>,
+            best_nodes: &AHashMap<ClassId, (usize, Operand)>,
         ) -> Option<usize> {
             let mut node_cost = match node {
-                Node::Leaf(leaf) => match leaf {
+                Operand::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => 1,
                     Leaf::Constant(constant) => 1,
                     Leaf::Quantity(quantity) => 1,
                 },
-                Node::Branch(branch) => match branch {
-                    Branch::Add(_)
-                    | Branch::Mul(_)
-                    | Branch::Min(_)
-                    | Branch::Max(_) => 2,
-                    Branch::Sin(_)
-                    | Branch::Cos(_)
-                    | Branch::Tan(_)
-                    | Branch::Asin(_)
-                    | Branch::Acos(_)
-                    | Branch::Atan(_)
-                    | Branch::Sinh(_)
-                    | Branch::Cosh(_)
-                    | Branch::Tanh(_)
-                    | Branch::Asinh(_)
-                    | Branch::Acosh(_)
-                    | Branch::Atanh(_) => 3,
-                    Branch::Atan2 { .. } | Branch::Arg(_) | Branch::Norm(_) => {
-                        4
-                    }
-                    Branch::Conj(_)
-                    | Branch::Sign(_)
-                    | Branch::Real(_)
-                    | Branch::Imag(_) => 2,
-                    Branch::Pow { .. } => 5,
-                    Branch::Log { .. } => 5,
-                    Branch::Matrix(_) => todo!(),
-                    Branch::Transpose(_) => todo!(),
-                    Branch::Det(_) => todo!(),
-                    Branch::Rank(_) => todo!(),
-                    Branch::Trace(_) => todo!(),
-                    Branch::Conditional { .. } => todo!(),
+                Operand::Operation(op) => match op {
+                    Operation::Add(_)
+                    | Operation::Mul(_)
+                    | Operation::Min(_)
+                    | Operation::Max(_) => 2,
+                    Operation::Sin(_)
+                    | Operation::Cos(_)
+                    | Operation::Tan(_)
+                    | Operation::Asin(_)
+                    | Operation::Acos(_)
+                    | Operation::Atan(_)
+                    | Operation::Sinh(_)
+                    | Operation::Cosh(_)
+                    | Operation::Tanh(_)
+                    | Operation::Asinh(_)
+                    | Operation::Acosh(_)
+                    | Operation::Atanh(_) => 3,
+                    Operation::Atan2 { .. }
+                    | Operation::Arg(_)
+                    | Operation::Norm(_) => 4,
+                    Operation::Conj(_)
+                    | Operation::Sign(_)
+                    | Operation::Real(_)
+                    | Operation::Imag(_) => 2,
+                    Operation::Pow { .. } => 5,
+                    Operation::Log { .. } => 5,
+                    Operation::Transpose(_) => todo!(),
+                    Operation::Det(_) => todo!(),
+                    Operation::Rank(_) => todo!(),
+                    Operation::Trace(_) => todo!(),
+                    Operation::Conditional { .. } => todo!(),
                 },
+                Operand::Matrix(_) => todo!(),
+                Operand::Wildcard(_) => todo!(),
             };
 
             let mut has_cost = true;
@@ -685,8 +709,7 @@ impl EquivalencyGraph {
             if has_cost { Some(node_cost) } else { None }
         }
 
-        let mut best_nodes =
-            AHashMap::<ClassId, (usize, EquivalencyNode)>::new();
+        let mut best_nodes = AHashMap::<ClassId, (usize, Operand)>::new();
         let mut converged = false;
 
         while !converged {
@@ -745,11 +768,17 @@ impl EquivalencyGraph {
     pub(crate) fn build(expr: &Expr) -> Self {
         let mut graph = Self::default();
 
-        let root = expr.fold(|_, _, node| {
-            let expr = EquivalencyExpr { node, key: OnceCell::new() };
-            graph.add(expr)
+        let root = expr.fold(|_, node| {
+            graph.add(match node {
+                Operand::Leaf(l) => Operand::Leaf(l.clone()),
+                Operand::Matrix(m) => Operand::Matrix(m.map(|el| **el)),
+                Operand::Operation(o) => {
+                    Operand::Operation(o.map(|o| **o, |c| c))
+                }
+                Operand::Wildcard(_) => unreachable!(),
+            })
         });
-        graph.root = root;
+        graph.dag.root = Some(root);
 
         graph
     }
