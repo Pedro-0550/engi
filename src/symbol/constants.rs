@@ -37,14 +37,6 @@ macro_rules! constants {
 
 /* -------------------------------- CONSTANTS ------------------------------- */
 
-// pub const CONSTANTS: [Constant; 1] = [Constant {
-//     name: "π",
-//     desc: "Archimedes's constant",
-//     value: LazyLock::new(|| 3.1415926535897932384 * Unit::Unitless),
-// }];
-
-// pub const π: Constant = CONSTANTS[1];
-
 constants! {
     /// Archimedes's constant
     π = 3.1415926535897932384 * Unit::Unitless,

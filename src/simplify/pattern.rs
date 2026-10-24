@@ -22,7 +22,8 @@ use crate::{
     expr::{
         Expr, Operand, OperandKind, Order,
         dag::{
-            self, Dag, LeafId, LeafKind, MatrixId, OperationId, OperationKind,
+            self, Dag, LeafId, LeafKind, MatrixId, Operation, OperationId,
+            OperationKind,
         },
         domain::Domain,
         shape::Shape,
@@ -130,11 +131,11 @@ impl<'a> ConditionContext<'a> {
     }
 
     pub fn domain(&self, wildcard: Wildcard) -> Domain {
-        self.class(wildcard).unwrap().domain()
+        self.class(wildcard).unwrap().analysis.domain
     }
 
     pub fn shape(&self, wildcard: Wildcard) -> Shape {
-        self.class(wildcard).unwrap().shape()
+        self.class(wildcard).unwrap().analysis.shape
     }
 }
 
@@ -144,6 +145,43 @@ impl Pattern {
         into: &mut EquivalencyGraph,
         sub: &Substitution,
     ) -> ClassId {
+        // fn build_inner(
+        //     pat: &Pattern,
+        //     op: Operand<Wildcard>,
+        //     into: &mut EquivalencyGraph,
+        //     sub: &Substitution,
+        // ) -> ClassId {
+        //     match op {
+        //         Operand::Leaf(l) => {
+        //             into.add(Operand::Leaf(pat.dag.leaves[l].clone()))
+        //         }
+        //         Operand::Matrix(m) => into.add(Operand::Matrix(
+        //             pat.dag.matrices[m]
+        //                 .map(|el| build_inner(pat, *el, into, sub)),
+        //         )),
+        //         Operand::Operation(op) => into.add(Operand::Operation(
+        //             pat.dag.operations[op]
+        //                 .map(|o| build_inner(pat, *o, into, sub), c),
+        //         )),
+        //         Operand::Wildcard(_) => todo!(),
+        //     }
+        // }
+        //
+        self.fold(
+            |_, o| {
+                into.add(match o {
+                    Operand::Leaf(l) => Operand::Leaf(l.clone()),
+                    Operand::Matrix(m) => Operand::Matrix(m.map(|el| **el)),
+                    Operand::Operation(op) => {
+                        Operand::Operation(op.map(|o| **o, |c| **c))
+                    }
+                    Operand::Wildcard(w) => return sub.bindings[w].expect(
+                        "Tried building a pattern with missing substitutions",
+                    ),
+                })
+            },
+            |_, c| into.dag.conditions.push(c.map(|o| **o, |c| **c)),
+        )
     }
 
     pub(crate) fn compile(
@@ -371,74 +409,22 @@ impl Machine {
 impl_op_permutations!(
     types = [
         i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value,
-        Constant, &Constant, Symbol, &Symbol, Pattern, &Pattern, Wildcard,
-        &Wildcard, Expr, &Expr
+        Constant, &Constant, Symbol, &Symbol, Pattern, &Pattern, Expr, &Expr,
+        Wildcard, &Wildcard
     ],
     exclude_permutations = [
-        i64, f64, Quantity, &Quantity, Value, &Value, Complex64, &Complex64,
-        Symbol, &Symbol, Constant, &Constant, Expr, &Expr
+        i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value,
+        Constant, &Constant, Symbol, &Symbol, Expr, &Expr,
     ],
-    exclude_specific = [],
+    exclude_specific = [(Pattern, Pattern)],
     into = Pattern,
     out = Pattern,
-    add = {
-        // assert_eq!(
-        //     lhs.shape(),
-        //     rhs.shape(),
-        //     "Tried to add two expressions of different shapes: {lhs}, {rhs}"
-        // );
-
-        Pattern::Node(Node::Branch(Branch::Add([Box::new(lhs), Box::new(rhs)])))
-    },
-    mul = {
-        // assert!(
-        //     lhs.shape().cols == lhs.shape().rows
-        //         || (lhs.shape() == rhs.shape() && lhs.shape().is_vec()),
-        //     "Matrix multiplication requires compatible shapes"
-        // );
-
-        Pattern::Node(Node::Branch(Branch::Mul([Box::new(lhs), Box::new(rhs)])))
-    },
+    add = { lhs + rhs },
+    mul = { lhs * rhs },
     div = { lhs * rhs.pow(-1) },
-    sub = { lhs + (-rhs) },
-    pow = {
-        // assert!(
-        //     lhs.shape().is_square_mat() || lhs.shape().is_scalar(),
-        //     "Only square matrices can be raised to a power"
-        // );
-
-        // assert!(
-        //     rhs.shape().is_square_mat() || rhs.shape().is_scalar(),
-        //     "Only square matrices can be an exponent"
-        // );
-
-        // assert!(
-        //     !(lhs.shape().is_square_mat() && rhs.shape().is_square_mat()),
-        //     "Cannot raise a matrix to the power of another matrix yet"
-        // );
-
-        Pattern::Node(Node::Branch(Branch::Pow {
-            base: Box::new(lhs),
-            exp: Box::new(rhs),
-        }))
-    },
+    sub = { lhs + -rhs },
+    pow = { lhs.pow(rhs) },
 );
-
-impl Neg for Pattern {
-    type Output = Pattern;
-
-    fn neg(self) -> Self::Output {
-        -1 * self
-    }
-}
-
-impl Neg for &Pattern {
-    type Output = Pattern;
-
-    fn neg(self) -> Self::Output {
-        -1 * self
-    }
-}
 
 impl Neg for Wildcard {
     type Output = Pattern;
@@ -456,7 +442,7 @@ impl Neg for &Wildcard {
     }
 }
 
-impl From<Expr<!>> for Pattern {
+impl From<Expr> for Pattern {
     fn from(value: Expr<!>) -> Self {
         const _: () =
             assert!(size_of::<Operand<!>>() == size_of::<Operand<Wildcard>>());
@@ -470,43 +456,31 @@ impl From<Expr<!>> for Pattern {
 macro_rules! impl_unary_fn {
     ($fn:ident, $variant:ident, $name:literal) => {
         pub fn $fn(x: impl Into<Pattern>) -> Pattern {
-            let expr = x.into();
+            let mut pat = x.into();
 
-            Pattern::Node(Node::Branch(Branch::$variant(Box::new(expr))).into())
-        }
-    };
-
-    ($fn:ident, $variant:ident, $name:literal, square) => {
-        pub fn $fn(x: impl Into<Pattern>) -> Pattern {
-            let expr = x.into();
-            // let shape = expr.shape();
-
-            // assert!(
-            //     shape.is_square_mat() || shape.is_scalar(),
-            //     "Matrix-valued {} is only defined for square matrices",
-            //     $name
-            // );
-
-            Pattern::Node(Node::Branch(Branch::$variant(Box::new(expr))).into())
+            pat.push_root(Operand::Operation(Operation::$variant(
+                pat.root().unwrap(),
+            )));
+            pat
         }
     };
 }
 
-impl_unary_fn!(sin, Sin, "sine", square);
-impl_unary_fn!(cos, Cos, "cosine", square);
-impl_unary_fn!(tan, Tan, "tangent", square);
+impl_unary_fn!(sin, Sin, "sine");
+impl_unary_fn!(cos, Cos, "cosine");
+impl_unary_fn!(tan, Tan, "tangent");
 
-impl_unary_fn!(asin, Asin, "inverse sine", square);
-impl_unary_fn!(acos, Acos, "inverse cosine", square);
-impl_unary_fn!(atan, Atan, "inverse tangent", square);
+impl_unary_fn!(asin, Asin, "inverse sine");
+impl_unary_fn!(acos, Acos, "inverse cosine");
+impl_unary_fn!(atan, Atan, "inverse tangent");
 
-impl_unary_fn!(sinh, Sinh, "hyperbolic sine", square);
-impl_unary_fn!(cosh, Cosh, "hyperbolic cosine", square);
-impl_unary_fn!(tanh, Tanh, "hyperbolic tangent", square);
+impl_unary_fn!(sinh, Sinh, "hyperbolic sine");
+impl_unary_fn!(cosh, Cosh, "hyperbolic cosine");
+impl_unary_fn!(tanh, Tanh, "hyperbolic tangent");
 
-impl_unary_fn!(asinh, Asinh, "inverse hyperbolic sine", square);
-impl_unary_fn!(acosh, Acosh, "inverse hyperbolic cosine", square);
-impl_unary_fn!(atanh, Atanh, "inverse hyperbolic tangent", square);
+impl_unary_fn!(asinh, Asinh, "inverse hyperbolic sine");
+impl_unary_fn!(acosh, Acosh, "inverse hyperbolic cosine");
+impl_unary_fn!(atanh, Atanh, "inverse hyperbolic tangent");
 
 impl_unary_fn!(real, Real, "real component of z");
 impl_unary_fn!(imag, Imag, "imaginary component of z");
@@ -523,32 +497,27 @@ impl_unary_fn!(
 );
 
 pub fn atan2(x: impl Into<Pattern>, y: impl Into<Pattern>) -> Pattern {
-    let x = Box::new(x.into());
-    let y = Box::new(y.into());
+    let mut pat = x.into();
+    let y = y.into();
 
-    // assert!(
-    //     a.shape().is_scalar() && b.shape().is_scalar(),
-    //     "atan2 is only defined for scalars"
-    // );
+    let x = pat.root().unwrap();
+    let y = pat.import(&y, y.root().unwrap());
 
-    Pattern::Node(Node::Branch(Branch::Atan2 { x, y }).into())
+    pat.push_root(Operand::Operation(Operation::Atan2 { x, y }));
+    pat
 }
 
 pub fn log(base: impl Into<Pattern>, x: impl Into<Pattern>) -> Pattern {
-    let base = Box::new(base.into());
-    let x = Box::new(x.into());
+    let base = base.into();
+    let x = x.into();
 
-    // assert!(
-    //     base.shape().is_scalar(),
-    //     "Logarithm is only defined for scalar bases"
-    // );
+    let mut pat = base;
+    let base = pat.root().unwrap();
+    let x = pat.import(&x, x.root().unwrap());
 
-    // assert!(
-    //     x.shape().is_square_mat() || x.shape().is_scalar(),
-    //     "Matrix-valued logarithm is only defined for square matrices"
-    // );
+    pat.push_root(Operand::Operation(Operation::Log { base, arg: x }));
 
-    Pattern::Node(Node::Branch(Branch::Log { base, arg: x }).into())
+    pat
 }
 
 pub fn ln(x: impl Into<Pattern>) -> Pattern {
@@ -560,13 +529,13 @@ pub fn exp(x: impl Into<Pattern>) -> Pattern {
 }
 
 pub fn sqrt(x: impl Into<Pattern>) -> Pattern {
-    x.into().pow(1 / 2)
+    x.into().pow(1.0 / 2.0)
 }
 
 pub fn cbrt(x: impl Into<Pattern>) -> Pattern {
-    x.into().pow(1 / 3)
+    x.into().pow(1.0 / 3.0)
 }
 
 pub fn qtrt(x: impl Into<Pattern>) -> Pattern {
-    x.into().pow(1 / 4)
+    x.into().pow(1.0 / 4.0)
 }

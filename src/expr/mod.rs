@@ -63,6 +63,12 @@ pub enum Operand<W = !, O = OperationId, L = LeafId, M = MatrixId> {
     Wildcard(W),
 }
 
+#[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant, PartialOrd, Ord)]
+pub enum Node<W = !> {
+    Operand(Operand<W>),
+    Condition(ConditionId),
+}
+
 #[derive(Eq, PartialEq, Clone, Copy, Hash, IsVariant)]
 pub enum OperandKind {
     Leaf(LeafKind),
@@ -81,8 +87,10 @@ pub type FetchedOperand<'a, W = !> = Operand<
 pub type BuiltOperand<W = !> =
     Operand<W, Operation<Operand<W>, ConditionId>, Leaf, Matrix<Operand<W>>>;
 
-pub type FoldedOperand<'a, T> =
-    Operand<!, Operation<&'a T, ()>, &'a Leaf, Matrix<&'a T>>;
+pub type FoldedOperand<'a, O, C, W = !> =
+    Operand<W, Operation<&'a O, &'a C>, &'a Leaf, Matrix<&'a O>>;
+
+pub type FoldedCondition<'a, O, C> = Condition<&'a O, &'a C>;
 
 pub struct EditContext<'e, W = !>
 where
@@ -97,6 +105,12 @@ pub enum Order {
 }
 
 /* ---------------------------------- IMPLS --------------------------------- */
+
+impl<W: Hash + Eq> Default for Expr<W> {
+    fn default() -> Self {
+        Self { dag: Dag::default() }
+    }
+}
 
 impl OperandKind {
     pub fn id(&self) -> u8 {
@@ -137,10 +151,17 @@ where
         }
     }
 
-    pub fn child(&self, at: usize) -> Option<Operand<W>> {
+    pub fn operand(&self, at: usize) -> Option<Operand<W>> {
         match self {
             Operand::Matrix(m) => m.elements().get(at).copied(),
             Operand::Operation(op) => op.operand(at as u8).copied(),
+            _ => None,
+        }
+    }
+
+    pub fn condition(&self) -> Option<&ConditionId> {
+        match self {
+            Operand::Operation(op) => op.condition(),
             _ => None,
         }
     }
@@ -360,22 +381,43 @@ where
         self.dag.root = Some(new_root);
     }
 
-    pub fn dfs(&self, order: Order) -> Vec<Operand<W>> {
+    pub fn dfs(&self, order: Order) -> Vec<Node<W>> {
         let mut visit = Vec::with_capacity(self.size());
 
         fn dfs_inner<'e, W: Hash + Eq + Copy>(
             expr: &'e Expr<W>,
-            current: Operand<W>,
-            into: &mut Vec<Operand<W>>,
+            current: Node<W>,
+            into: &mut Vec<Node<W>>,
             order: &Order,
         ) {
             if *order == Order::Pre {
                 into.push(current);
             }
 
-            expr.fetch(current).for_each_operand(|child| {
-                dfs_inner(expr, *child, into, order);
-            });
+            match current {
+                Node::Operand(operand) => {
+                    let fetched = expr.fetch(operand);
+
+                    fetched.for_each_operand(|op| {
+                        dfs_inner(expr, Node::Operand(*op), into, order);
+                    });
+
+                    if let Some(cond) = fetched.condition() {
+                        dfs_inner(expr, Node::Condition(*cond), into, order);
+                    }
+                }
+                Node::Condition(condition) => {
+                    let fetched = expr.dag.conditions[condition];
+
+                    fetched.for_each_operand(|op| {
+                        dfs_inner(expr, Node::Operand(*op), into, order);
+                    });
+
+                    fetched.for_each_condition(|cond| {
+                        dfs_inner(expr, Node::Condition(*cond), into, order);
+                    });
+                }
+            }
 
             if *order == Order::Post {
                 into.push(current);
@@ -384,7 +426,9 @@ where
 
         dfs_inner(
             self,
-            self.root().expect("Cannot DFS-traverse a rootless expression"),
+            Node::Operand(
+                self.root().expect("Cannot DFS-traverse a rootless expression"),
+            ),
             &mut visit,
             &order,
         );
@@ -470,53 +514,73 @@ where
     pub fn symbols(&self) -> impl Iterator<Item = Symbol> {
         self.dag.leaves.iter().filter_map(|(_, leaf)| leaf.as_symbol().copied())
     }
+
+    pub fn fold<O, C>(
+        &self,
+        o: impl FnMut(Operand<W>, FoldedOperand<'_, O, C, W>) -> O,
+        c: impl FnMut(ConditionId, FoldedCondition<'_, O, C>) -> C,
+    ) -> O {
+        self.fold_from(
+            self.root().expect("Cannot fold root of a rootless expression"),
+            o,
+            c,
+        )
+    }
+
+    pub fn fold_from<O, C>(
+        &self,
+        root: Operand<W>,
+        mut o: impl FnMut(Operand<W>, FoldedOperand<'_, O, C, W>) -> O,
+        mut c: impl FnMut(ConditionId, FoldedCondition<'_, O, C>) -> C,
+    ) -> O {
+        let mut mapped_ops =
+            AHashMap::<Operand<W>, O>::with_capacity(self.size());
+        let mut mapped_conds = AHashMap::<ConditionId, C>::with_capacity(
+            self.dag.conditions.len(),
+        );
+
+        for node in self.dfs(Order::Post) {
+            match node {
+                Node::Operand(op) => {
+                    if mapped_ops.contains_key(&op) {
+                        continue;
+                    }
+
+                    let mapped = match self.fetch(op) {
+                        Operand::Matrix(m) => {
+                            Operand::Matrix(m.map(|el| &mapped_ops[el]))
+                        }
+                        Operand::Operation(op) => Operand::Operation(
+                            op.map(|o| &mapped_ops[o], |c| &mapped_conds[c]),
+                        ),
+                        Operand::Leaf(l) => Operand::Leaf(l),
+                        Operand::Wildcard(w) => Operand::Wildcard(w),
+                    };
+
+                    mapped_ops.insert(op, o(op, mapped));
+                }
+                Node::Condition(cond) => {
+                    if mapped_conds.contains_key(&cond) {
+                        continue;
+                    }
+
+                    let mapped = self.dag.conditions[cond]
+                        .map(|o| &mapped_ops[o], |c| &mapped_conds[c]);
+
+                    mapped_conds.insert(cond, c(cond, mapped));
+                }
+            }
+        }
+
+        mapped_ops.remove(&root).expect("root node should be folded")
+    }
 }
 
 impl Expr<!> {
     pub fn simplified(&self) -> Expr {
-        let mut egraph = EquivalencyGraph::build(&*self);
+        let mut egraph = EquivalencyGraph::new(self);
         egraph.rewrite(&[rules::algebraic(), rules::trig()].concat());
         egraph.extract()
-    }
-
-    pub fn fold<T: Clone>(
-        &self,
-        f: impl FnMut(Operand, FoldedOperand<'_, T>) -> T,
-    ) -> T {
-        self.fold_from(
-            self.root().expect("Cannot fold root of a rootless expression"),
-            f,
-        )
-    }
-
-    pub fn fold_from<T: Clone>(
-        &self,
-        root: Operand,
-        mut f: impl FnMut(Operand, FoldedOperand<'_, T>) -> T,
-    ) -> T {
-        let mut mapped = AHashMap::<Operand, T>::with_capacity(self.size());
-
-        for op in self.dfs(Order::Post) {
-            if mapped.contains_key(&op) {
-                continue;
-            }
-
-            let mapped_node = match self.fetch(op) {
-                Operand::Leaf(l) => Operand::Leaf(l),
-                Operand::Matrix(m) => {
-                    Operand::Matrix(m.map(|el| mapped.get(el).unwrap()))
-                }
-                Operand::Operation(op) => Operand::Operation(
-                    op.map(|child| mapped.get(child).unwrap(), |_| ()),
-                ),
-                Operand::Wildcard(never) => never, // ! never exists
-            };
-
-            let result = f(op, mapped_node);
-            mapped.insert(op, result);
-        }
-
-        mapped.remove(&root).expect("root node should be folded")
     }
 }
 
@@ -531,57 +595,6 @@ impl Expr<!> {
 //         self.nodes[self.root.0].0.hash(state);
 //     }
 // }
-
-/* -------------------------------------------------------------------------- */
-
-impl Mul<Expr> for Expr {
-    type Output = Expr;
-
-    fn mul(mut self, rhs: Expr) -> Self::Output {
-        let a_id = self.root().unwrap();
-        let b_id = self.import(&rhs, rhs.root().unwrap());
-        self.push_root(Operand::Operation(Operation::Mul([a_id, b_id])));
-        self
-    }
-}
-
-impl Add<Expr> for Expr {
-    type Output = Expr;
-
-    fn add(mut self, rhs: Expr) -> Self::Output {
-        let a_id = self.root().unwrap();
-        let b_id = self.import(&rhs, rhs.root().unwrap());
-        self.push_root(Operand::Operation(Operation::Add([a_id, b_id])));
-        self
-    }
-}
-
-impl Sub<Expr> for Expr {
-    type Output = Expr;
-
-    fn sub(self, rhs: Expr) -> Self::Output {
-        self + -rhs
-    }
-}
-
-impl Div<Expr> for Expr {
-    type Output = Expr;
-
-    fn div(self, rhs: Expr) -> Self::Output {
-        self * rhs.pow(-1)
-    }
-}
-
-impl Pow<Expr> for Expr {
-    type Output = Expr;
-
-    fn pow(mut self, exp: Expr) -> Self::Output {
-        let base = self.root().unwrap();
-        let exp = self.import(&exp, exp.root().unwrap());
-        self.push_root(Operand::Operation(Operation::Pow { base, exp }));
-        self
-    }
-}
 
 /* -------------------------------- FUNCTIONS ------------------------------- */
 

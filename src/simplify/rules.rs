@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use ordered_float::Pow;
 
 use crate::simplify::pattern::{
@@ -129,29 +127,29 @@ pub fn algebraic() -> Vec<Rule> {
 
         rule!({ x.pow(a).pow(b) } <-> { x.pow(a * b) } when [
             |ctx| {
-                let x = ctx.domain(x);
+                let x_d = ctx.domain(x);
 
-                x.is_real()
+                x_d.is_real()
             } over [x],
             |ctx| {
-                let a = ctx.domain(a);
+                let a_d = ctx.domain(a);
 
-                a.is_real()
+                a_d.is_real()
             } over [a],
             |ctx| {
-                let b = ctx.domain(b);
+                let b_d = ctx.domain(b);
 
-                b.is_real()
+                b_d.is_real()
             } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                let a = ctx.domain(a);
-                let b = ctx.domain(b);
+                let x_d = ctx.domain(x);
+                let a_d = ctx.domain(a);
+                let b_d = ctx.domain(b);
 
-                x.re.is_pos() || (
-                    !x.re.has_zero()
-                    && a.is_integer()
-                    && b.is_integer()
+                x_d.re.is_pos() || (
+                    !x_d.re.has_zero()
+                    && a_d.is_integer()
+                    && b_d.is_integer()
                 )
             } over [x, a, b]
         ]),
@@ -160,93 +158,93 @@ pub fn algebraic() -> Vec<Rule> {
 
         rule!({ log(b, 1) } -> { 0 } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero()
+                let b_d = ctx.domain(b);
+                !b_d.has_zero()
             } over [b]
         ]),
 
         rule!({ log(b, b) } -> { 1 } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero()
+                let b_d = ctx.domain(b);
+                !b_d.has_zero()
             } over [b]
         ]),
 
         rule!({ log(b, x.pow(a)) } -> { a * log(b, x) } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero() && b.is_real()
+                let b_d = ctx.domain(b);
+                !b_d.has_zero() && b_d.is_real()
             } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                !x.has_zero() && x.is_real() && x.re.is_pos()
+                let x_d = ctx.domain(x);
+                !x_d.has_zero() && x_d.is_real() && x_d.re.is_pos()
             } over [x],
             |ctx| {
-                let a = ctx.domain(a);
-                a.is_real()
+                let a_d = ctx.domain(a);
+                a_d.is_real()
             } over [a]
         ]),
 
         rule!({ log(b, x * a) } <-> { log(b, x) + log(b, a) } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero() && b.is_real()
+                let b_d = ctx.domain(b);
+                !b_d.has_zero() && b_d.is_real()
             } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                !x.has_zero() && x.is_real() && x.re.is_pos()
+                let x_d = ctx.domain(x);
+                !x_d.has_zero() && x_d.is_real() && x_d.re.is_pos()
             } over [x],
             |ctx| {
-                let a = ctx.domain(a);
-                !a.has_zero() && a.is_real() && a.re.is_pos()
+                let a_d = ctx.domain(a);
+                !a_d.has_zero() && a_d.is_real() && a_d.re.is_pos()
             } over [a]
         ]),
 
         rule!({ log(b, x / a) } <-> { log(b, x) - log(b, a) } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero() && b.is_real()
+                let b_d = ctx.domain(b);
+                !b_d.has_zero() && b_d.is_real()
             } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                !x.has_zero() && x.is_real() && x.re.is_pos()
+                let x_d = ctx.domain(x);
+                !x_d.has_zero() && x_d.is_real() && x_d.re.is_pos()
             } over [x],
             |ctx| {
-                let a = ctx.domain(a);
-                !a.has_zero() && a.is_real() && a.re.is_pos()
+                let a_d = ctx.domain(a);
+                !a_d.has_zero() && a_d.is_real() && a_d.re.is_pos()
             } over [a]
         ]),
 
         rule!({ log(b, b.pow(x)) } -> { x } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero() && b.is_real() && b.re.is_pos()
-                } over [b],
+                let b_d = ctx.domain(b);
+                !b_d.has_zero() && b_d.is_real() && b_d.re.is_pos()
+            } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                x.is_real()
+                let x_d = ctx.domain(x);
+                x_d.is_real()
             } over [x]
         ]),
 
         rule!({ b.pow(log(b, x)) } -> { x } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero()
+                let b_d = ctx.domain(b);
+                !b_d.has_zero()
             } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                !x.has_zero()
+                let x_d = ctx.domain(x);
+                !x_d.has_zero()
             } over [x]
         ]),
 
         rule!({ log(b, x) } <-> { ln(x)/ln(b) } when [
             |ctx| {
-                let b = ctx.domain(b);
-                !b.has_zero()
+                let b_d = ctx.domain(b);
+                !b_d.has_zero()
             } over [b],
             |ctx| {
-                let x = ctx.domain(x);
-                !x.has_zero()
+                let x_d = ctx.domain(x);
+                !x_d.has_zero()
             } over [x]
         ]),
     ]

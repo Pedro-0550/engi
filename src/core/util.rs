@@ -82,6 +82,9 @@ fn impl_as_variant(input: TokenStream) {
     }
 }
 
+// this macro is mostly AI generated.
+// I dont really care because its just clerical work which i cant be bothered to do or require quality.
+// As terrible as it is, this is one of those things where it works and you just dont touch it
 #[crabtime::function]
 fn impl_op_permutations(input: TokenStream) {
     use std::collections::HashMap;

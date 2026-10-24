@@ -248,7 +248,7 @@ impl Expr {
                     Operand::Wildcard(never) => never,
                 },
             )
-        });
+        }, |_, _| ());
 
         dx.set_root(du);
         dx.simplified()

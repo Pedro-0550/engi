@@ -547,7 +547,7 @@ impl From<f64> for Interval {
     }
 }
 
-impl FoldedOperand<'_, Domain> {
+impl FoldedOperand<'_, Domain, ()> {
     pub fn domain(&self) -> Domain {
         match self {
             Operand::Leaf(leaf) => match leaf {
@@ -658,7 +658,7 @@ impl Expr {
     /// Returns the domain of this expression.
     /// The possible values of this expression are guaranteed to be contained in its domain, but are not required to cover all of it.
     pub fn domain_of(&self, op: Operand) -> Domain {
-        self.fold_from(op, |_, op: FoldedOperand<'_, Domain>| op.domain())
+        self.fold_from(op, |_, op| op.domain(), |_, _| ())
     }
 
     pub fn domain(&self) -> Domain {
@@ -667,154 +667,174 @@ impl Expr {
 
     pub fn realize(&self) -> Realized {
         let mut working = Expr::new();
+        let ctx = working.edit();
 
-        let (re_id, im_id) = self.fold(|old, folded| {
-            let old = self.fetch(old);
-            let ctx = working.edit();
+        let (re_id, im_id) = self.fold(
+            |old, folded| {
+                let old = self.fetch(old);
 
-            match folded {
-                Operand::Leaf(leaf) => match leaf {
-                    Leaf::Symbol(symbol) => (
-                        symbol
-                            .real()
-                            .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
-                        symbol
-                            .imag()
-                            .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
-                    ),
-                    Leaf::Constant(constant) => {
-                        let [re_qty, im_qty] = constant.quantity().realize();
+                match folded {
+                    Operand::Leaf(leaf) => match leaf {
+                        Leaf::Symbol(symbol) => (
+                            symbol
+                                .real()
+                                .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
+                            symbol
+                                .imag()
+                                .map_or_else(|| ctx.zero(), |s| ctx.symbol(s)),
+                        ),
+                        Leaf::Constant(constant) => {
+                            let [re_qty, im_qty] =
+                                constant.quantity().realize();
 
-                        (ctx.qty(re_qty), ctx.qty(im_qty))
-                    }
-                    Leaf::Quantity(quantity) => {
-                        let [re_qty, im_qty] = quantity.realize();
+                            (ctx.qty(re_qty), ctx.qty(im_qty))
+                        }
+                        Leaf::Quantity(quantity) => {
+                            let [re_qty, im_qty] = quantity.realize();
 
-                        (ctx.qty(re_qty), ctx.qty(im_qty))
-                    }
-                },
-                Operand::Operation(operation) => match operation {
-                    Operation::Add([(a_re, a_im), (b_re, b_im)]) => {
-                        (ctx.add(*a_re, *b_re), ctx.add(*a_im, *b_im))
-                    }
-                    Operation::Mul([(a_re, a_im), (b_re, b_im)]) => (
-                        ctx.sub(ctx.mul(*a_re, *b_re), ctx.mul(*a_im, *b_im)),
-                        ctx.add(ctx.mul(*a_re, *b_im), ctx.mul(*a_im, *b_re)),
-                    ),
-                    Operation::Min([(a_re, a_im), (b_re, b_im)]) => {
-                        (ctx.min(*a_re, *b_re), ctx.min(*a_im, *b_im))
-                    }
-                    Operation::Max([(a_re, a_im), (b_re, b_im)]) => {
-                        (ctx.max(*a_re, *b_re), ctx.max(*a_im, *b_im))
-                    }
-                    Operation::Sin((u_re, u_im)) => (
-                        ctx.mul(ctx.sin(*u_re), ctx.cosh(*u_im)),
-                        ctx.mul(ctx.cos(*u_re), ctx.sinh(*u_im)),
-                    ),
-                    Operation::Cos((u_re, u_im)) => (
-                        ctx.mul(ctx.cos(*u_re), ctx.cosh(*u_im)),
-                        ctx.neg(ctx.mul(ctx.sin(*u_re), ctx.sinh(*u_im))),
-                    ),
-                    Operation::Tan((u_re, u_im)) => {
-                        let u2_re = ctx.mul(ctx.qty(2), *u_re);
-                        let u2_im = ctx.mul(ctx.qty(2), *u_im);
-
-                        (
-                            ctx.div(
-                                ctx.sin(u2_re),
-                                ctx.add(ctx.cos(u2_re), ctx.cosh(u2_im)),
+                            (ctx.qty(re_qty), ctx.qty(im_qty))
+                        }
+                    },
+                    Operand::Operation(operation) => match operation {
+                        Operation::Add([(a_re, a_im), (b_re, b_im)]) => {
+                            (ctx.add(*a_re, *b_re), ctx.add(*a_im, *b_im))
+                        }
+                        Operation::Mul([(a_re, a_im), (b_re, b_im)]) => (
+                            ctx.sub(
+                                ctx.mul(*a_re, *b_re),
+                                ctx.mul(*a_im, *b_im),
                             ),
-                            ctx.div(
-                                ctx.sinh(u2_im),
-                                ctx.add(ctx.cos(u2_re), ctx.cosh(u2_im)),
+                            ctx.add(
+                                ctx.mul(*a_re, *b_im),
+                                ctx.mul(*a_im, *b_re),
                             ),
-                        )
-                    }
-                    Operation::Asin(_) => todo!(),
-                    Operation::Acos(_) => todo!(),
-                    Operation::Atan(_) => todo!(),
-                    Operation::Sinh(_) => todo!(),
-                    Operation::Cosh(_) => todo!(),
-                    Operation::Tanh(_) => todo!(),
-                    Operation::Asinh(_) => todo!(),
-                    Operation::Acosh(_) => todo!(),
-                    Operation::Atanh(_) => todo!(),
-                    Operation::Arg(_) => todo!(),
-                    Operation::Conj(_) => todo!(),
-                    Operation::Norm(_) => todo!(),
-                    Operation::Sign(_) => todo!(),
-                    Operation::Real((u_re, _)) => (*u_re, ctx.zero()),
-                    Operation::Imag((_, u_im)) => (ctx.zero(), *u_im),
-                    Operation::Pow {
-                        base: (b_re, b_im),
-                        exp: (exp_re, exp_im),
-                    } => {
-                        let two = ctx.qty(2);
-                        let euler = ctx.constant(e);
-
-                        let ln_r = ctx.div(
-                            ctx.ln(ctx
-                                .add(ctx.pow(*b_re, two), ctx.pow(*b_im, two))),
-                            two,
-                        );
-
-                        let θ = ctx.atan2(*b_re, *b_im);
-
-                        let a = ctx
-                            .sub(ctx.mul(*exp_re, ln_r), ctx.mul(*exp_im, θ));
-                        let b = ctx
-                            .add(ctx.mul(*exp_im, ln_r), ctx.mul(*exp_re, θ));
-
-                        (
-                            ctx.mul(ctx.pow(euler, a), ctx.cos(b)),
-                            ctx.mul(ctx.pow(euler, a), ctx.sin(b)),
-                        )
-                    }
-                    Operation::Log {
-                        base: (base_re, base_im),
-                        arg: (arg_re, arg_im),
-                    } => {
-                        let two = ctx.qty(2);
-
-                        let ln_z = |re: Operand, im: Operand| {
-                            let r2 =
-                                ctx.add(ctx.pow(re, two), ctx.pow(im, two));
-                            (ctx.div(ctx.ln(r2), two), ctx.atan2(re, im))
-                        };
-
-                        let (p, q) = ln_z(*arg_re, *arg_im);
-
-                        if try { *old.as_leaf()?.as_constant()? == e }
-                            .unwrap_or(false)
-                        {
-                            (p, q)
-                        } else {
-                            let (r, s) = ln_z(*base_re, *base_im);
-                            let den = ctx.add(ctx.pow(r, two), ctx.pow(s, two));
+                        ),
+                        Operation::Min([(a_re, a_im), (b_re, b_im)]) => {
+                            (ctx.min(*a_re, *b_re), ctx.min(*a_im, *b_im))
+                        }
+                        Operation::Max([(a_re, a_im), (b_re, b_im)]) => {
+                            (ctx.max(*a_re, *b_re), ctx.max(*a_im, *b_im))
+                        }
+                        Operation::Sin((u_re, u_im)) => (
+                            ctx.mul(ctx.sin(*u_re), ctx.cosh(*u_im)),
+                            ctx.mul(ctx.cos(*u_re), ctx.sinh(*u_im)),
+                        ),
+                        Operation::Cos((u_re, u_im)) => (
+                            ctx.mul(ctx.cos(*u_re), ctx.cosh(*u_im)),
+                            ctx.neg(ctx.mul(ctx.sin(*u_re), ctx.sinh(*u_im))),
+                        ),
+                        Operation::Tan((u_re, u_im)) => {
+                            let u2_re = ctx.mul(ctx.qty(2), *u_re);
+                            let u2_im = ctx.mul(ctx.qty(2), *u_im);
 
                             (
                                 ctx.div(
-                                    ctx.add(ctx.mul(p, r), ctx.mul(q, s)),
-                                    den,
+                                    ctx.sin(u2_re),
+                                    ctx.add(ctx.cos(u2_re), ctx.cosh(u2_im)),
                                 ),
                                 ctx.div(
-                                    ctx.sub(ctx.mul(q, r), ctx.mul(p, s)),
-                                    den,
+                                    ctx.sinh(u2_im),
+                                    ctx.add(ctx.cos(u2_re), ctx.cosh(u2_im)),
                                 ),
                             )
                         }
-                    }
-                    Operation::Atan2 { x, y } => todo!(),
-                    Operation::Transpose(_) => todo!(),
-                    Operation::Det(_) => todo!(),
-                    Operation::Rank(_) => todo!(),
-                    Operation::Trace(_) => todo!(),
-                    Operation::Conditional { cond, pass, fail } => todo!(),
-                },
-                Operand::Matrix(_) => todo!(),
-                Operand::Wildcard(never) => never, // ! never occurs
-            }
-        });
+                        Operation::Asin(_) => todo!(),
+                        Operation::Acos(_) => todo!(),
+                        Operation::Atan(_) => todo!(),
+                        Operation::Sinh(_) => todo!(),
+                        Operation::Cosh(_) => todo!(),
+                        Operation::Tanh(_) => todo!(),
+                        Operation::Asinh(_) => todo!(),
+                        Operation::Acosh(_) => todo!(),
+                        Operation::Atanh(_) => todo!(),
+                        Operation::Arg(_) => todo!(),
+                        Operation::Conj(_) => todo!(),
+                        Operation::Norm(_) => todo!(),
+                        Operation::Sign(_) => todo!(),
+                        Operation::Real((u_re, _)) => (*u_re, ctx.zero()),
+                        Operation::Imag((_, u_im)) => (ctx.zero(), *u_im),
+                        Operation::Pow {
+                            base: (b_re, b_im),
+                            exp: (exp_re, exp_im),
+                        } => {
+                            let two = ctx.qty(2);
+                            let euler = ctx.constant(e);
+
+                            let ln_r = ctx.div(
+                                ctx.ln(ctx.add(
+                                    ctx.pow(*b_re, two),
+                                    ctx.pow(*b_im, two),
+                                )),
+                                two,
+                            );
+
+                            let θ = ctx.atan2(*b_re, *b_im);
+
+                            let a = ctx.sub(
+                                ctx.mul(*exp_re, ln_r),
+                                ctx.mul(*exp_im, θ),
+                            );
+                            let b = ctx.add(
+                                ctx.mul(*exp_im, ln_r),
+                                ctx.mul(*exp_re, θ),
+                            );
+
+                            (
+                                ctx.mul(ctx.pow(euler, a), ctx.cos(b)),
+                                ctx.mul(ctx.pow(euler, a), ctx.sin(b)),
+                            )
+                        }
+                        Operation::Log {
+                            base: (base_re, base_im),
+                            arg: (arg_re, arg_im),
+                        } => {
+                            let two = ctx.qty(2);
+
+                            let ln_z = |re: Operand, im: Operand| {
+                                let r2 =
+                                    ctx.add(ctx.pow(re, two), ctx.pow(im, two));
+                                (ctx.div(ctx.ln(r2), two), ctx.atan2(re, im))
+                            };
+
+                            let (p, q) = ln_z(*arg_re, *arg_im);
+
+                            if try { *old.as_leaf()?.as_constant()? == e }
+                                .unwrap_or(false)
+                            {
+                                (p, q)
+                            } else {
+                                let (r, s) = ln_z(*base_re, *base_im);
+                                let den =
+                                    ctx.add(ctx.pow(r, two), ctx.pow(s, two));
+
+                                (
+                                    ctx.div(
+                                        ctx.add(ctx.mul(p, r), ctx.mul(q, s)),
+                                        den,
+                                    ),
+                                    ctx.div(
+                                        ctx.sub(ctx.mul(q, r), ctx.mul(p, s)),
+                                        den,
+                                    ),
+                                )
+                            }
+                        }
+                        Operation::Atan2 { x, y } => todo!(),
+                        Operation::Transpose(_) => todo!(),
+                        Operation::Det(_) => todo!(),
+                        Operation::Rank(_) => todo!(),
+                        Operation::Trace(_) => todo!(),
+                        Operation::Conditional { cond, pass, fail } => todo!(),
+                    },
+                    Operand::Matrix(_) => todo!(),
+                    Operand::Wildcard(never) => never, // ! never occurs
+                }
+            },
+            |c, _| {
+                // let ctx = working.edit();
+                todo!();
+            },
+        );
 
         let (mut re, mut im) = (Expr::new(), Expr::new());
 

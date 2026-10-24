@@ -135,7 +135,7 @@ pub struct Matrix<O> {
 /// or an intermediate type when used in folding operations.
 ///
 /// "Flattening" a condition expression into an actual tree can be done with [`BoxedCondition`]
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Condition<O, C> {
     // Comparison
     Eq(O, O),
@@ -171,7 +171,7 @@ pub struct BoxedCondition(Box<Condition<FlattenedOperand, BoxedCondition>>);
 /// Operations, conditions, matrices and leafs are hashconsed and referenced with strongly typed Ids.
 ///
 /// When used with the DAG, [`Node`]s, [`Condition`]s, and every Id are lightweight and [`Copy`]
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Dag<O: Hash + Eq, OKey, LKey, MKey> {
     pub(crate) operations: Consed<Operation<O, ConditionId>, OKey, OperationId>,
     pub(crate) leaves: Consed<Leaf, LKey, LeafId>,
@@ -204,6 +204,12 @@ id!(
 /* -------------------------------------------------------------------------- */
 
 impl_as_variant!(Leaf, [Symbol => Symbol, Quantity => Quantity, Constant => Constant]);
+
+impl<O: Hash + Eq, OKey, LKey, MKey> Default for Dag<O, OKey, LKey, MKey> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<O, OKey, LKey, MKey> Dag<O, OKey, LKey, MKey>
 where
@@ -377,11 +383,37 @@ impl<O, C> Condition<O, C> {
         }
     }
 
+    pub fn for_each_operand(&self, mut f: impl FnMut(&O)) {
+        match self {
+            Condition::Eq(a, b)
+            | Condition::Ne(a, b)
+            | Condition::Lt(a, b)
+            | Condition::Le(a, b)
+            | Condition::Gt(a, b)
+            | Condition::Ge(a, b) => {
+                f(a);
+                f(b)
+            }
+            _ => (),
+        }
+    }
+
     pub fn condition(&self, at: usize) -> Option<&C> {
         match self {
             Condition::And(conds) | Condition::Or(conds) => conds.get(at),
             Condition::Not(x) if at == 0 => Some(x),
             _ => None,
+        }
+    }
+
+    pub fn for_each_condition(&self, mut f: impl FnMut(&C)) {
+        match self {
+            Condition::And(conds) | Condition::Or(conds) => {
+                f(&conds[0]);
+                f(&conds[1])
+            }
+            Condition::Not(x) => f(x),
+            _ => (),
         }
     }
 

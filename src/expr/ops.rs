@@ -1,7 +1,7 @@
 use std::{
     cell::{LazyCell, OnceCell},
     hash::Hash,
-    ops::Neg,
+    ops::{Add, Div, Mul, Neg, Sub},
     rc::Rc,
 };
 
@@ -61,19 +61,68 @@ impl_op_permutations!(
 
 /* -------------------------------------------------------------------------- */
 
-impl Neg for Expr {
-    type Output = Expr;
+impl<W: Hash + Eq + Clone + Copy> Mul<Expr<W>> for Expr<W> {
+    type Output = Expr<W>;
 
-    fn neg(self) -> Self::Output {
-        -1 * self
+    fn mul(mut self, rhs: Expr<W>) -> Self::Output {
+        let a_id = self.root().unwrap();
+        let b_id = self.import(&rhs, rhs.root().unwrap());
+        self.push_root(Operand::Operation(Operation::Mul([a_id, b_id])));
+        self
     }
 }
 
-impl Neg for &Expr {
-    type Output = Expr;
+impl<W: Hash + Eq + Clone + Copy> Add<Expr<W>> for Expr<W> {
+    type Output = Expr<W>;
+
+    fn add(mut self, rhs: Expr<W>) -> Self::Output {
+        let a_id = self.root().unwrap();
+        let b_id = self.import(&rhs, rhs.root().unwrap());
+        self.push_root(Operand::Operation(Operation::Add([a_id, b_id])));
+        self
+    }
+}
+
+impl<W: Hash + Eq + Clone + Copy> Sub<Expr<W>> for Expr<W> {
+    type Output = Expr<W>;
+
+    fn sub(self, rhs: Expr<W>) -> Self::Output {
+        self + -rhs
+    }
+}
+
+impl<W: Hash + Eq + Clone + Copy> Div<Expr<W>> for Expr<W> {
+    type Output = Expr<W>;
+
+    fn div(self, rhs: Expr<W>) -> Self::Output {
+        self * rhs.pow(Expr::<W>::from(-1))
+    }
+}
+
+impl<W: Hash + Eq + Clone + Copy> Pow<Expr<W>> for Expr<W> {
+    type Output = Expr<W>;
+
+    fn pow(mut self, exp: Expr<W>) -> Self::Output {
+        let base = self.root().unwrap();
+        let exp = self.import(&exp, exp.root().unwrap());
+        self.push_root(Operand::Operation(Operation::Pow { base, exp }));
+        self
+    }
+}
+
+impl<W: Hash + Eq + Clone + Copy> Neg for Expr<W> {
+    type Output = Expr<W>;
 
     fn neg(self) -> Self::Output {
-        -1 * self
+        Expr::<W>::from(-1) * self
+    }
+}
+
+impl<W: Hash + Eq + Clone + Copy> Neg for &Expr<W> {
+    type Output = Expr<W>;
+
+    fn neg(self) -> Self::Output {
+        Expr::<W>::from(-1) * self.clone()
     }
 }
 

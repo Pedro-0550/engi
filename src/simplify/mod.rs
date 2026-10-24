@@ -13,6 +13,7 @@ use std::{
 };
 
 use ahash::AHashMap;
+use float_eq::assert_float_eq;
 use itertools::Itertools;
 use kinded::Kinded;
 use nlopt::Algorithm::Newuoa;
@@ -26,7 +27,7 @@ use crate::{
         value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
-        Expr, Operand,
+        Expr, FoldedOperand, Operand,
         dag::{
             self, ConditionId, Dag, Leaf, LeafKind, Matrix, Operation,
             OperationId, OperationKind,
@@ -108,21 +109,44 @@ type BuiltOperand =
 impl Analysis {
     pub fn merge_with(&mut self, other: Analysis) -> bool {
         // shapes must be eq
-        // domain merges to the most restrictive of the two
+        // domain merges to the most restrictive of the two (eventually)
         // qty merges when one of them is None and needs to be approx eq if both are Some
-        // returns true if the qty changes
+        // returns true if the qty or domain changes
+        assert_eq!(self.shape, other.shape);
+
+        match (&self.qty, other.qty) {
+            (None, Some(other)) => {
+                self.qty.insert(other);
+                true
+            }
+            (Some(a), Some(b)) => {
+                // we should implemnet some form of approx comparison, which is kinda hard since Value
+                // can be a lot of different things
+                false
+            }
+            _ => false,
+        }
     }
 
-    pub fn update(id: ClassId, graph: &mut EquivalencyGraph) -> Option<Self> {}
-}
+    pub fn update(id: ClassId, graph: &mut EquivalencyGraph) -> Option<Self> {
+        // Once we have domain min (like returning the smallest of two domains)
+        // we should implemnet domain updating as well
+        let class = &graph.classes[id];
 
-impl EquivalencyClass {
-    pub fn domain(&self) -> Domain {
-        self.analysis.domain
-    }
+        if class.analysis.qty.is_some() {
+            return None;
+        };
 
-    pub fn shape(&self) -> Shape {
-        self.analysis.shape
+        let mut new = class.analysis.clone();
+
+        for op in &class.operands {
+            if let Some(qty) = graph.evaluate(*op) {
+                new.qty = Some(qty);
+                break;
+            }
+        }
+
+        Some(new)
     }
 }
 
@@ -174,6 +198,7 @@ impl EquivalencyGraph {
 
     fn add(&mut self, built_op: BuiltOperand) -> ClassId {
         let next_id = self.classes.next();
+        let kind = built_op.kind();
         let op = match built_op {
             Operand::Leaf(leaf) => {
                 match self.dag.leaves.insert_with(leaf, next_id) {
@@ -220,7 +245,7 @@ impl EquivalencyGraph {
 
         let class = EquivalencyClass {
             operands_by_kind: array::from_fn(|i| {
-                if built_op.kind().id() == i as u8 { vec![op] } else { vec![] }
+                if kind.id() == i as u8 { vec![op] } else { vec![] }
             }),
             operands: vec![op],
             child_of: vec![],
@@ -228,14 +253,14 @@ impl EquivalencyGraph {
             analysis: Analysis {
                 domain: self.domain(op),
                 shape: self.shape(op),
-                qty,
+                qty: qty.clone(),
             },
         };
 
         self.matchlist.push(next_id);
         self.classes.push(class);
 
-        if let Some(ref q) = qty {
+        if let Some(q) = qty {
             let qty_class = self.add(q.into());
             self.union(next_id, qty_class);
         }
@@ -715,16 +740,12 @@ impl EquivalencyGraph {
         while !converged {
             converged = true;
 
-            for class_id in 0..self.classes.len() {
-                let class_id = ClassId(class_id);
-                let root_id = self.find(class_id);
-                let class = &self.classes[root_id.0];
-
-                for expr_id in &class.exprs {
-                    let expr = &self.exprs[expr_id.0];
+            for (class_id, class) in self.classes.iter() {
+                for op in &class.operands {
+                    let fetched = self.fetch(*op);
 
                     if let Some(node_cost) =
-                        calculate_cost(&expr.node, &best_nodes)
+                        calculate_cost(fetched, &best_nodes)
                     {
                         let current_best_cost = best_nodes
                             .get(&class_id)
@@ -765,29 +786,50 @@ impl EquivalencyGraph {
         expr
     }
 
-    pub(crate) fn build(expr: &Expr) -> Self {
+    pub(crate) fn new(expr: &Expr) -> Self {
         let mut graph = Self::default();
 
-        let root = expr.fold(|_, node| {
-            graph.add(match node {
-                Operand::Leaf(l) => Operand::Leaf(l.clone()),
-                Operand::Matrix(m) => Operand::Matrix(m.map(|el| **el)),
-                Operand::Operation(o) => {
-                    Operand::Operation(o.map(|o| **o, |c| c))
-                }
-                Operand::Wildcard(_) => unreachable!(),
-            })
-        });
+        let root = expr.fold(
+            |_, o| {
+                graph.add(match o {
+                    Operand::Leaf(l) => Operand::Leaf(l.clone()),
+                    Operand::Matrix(m) => Operand::Matrix(m.map(|el| **el)),
+                    Operand::Operation(o) => {
+                        Operand::Operation(o.map(|o| **o, |c| **c))
+                    }
+                    Operand::Wildcard(_) => unreachable!(),
+                })
+            },
+            |_, c| graph.dag.conditions.push(c.map(|o| **o, |c| **c)),
+        );
         graph.dag.root = Some(root);
 
         graph
     }
 
-    fn domain(&self, expr: &EquivalencyExpr) -> Domain {
-        expr.node.clone().map(&mut |id| self.classes[id.0].domain).domain()
+    fn domain(&self, op: Operand) -> Domain {
+        match op {
+            Operand::Leaf(l) => self.dag.leaves[l].domain(),
+            Operand::Matrix(m) => self.dag.matrices[m].domain(),
+            Operand::Operation(op) => FoldedOperand::<Domain, ()>::Operation(
+                self.dag.operations[op]
+                    .map(|o| &self.classes[*o].analysis.domain, |_| &()),
+            )
+            .domain(),
+            Operand::Wildcard(_) => unreachable!(),
+        }
     }
 
-    fn shape(&self, expr: &EquivalencyExpr) -> Shape {
-        expr.node.clone().map(&mut |id| self.classes[id.0].shape).shape()
+    fn shape(&self, op: Operand) -> Shape {
+        match op {
+            Operand::Leaf(l) => self.dag.leaves[l].shape(),
+            Operand::Matrix(m) => self.dag.matrices[m].shape(),
+            Operand::Operation(op) => FoldedOperand::<Shape, ()>::Operation(
+                self.dag.operations[op]
+                    .map(|o| &self.classes[*o].analysis.shape, |_| &()),
+            )
+            .shape(),
+            Operand::Wildcard(_) => unreachable!(),
+        }
     }
 }

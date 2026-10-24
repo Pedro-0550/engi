@@ -6,6 +6,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     marker::PhantomData,
+    mem,
     rc::Rc,
     sync::{
         Arc, RwLock,
@@ -18,19 +19,23 @@ use derive_more::From;
 use engi_macros::{relation, relations};
 use itertools::{Either, Itertools};
 use num::complex::Complex;
+use petgraph::{
+    algo::{maximum_matching, tarjan_scc},
+    graph::{DiGraph, UnGraph},
+    graphmap::{DiGraphMap, UnGraphMap},
+};
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     self as engi,
-    core::{
-        graph::{BipartiteGraph, DirectedGraph},
-        value::Value,
-    },
+    core::{index::Indexed, value::Value},
     expr::{self, Expr},
+    id,
     model::{
         eq::{Constraint, Equation},
         solve::Solver,
     },
+    simplify::ClassId,
     symbol::{self, Symbol},
     symbols,
     units::{Dimensioned, Quantity, Unit, si::Hz},
@@ -182,7 +187,7 @@ pub struct SolvedSystem {
     solutions: Vec<AssembledModelSolution>,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Variable(Symbol);
 
 #[derive(Debug, Clone)]
@@ -494,7 +499,15 @@ impl System {
             }))
             .collect();
 
-        let residuals: Vec<_> = equations
+        id!(ResidualId);
+
+        #[derive(Copy, Hash, Eq, PartialEq, Clone, PartialOrd, Ord)]
+        enum Node {
+            Residual(ResidualId),
+            Variable(Symbol),
+        }
+
+        let mut residuals: Indexed<Vec<_>, ResidualId> = equations
             .par_iter()
             .filter_map(|eq| {
                 let mut resid = eq.residual();
@@ -518,59 +531,84 @@ impl System {
                     Some(resid)
                 }
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .into();
 
-        let mut incidence = BipartiteGraph::new();
+        let mut incidence = UnGraphMap::<Node, ()>::new();
 
-        for eq in residuals {
-            incidence.add_left(eq.clone());
+        for (id, resid) in residuals.iter() {
+            let r = incidence.add_node(Node::Residual(id));
 
-            for symb in eq.symbols() {
-                incidence.add_right(Variable::new(symb));
-                incidence.add_edge(eq.clone(), Variable::new(symb));
+            for symb in resid.symbols() {
+                let v = incidence.add_node(Node::Variable(symb));
+                incidence.add_edge(r, v, ());
             }
         }
 
-        let matching = incidence.maximum_matching();
+        let matching = maximum_matching(&incidence);
 
-        if matching.size() != incidence.left_count() {
-            panic!(
-                "Not every equation could be assigned to a variable: {} equations, {} matched
-                Unmatched equations: {:#?}
-                This indicates the system is overdetermined.
-                You need to unbind a variable so the system has a new degree of freedom.",
-                incidence.left_count(),
-                matching.size(),
-                matching.unmatched_left(incidence.left_nodes()).map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
-            );
+        // if matching. {
+        //     panic!(
+        //         "Not every equation could be assigned to a variable: {} equations, {} matched
+        //         Unmatched equations: {:#?}
+        //         This indicates the system is overdetermined.
+        //         You need to unbind a variable so the system has a new degree of freedom.",
+        //         incidence.left_count(),
+        //         matching.size(),
+        //         matching.unmatched_left(incidence.left_nodes()).map(|x| x.to_string()).collect::<Vec<_>>().join(", ")
+        //     );
+        // }
+
+        // if matching.size() != incidence.right_count() {
+        //     panic!(
+        //         "Not every variable could be assigned to an equation: {} variables, {} matched
+        //         Unmatched variables: {:#?}
+        //         This indicates the system is underdetermined.
+        //         You should verify if you entered all the equations, or bind a constant value to another variable.",
+        //         incidence.right_count(),
+        //         matching.size(),
+        //         matching.unmatched_right(incidence.right_nodes()).map(|x| x.symbol().to_string()).collect::<Vec<_>>().join(", ")
+        //     );
+        // }
+
+        if !matching.is_perfect() {
+            panic!()
         }
 
-        if matching.size() != incidence.right_count() {
-            panic!(
-                "Not every variable could be assigned to an equation: {} variables, {} matched
-                Unmatched variables: {:#?}
-                This indicates the system is underdetermined.
-                You should verify if you entered all the equations, or bind a constant value to another variable.",
-                incidence.right_count(),
-                matching.size(),
-                matching.unmatched_right(incidence.right_nodes()).map(|x| x.symbol().to_string()).collect::<Vec<_>>().join(", ")
-            );
-        }
+        let mut dependency_graph = DiGraphMap::<ResidualId, ()>::new();
 
-        let mut dependency_graph = DirectedGraph::new();
+        for (a, b) in matching.edges() {
+            let (sym, resid) = match (a, b) {
+                (Node::Residual(r), Node::Variable(s)) => (s, r),
+                (Node::Variable(s), Node::Residual(r)) => (s, r),
+                _ => unreachable!(),
+            };
 
-        for (eq, var) in matching.edges() {
-            dependency_graph.add_node(eq.clone());
+            dependency_graph.add_node(resid);
 
-            for neighbor in incidence.right_neighbors(var).unwrap() {
-                if neighbor == eq {
+            for neighbor in incidence.neighbors(Node::Variable(sym)) {
+                let Node::Residual(neighbor) = neighbor else {
+                    unreachable!();
+                };
+
+                if neighbor == resid {
                     continue;
                 }
-                dependency_graph.add_edge(eq.clone(), neighbor.clone());
+                dependency_graph.add_edge(resid, neighbor, ());
             }
         }
 
-        CompiledSystem { blocks: dependency_graph.sccs() }
+        CompiledSystem {
+            blocks: tarjan_scc(&dependency_graph)
+                .iter()
+                .map(|block| {
+                    block
+                        .iter()
+                        .map(|id| mem::take(&mut residuals[*id]))
+                        .collect_vec()
+                })
+                .collect_vec(),
+        }
     }
 
     pub fn solve(self, solver: impl Solver) -> AssembledModelSolution {

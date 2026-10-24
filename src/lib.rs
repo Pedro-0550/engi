@@ -22,7 +22,6 @@
 
 pub mod core {
     pub mod consed;
-    pub mod graph;
     pub mod index;
     pub mod interned;
     pub mod util;

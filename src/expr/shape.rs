@@ -69,7 +69,7 @@ impl Shape {
     }
 }
 
-impl FoldedOperand<'_, Shape> {
+impl FoldedOperand<'_, Shape, ()> {
     pub fn shape(&self) -> Shape {
         match self {
             Operand::Leaf(leaf) => match leaf {
@@ -212,7 +212,11 @@ impl Expr {
     }
 
     pub fn shape_of(&self, id: Operand) -> Shape {
-        self.fold_from(id, |_, node: FoldedOperand<'_, Shape>| node.shape())
+        self.fold_from(
+            id,
+            |_, node: FoldedOperand<'_, Shape, ()>| node.shape(),
+            |_, _| (),
+        )
     }
 
     pub fn scalarize(self) -> Matrix<Expr> {
