@@ -214,8 +214,9 @@ impl Expr {
     pub fn shape_of(&self, id: Operand) -> Shape {
         self.fold_from(
             id,
-            |_, node: FoldedOperand<'_, Shape, ()>| node.shape(),
-            |_, _| (),
+            &mut (),
+            |_, _, node: FoldedOperand<'_, Shape, ()>| node.shape(),
+            |_, _, _| (),
         )
     }
 

@@ -191,7 +191,7 @@ impl Realized {
             bcx: &mut FunctionBuilder<'_>,
             funcs: &MathFns,
         ) -> Value {
-            expr.fold(|_, folded| match folded {
+            expr.fold(bcx, |bcx, _, folded| match folded {
                 Operand::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => {
                         symbols.get(&symbol).copied().unwrap()
@@ -259,7 +259,7 @@ impl Realized {
                         todo!()
                     }
                 },
-            }, |_, c| todo!())
+            }, |bcx, _, c| todo!())
         }
 
         let (re, im) = (

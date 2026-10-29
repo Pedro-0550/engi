@@ -32,7 +32,7 @@ impl Expr {
     pub fn diff(&self, wrt: Symbol) -> Expr {
         let mut dx = Expr::new();
 
-        let (_, du) = self.fold(|op, d_op| {
+        let (_, du) = self.fold(&mut (), |_, op, d_op| {
             (
                 op,
                 match d_op {
@@ -248,7 +248,7 @@ impl Expr {
                     Operand::Wildcard(never) => never,
                 },
             )
-        }, |_, _| ());
+        }, |_, _, _| ());
 
         dx.set_root(du);
         dx.simplified()

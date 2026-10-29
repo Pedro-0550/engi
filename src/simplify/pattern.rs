@@ -168,7 +168,8 @@ impl Pattern {
         // }
         //
         self.fold(
-            |_, o| {
+            into,
+            |into, _, o| {
                 into.add(match o {
                     Operand::Leaf(l) => Operand::Leaf(l.clone()),
                     Operand::Matrix(m) => Operand::Matrix(m.map(|el| **el)),
@@ -180,7 +181,7 @@ impl Pattern {
                     ),
                 })
             },
-            |_, c| into.dag.conditions.push(c.map(|o| **o, |c| **c)),
+            |into, _, c| into.dag.conditions.push(c.map(|o| **o, |c| **c)),
         )
     }
 
@@ -442,7 +443,7 @@ impl Neg for &Wildcard {
     }
 }
 
-impl From<Expr> for Pattern {
+impl From<Expr<!>> for Pattern {
     fn from(value: Expr<!>) -> Self {
         const _: () =
             assert!(size_of::<Operand<!>>() == size_of::<Operand<Wildcard>>());

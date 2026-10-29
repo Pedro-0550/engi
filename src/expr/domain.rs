@@ -658,7 +658,7 @@ impl Expr {
     /// Returns the domain of this expression.
     /// The possible values of this expression are guaranteed to be contained in its domain, but are not required to cover all of it.
     pub fn domain_of(&self, op: Operand) -> Domain {
-        self.fold_from(op, |_, op| op.domain(), |_, _| ())
+        self.fold_from(op, &mut (), |_, _, op| op.domain(), |_, _, _| ())
     }
 
     pub fn domain(&self) -> Domain {
@@ -670,7 +670,8 @@ impl Expr {
         let ctx = working.edit();
 
         let (re_id, im_id) = self.fold(
-            |old, folded| {
+            &mut (),
+            |_, old, folded| {
                 let old = self.fetch(old);
 
                 match folded {
@@ -830,7 +831,7 @@ impl Expr {
                     Operand::Wildcard(never) => never, // ! never occurs
                 }
             },
-            |c, _| {
+            |_, c, _| {
                 // let ctx = working.edit();
                 todo!();
             },

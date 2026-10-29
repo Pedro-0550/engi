@@ -9,7 +9,7 @@ pub mod shape;
 use std::{
     cell::{Cell, OnceCell, RefCell},
     collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
+    hash::{BuildHasher, Hash, Hasher},
     iter::empty,
     mem::{self, variant_count},
     ops::{Add, Div, Mul, Neg, Sub},
@@ -113,19 +113,18 @@ impl<W: Hash + Eq> Default for Expr<W> {
 }
 
 impl OperandKind {
-    pub fn id(&self) -> u8 {
+    pub fn id(&self) -> usize {
         match self {
-            OperandKind::Leaf(leaf_kind) => *leaf_kind as u8,
+            OperandKind::Leaf(leaf_kind) => *leaf_kind as usize,
             OperandKind::Operation(operation_kind) => {
-                *operation_kind as u8 + variant_count::<LeafKind>() as u8
+                *operation_kind as usize + variant_count::<LeafKind>()
             }
             OperandKind::Matrix => {
-                1 + variant_count::<OperationKind>() as u8
-                    + variant_count::<LeafKind>() as u8
+                variant_count::<OperationKind>() + variant_count::<LeafKind>()
             }
             OperandKind::Wildcard => {
-                2 + variant_count::<OperationKind>() as u8
-                    + variant_count::<LeafKind>() as u8
+                1 + variant_count::<OperationKind>()
+                    + variant_count::<LeafKind>()
             }
         }
     }
@@ -515,23 +514,26 @@ where
         self.dag.leaves.iter().filter_map(|(_, leaf)| leaf.as_symbol().copied())
     }
 
-    pub fn fold<O, C>(
+    pub fn fold<O, C, S>(
         &self,
-        o: impl FnMut(Operand<W>, FoldedOperand<'_, O, C, W>) -> O,
-        c: impl FnMut(ConditionId, FoldedCondition<'_, O, C>) -> C,
+        s: &mut S,
+        o: impl FnMut(&mut S, Operand<W>, FoldedOperand<'_, O, C, W>) -> O,
+        c: impl FnMut(&mut S, ConditionId, FoldedCondition<'_, O, C>) -> C,
     ) -> O {
         self.fold_from(
             self.root().expect("Cannot fold root of a rootless expression"),
+            s,
             o,
             c,
         )
     }
 
-    pub fn fold_from<O, C>(
+    pub fn fold_from<O, C, S>(
         &self,
         root: Operand<W>,
-        mut o: impl FnMut(Operand<W>, FoldedOperand<'_, O, C, W>) -> O,
-        mut c: impl FnMut(ConditionId, FoldedCondition<'_, O, C>) -> C,
+        s: &mut S,
+        mut o: impl FnMut(&mut S, Operand<W>, FoldedOperand<'_, O, C, W>) -> O,
+        mut c: impl FnMut(&mut S, ConditionId, FoldedCondition<'_, O, C>) -> C,
     ) -> O {
         let mut mapped_ops =
             AHashMap::<Operand<W>, O>::with_capacity(self.size());
@@ -557,7 +559,7 @@ where
                         Operand::Wildcard(w) => Operand::Wildcard(w),
                     };
 
-                    mapped_ops.insert(op, o(op, mapped));
+                    mapped_ops.insert(op, o(s, op, mapped));
                 }
                 Node::Condition(cond) => {
                     if mapped_conds.contains_key(&cond) {
@@ -567,12 +569,25 @@ where
                     let mapped = self.dag.conditions[cond]
                         .map(|o| &mapped_ops[o], |c| &mapped_conds[c]);
 
-                    mapped_conds.insert(cond, c(cond, mapped));
+                    mapped_conds.insert(cond, c(s, cond, mapped));
                 }
             }
         }
 
         mapped_ops.remove(&root).expect("root node should be folded")
+    }
+}
+
+impl PartialEq for Expr {
+    fn eq(&self, other: &Self) -> bool {
+        let rs = ahash::RandomState::new();
+        let mut a = rs.build_hasher();
+        let mut b = rs.build_hasher();
+
+        self.fold(&mut a, |a, _, o| o.hash(a), |a, _, c| c.hash(a));
+        other.fold(&mut b, |b, _, o| o.hash(b), |b, _, c| c.hash(b));
+
+        a.finish() == b.finish()
     }
 }
 
