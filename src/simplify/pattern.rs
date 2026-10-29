@@ -443,14 +443,20 @@ impl Neg for &Wildcard {
     }
 }
 
-impl From<Expr<!>> for Pattern {
-    fn from(value: Expr<!>) -> Self {
+impl From<Expr> for Pattern {
+    fn from(value: Expr) -> Self {
         const _: () =
             assert!(size_of::<Operand<!>>() == size_of::<Operand<Wildcard>>());
 
         // SAFETY: ! never happens, so its safe to just "discard" it,
         // and we know Operand is the same size with or without it
         unsafe { mem::transmute(value) }
+    }
+}
+
+impl From<&Expr> for Pattern {
+    fn from(value: &Expr) -> Self {
+        Pattern::from(value.clone())
     }
 }
 

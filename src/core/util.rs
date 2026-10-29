@@ -306,7 +306,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::AddAssign<{{b}}> for {{a}} {
                         fn add_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() + {{into}}::from(rhs)
+                            *self = self.clone() + <{{b}} as Into<{{into}}>>::into(rhs)
                         }
                     }
                 }
@@ -317,7 +317,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::SubAssign<{{b}}> for {{a}} {
                         fn sub_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() - {{into}}::from(rhs)
+                            *self = self.clone() - <{{b}} as Into<{{into}}>>::into(rhs)
                         }
                     }
                 }
@@ -328,7 +328,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::MulAssign<{{b}}> for {{a}} {
                         fn mul_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() * {{into}}::from(rhs)
+                            *self = self.clone() * <{{b}} as Into<{{into}}>>::into(rhs)
                         }
                     }
                 }
@@ -339,7 +339,7 @@ fn impl_op_permutations(input: TokenStream) {
                 crabtime::output! {
                     impl std::ops::DivAssign<{{b}}> for {{a}} {
                         fn div_assign(&mut self, rhs: {{b}}) {
-                            *self = self.clone() / {{into}}::from(rhs)
+                            *self = self.clone() / <{{b}} as Into<{{into}}>>::into(rhs)
                         }
                     }
                 }
@@ -356,8 +356,8 @@ fn impl_op_permutations(input: TokenStream) {
             crabtime::output! {
                 impl std::cmp::PartialEq<{{b}}> for {{a}} {
                     fn eq(&self, rhs: &{{b}}) -> bool {
-                        let lhs = {{into}}::from(self.clone());
-                        let rhs = {{into}}::from(rhs.clone());
+                        let lhs = <{{a}} as Into<{{into}}>>::into(self.clone());
+                        let rhs = <{{b}} as Into<{{into}}>>::into(rhs.clone());
 
                         {{partial_eq}}
                     }
@@ -372,8 +372,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn add(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{into}}::from(self);
-                            let rhs = {{into}}::from(rhs);
+                            let lhs = <{{a}} as Into<{{into}}>>::into(self);
+                            let rhs = <{{b}} as Into<{{into}}>>::into(rhs);
 
                             {{add}}
                         }
@@ -389,8 +389,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn mul(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{into}}::from(self);
-                            let rhs = {{into}}::from(rhs);
+                            let lhs = <{{a}} as Into<{{into}}>>::into(self);
+                            let rhs = <{{b}} as Into<{{into}}>>::into(rhs);
 
                             {{mul}}
                         }
@@ -406,8 +406,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn div(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{into}}::from(self);
-                            let rhs = {{into}}::from(rhs);
+                            let lhs = <{{a}} as Into<{{into}}>>::into(self);
+                            let rhs = <{{b}} as Into<{{into}}>>::into(rhs);
 
                             {{div}}
                         }
@@ -423,8 +423,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn sub(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{into}}::from(self);
-                            let rhs = {{into}}::from(rhs);
+                            let lhs = <{{a}} as Into<{{into}}>>::into(self);
+                            let rhs = <{{b}} as Into<{{into}}>>::into(rhs);
 
                             {{sub}}
                         }
@@ -440,8 +440,8 @@ fn impl_op_permutations(input: TokenStream) {
                         type Output = {{out}};
 
                         fn pow(self, rhs: {{b}}) -> {{out}} {
-                            let lhs = {{into}}::from(self);
-                            let rhs = {{into}}::from(rhs);
+                            let lhs = <{{a}} as Into<{{into}}>>::into(self);
+                            let rhs = <{{b}} as Into<{{into}}>>::into(rhs);
 
                             {{pow}}
                         }

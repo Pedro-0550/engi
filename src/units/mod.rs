@@ -71,7 +71,7 @@ pub struct Dimension {
     L: i8, // length
     M: i8, // mass
     I: i8, // electric current
-    Θ: i8, // thermodynamic temperature
+    θ: i8, // thermodynamic temperature
     J: i8, // luminous intensity
     N: i8, // amount of substance
 }

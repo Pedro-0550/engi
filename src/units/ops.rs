@@ -23,7 +23,7 @@ impl Dimension {
             L: self.L * exponent,
             M: self.M * exponent,
             I: self.I * exponent,
-            Θ: self.Θ * exponent,
+            θ: self.θ * exponent,
             J: self.J * exponent,
             N: self.N * exponent,
         }
@@ -40,7 +40,7 @@ impl Mul for Dimension {
             M: self.M + rhs.M,
             I: self.I + rhs.I,
             N: self.N + rhs.N,
-            Θ: self.Θ + rhs.Θ,
+            θ: self.θ + rhs.θ,
             J: self.J + rhs.J,
         }
     }
@@ -68,7 +68,7 @@ impl Pow<i32> for Dimension {
             M: self.M * rhs as i8,
             I: self.I * rhs as i8,
             N: self.N * rhs as i8,
-            Θ: self.Θ * rhs as i8,
+            θ: self.θ * rhs as i8,
             J: self.J * rhs as i8,
         }
     }
@@ -84,7 +84,7 @@ impl Div for Dimension {
             M: self.M - rhs.M,
             I: self.I - rhs.I,
             N: self.N - rhs.N,
-            Θ: self.Θ - rhs.Θ,
+            θ: self.θ - rhs.θ,
             J: self.J - rhs.J,
         }
     }

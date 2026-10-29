@@ -50,7 +50,7 @@ use crate::{
 #[derive(Clone)]
 pub struct Expr<W = !>
 where
-    W: Eq + Hash, {
+    W: Eq + Hash + Copy, {
     pub(crate) dag: Dag<Operand<W>, OperationId, LeafId, MatrixId>,
 }
 
@@ -94,7 +94,7 @@ pub type FoldedCondition<'a, O, C> = Condition<&'a O, &'a C>;
 
 pub struct EditContext<'e, W = !>
 where
-    W: Eq + Hash, {
+    W: Eq + Hash + Copy, {
     expr: Cell<Option<&'e mut Expr<W>>>,
 }
 
@@ -106,7 +106,7 @@ pub enum Order {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
-impl<W: Hash + Eq> Default for Expr<W> {
+impl<W: Hash + Eq + Copy> Default for Expr<W> {
     fn default() -> Self {
         Self { dag: Dag::default() }
     }

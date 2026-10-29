@@ -12,8 +12,7 @@ fn small_expr(c: &mut Criterion) {
     c.bench_function("partial of small expr", |b| {
         symbols!(x, y);
 
-        let mut f_of_xy = (x.pow(2) + y) * sin(x * y) * ln(x / y);
-        f_of_xy.normalize();
+        let f_of_xy = (x.pow(2) + y) * sin(x * y) * ln(x / y);
 
         b.iter(|| black_box(f_of_xy.diff(x)))
     });
@@ -23,7 +22,7 @@ fn large_expr(c: &mut Criterion) {
     c.bench_function("partial of large expr", |b| {
         symbols!(x, y);
 
-        let mut f_of_xy = (x.pow(3) + 2.0 * x * y + y.pow(2) + 1.0)
+        let f_of_xy = (x.pow(3) + 2.0 * x * y + y.pow(2) + 1.0)
             * sin(x * y + x.pow(2))
             * cos(y.pow(2) + x)
             * ln((x.pow(2) + y.pow(2) + 1.0) / (x + y))
@@ -32,7 +31,6 @@ fn large_expr(c: &mut Criterion) {
                 * log(x + y, x.pow(2) + y + 1.0)
                 * tan(x * y);
 
-        f_of_xy.normalize();
         b.iter(|| black_box(f_of_xy.diff(x)))
     });
 }

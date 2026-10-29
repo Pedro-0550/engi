@@ -707,7 +707,9 @@ impl EquivalencyGraph {
         }
     }
 
-    pub(crate) fn extract(&self) -> Expr {}
+    pub(crate) fn extract(&self) -> Expr {
+        todo!()
+    }
 
     pub(crate) fn new(expr: &Expr) -> Self {
         let mut graph = Self::default();

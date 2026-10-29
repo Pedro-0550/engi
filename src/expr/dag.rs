@@ -633,6 +633,12 @@ impl<O, L, M> From<Wildcard> for Operand<Wildcard, O, L, M> {
     }
 }
 
+impl<O, L, M> From<&Wildcard> for Operand<Wildcard, O, L, M> {
+    fn from(w: &Wildcard) -> Self {
+        Operand::Wildcard(*w)
+    }
+}
+
 // impl<N, T> From<T> for Node<N>
 // where
 //     Leaf: From<T>,

@@ -14,6 +14,7 @@ use crate::{
         dag::{Leaf, Operation},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
+    simplify::pattern::Wildcard,
     symbol::{
         Symbol,
         constants::{Constant, e},
@@ -61,7 +62,7 @@ impl_op_permutations!(
 
 /* -------------------------------------------------------------------------- */
 
-impl<W: Hash + Eq + Clone + Copy> Mul<Expr<W>> for Expr<W> {
+impl<W: Hash + Eq + Copy> Mul<Expr<W>> for Expr<W> {
     type Output = Expr<W>;
 
     fn mul(mut self, rhs: Expr<W>) -> Self::Output {
@@ -72,7 +73,7 @@ impl<W: Hash + Eq + Clone + Copy> Mul<Expr<W>> for Expr<W> {
     }
 }
 
-impl<W: Hash + Eq + Clone + Copy> Add<Expr<W>> for Expr<W> {
+impl<W: Hash + Eq + Copy> Add<Expr<W>> for Expr<W> {
     type Output = Expr<W>;
 
     fn add(mut self, rhs: Expr<W>) -> Self::Output {
@@ -83,7 +84,7 @@ impl<W: Hash + Eq + Clone + Copy> Add<Expr<W>> for Expr<W> {
     }
 }
 
-impl<W: Hash + Eq + Clone + Copy> Sub<Expr<W>> for Expr<W> {
+impl<W: Hash + Eq + Copy> Sub<Expr<W>> for Expr<W> {
     type Output = Expr<W>;
 
     fn sub(self, rhs: Expr<W>) -> Self::Output {
@@ -91,7 +92,7 @@ impl<W: Hash + Eq + Clone + Copy> Sub<Expr<W>> for Expr<W> {
     }
 }
 
-impl<W: Hash + Eq + Clone + Copy> Div<Expr<W>> for Expr<W> {
+impl<W: Hash + Eq + Copy> Div<Expr<W>> for Expr<W> {
     type Output = Expr<W>;
 
     fn div(self, rhs: Expr<W>) -> Self::Output {
@@ -99,7 +100,7 @@ impl<W: Hash + Eq + Clone + Copy> Div<Expr<W>> for Expr<W> {
     }
 }
 
-impl<W: Hash + Eq + Clone + Copy> Pow<Expr<W>> for Expr<W> {
+impl<W: Hash + Eq + Copy> Pow<Expr<W>> for Expr<W> {
     type Output = Expr<W>;
 
     fn pow(mut self, exp: Expr<W>) -> Self::Output {
@@ -110,7 +111,7 @@ impl<W: Hash + Eq + Clone + Copy> Pow<Expr<W>> for Expr<W> {
     }
 }
 
-impl<W: Hash + Eq + Clone + Copy> Neg for Expr<W> {
+impl<W: Hash + Eq + Copy> Neg for Expr<W> {
     type Output = Expr<W>;
 
     fn neg(self) -> Self::Output {
@@ -118,7 +119,7 @@ impl<W: Hash + Eq + Clone + Copy> Neg for Expr<W> {
     }
 }
 
-impl<W: Hash + Eq + Clone + Copy> Neg for &Expr<W> {
+impl<W: Hash + Eq + Copy> Neg for &Expr<W> {
     type Output = Expr<W>;
 
     fn neg(self) -> Self::Output {
@@ -160,6 +161,12 @@ where
         expr
     }
 }
+
+// impl From<Wildcard> for BuiltOperand<Wildcard> {
+//     fn from(value: Wildcard) -> Self {
+//         Operand::Wildcard(value)
+//     }
+// }
 
 impl EditContext<'_> {
     fn push(&self, operand: BuiltOperand) -> Operand {
