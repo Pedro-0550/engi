@@ -1,11 +1,9 @@
 use std::{
     fmt::{Display, Write},
     hash::Hash,
-    ops::Mul,
 };
 
 use itertools::Itertools;
-use num::Complex;
 use ordered_float::{OrderedFloat, Pow};
 use thiserror::Error;
 
@@ -16,8 +14,7 @@ use crate::{
         value::Value,
     },
     expr::Expr,
-    model::Variable,
-    units::{Unit::Unitless, isq::DIMENSIONLESS, si::rad},
+    units::isq::DIMENSIONLESS,
 };
 
 pub mod isq;
@@ -39,17 +36,17 @@ static COMPOSITIONS: Interned<Composition> = Interned::new();
 #[derive(Error, Debug, Clone)]
 pub enum DimensionalError {
     #[error("Tried to compare dimensionally incompatible expressions: {expr}")]
-    IncompatibleComparison { expr: Expr },
+    IncompatibleComparison { expr: String },
     #[error("Tried to sum dimensionally incompatible expressions: {expr}")]
-    IncompatibleSum { expr: Expr },
+    IncompatibleSum { expr: String },
     #[error(
         "The pass and fail conditions of a piecewise have incompatible units: {expr}"
     )]
-    IncompatibleConditional { expr: Expr },
+    IncompatibleConditional { expr: String },
     #[error(
         "Tried to apply a transcendental function to a dimensioned expression: {expr}"
     )]
-    DimensionedTranscendental { expr: Expr },
+    DimensionedTranscendental { expr: String },
 }
 
 /* --------------------------------- TRAITS --------------------------------- */
@@ -192,7 +189,7 @@ impl Quantity {
     }
 
     pub fn unit(&self) -> Unit {
-        return self.1;
+        self.1
     }
 }
 
@@ -267,7 +264,7 @@ impl Unit {
     fn new_composition(mut comp: Composition) -> Self {
         fold_composition(&mut comp);
 
-        if comp.len() == 0 {
+        if comp.is_empty() {
             return Unit::Unitless;
         } else if comp.len() == 1
             && let Some((unit, exp)) = comp.first()
@@ -315,7 +312,7 @@ impl Dimensioned for Unit {
     }
 
     fn unit(&self) -> Result<Unit, DimensionalError> {
-        Ok(self.clone())
+        Ok(*self)
     }
 }
 

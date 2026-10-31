@@ -4,8 +4,8 @@ use super::dag::Leaf;
 use crate::{
     core::index::Size,
     expr::{
-        Expr, FoldedOperand, Operand, OperationId,
-        dag::{self, Matrix, Operation},
+        Expr, FoldedOperand, Operand,
+        dag::{Matrix, Operation},
     },
 };
 
@@ -25,11 +25,9 @@ impl Shape {
     // SAFETY:
     // As of August 2026, 1 is not equal to 0.
     // If this changes in the future, use checked version instead.
-    pub const SCALAR: Self = unsafe {
-        Shape {
-            cols: NonZero::<Size>::new_unchecked(1),
-            rows: NonZero::<Size>::new_unchecked(1),
-        }
+    pub const SCALAR: Self = Shape {
+        cols: NonZero::<Size>::new(1).unwrap(),
+        rows: NonZero::<Size>::new(1).unwrap(),
     };
 
     pub fn transpose(self) -> Self {
@@ -65,7 +63,7 @@ impl Shape {
     }
 
     pub fn is_square_mat(&self) -> bool {
-        self.rows.get() > 1 && self.rows == self.rows
+        self.rows.get() > 1 && self.rows == self.cols
     }
 }
 

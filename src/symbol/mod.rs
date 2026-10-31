@@ -1,11 +1,9 @@
 use std::{fmt::Display, hash::Hash};
 
-use num::complex::Complex64;
-
 use crate::{
     core::interned::{Handle, Interned},
     expr::{domain::Domain, shape::Shape},
-    units::{Quantity, Unit},
+    units::Unit,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -88,8 +86,8 @@ impl Symbol {
 
                 Some(Symbol(handle))
             }
-            Realization::Real(symbol) => None,
-            Realization::Imag(symbol) => Some(self),
+            Realization::Real(_symbol) => None,
+            Realization::Imag(_symbol) => Some(self),
         }
     }
 
@@ -108,8 +106,8 @@ impl Symbol {
 
                 Some(Symbol(handle))
             }
-            Realization::Real(symbol) => Some(self),
-            Realization::Imag(symbol) => None,
+            Realization::Real(_symbol) => Some(self),
+            Realization::Imag(_symbol) => None,
         }
     }
 
@@ -164,19 +162,19 @@ impl Symbol {
     }
 
     pub fn domain(&self) -> Domain {
-        SYMBOLS.get(self.0).expect("invalid symbol handle").domain.clone()
+        SYMBOLS.get(self.0).expect("invalid symbol handle").domain
     }
 }
 
 impl Display for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.name())
+        f.write_str(self.name())
     }
 }
 
 impl Ord for Symbol {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name().cmp(&other.name()).then_with(|| self.0.0.cmp(&other.0.0))
+        self.name().cmp(other.name()).then_with(|| self.0.0.cmp(&other.0.0))
     }
 }
 

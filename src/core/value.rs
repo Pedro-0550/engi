@@ -1,21 +1,18 @@
 use std::{
-    borrow::Cow,
     fmt::{Display, Write},
     hash::Hash,
     ops::*,
     sync::Arc,
 };
 
-use derive_more::{Deref, DerefMut, From, IsVariant};
+use derive_more::IsVariant;
 use faer::{
-    Mat, MatRef, Scale, Side, linalg::solvers::DenseSolveCore,
-    traits::ComplexField,
+    Mat, Scale, linalg::solvers::DenseSolveCore,
 };
 use float_eq::{FloatEq, float_eq};
 use num::{
-    Complex, Float, Zero,
-    complex::{Complex32, Complex64, ComplexFloat, c64},
-    pow::Pow,
+    Complex, Float,
+    complex::{Complex64, ComplexFloat, c64},
 };
 use ordered_float::OrderedFloat;
 
@@ -25,7 +22,6 @@ use crate::{
         util::{ArcExt, impl_as_variant, impl_op_permutations},
     },
     expr::{
-        dag,
         domain::{Domain, Interval},
         shape::Shape,
     },
@@ -86,11 +82,11 @@ impl Default for Value {
 impl Value {
     pub fn shape(&self) -> Shape {
         match self {
-            Value::Set(set) => todo!(),
+            Value::Set(_set) => todo!(),
             Value::Matrix(mat) => {
                 Shape::rect(mat.nrows() as Size, mat.ncols() as Size)
             }
-            Value::Scalar(complex) => Shape::SCALAR,
+            Value::Scalar(_complex) => Shape::SCALAR,
         }
     }
 }
@@ -155,8 +151,8 @@ impl Value {
 
     pub fn domain(&self) -> Domain {
         match self {
-            Value::Set(set) => todo!(),
-            Value::Matrix(mat) => todo!(),
+            Value::Set(_set) => todo!(),
+            Value::Matrix(_mat) => todo!(),
             Value::Scalar(complex) => Domain::new(
                 match complex.re {
                     re if re < -EQ_ABS_TOL => {
@@ -200,17 +196,17 @@ impl Value {
 
     pub fn realize(&self) -> [Value; 2] {
         match self {
-            Value::Set(set) => todo!(),
-            Value::Matrix(mat) => todo!(),
+            Value::Set(_set) => todo!(),
+            Value::Matrix(_mat) => todo!(),
             Value::Scalar(complex) => [complex.re.into(), complex.im.into()],
         }
     }
 
     pub fn precedence(&self) -> u32 {
         match self {
-            Value::Set(set) => 1,
-            Value::Matrix(mat) => 2,
-            Value::Scalar(complex) => 3,
+            Value::Set(_set) => 1,
+            Value::Matrix(_mat) => 2,
+            Value::Scalar(_complex) => 3,
         }
     }
 
@@ -234,7 +230,7 @@ impl Value {
 
     pub fn is_zero(&self) -> bool {
         match self {
-            Value::Set(set) => todo!(),
+            Value::Set(_set) => todo!(),
             Value::Matrix(mat) => mat.row_iter().all(|r| {
                 r.iter().all(|el| {
                     el.re.eq_abs(&0.0, &EQ_ABS_TOL)
@@ -315,7 +311,7 @@ impl Value {
 
     pub fn norm(&self) -> Self {
         match self {
-            Value::Set(set) => todo!(),
+            Value::Set(_set) => todo!(),
             Value::Matrix(mat) => mat.norm_l2().into(),
             Value::Scalar(complex) => complex.norm().into(),
         }
@@ -323,16 +319,16 @@ impl Value {
 
     pub fn ln(&self) -> Self {
         match self {
-            Value::Set(set) => todo!(),
-            Value::Matrix(mat) => todo!(),
+            Value::Set(_set) => todo!(),
+            Value::Matrix(_mat) => todo!(),
             Value::Scalar(complex) => complex.ln().into(),
         }
     }
 
     pub fn sign(&self) -> Self {
         match self {
-            Value::Set(set) => todo!(),
-            Value::Matrix(mat) => todo!(),
+            Value::Set(_set) => todo!(),
+            Value::Matrix(_mat) => todo!(),
             Value::Scalar(c) => {
                 Complex::new(c.re.signum(), c.im.signum()).into()
             }
@@ -532,7 +528,7 @@ impl PartialEq for Value {
 impl Hash for Value {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         match self {
-            Value::Set(set) => todo!(),
+            Value::Set(_set) => todo!(),
             Value::Matrix(mat) => {
                 for row in mat.row_iter() {
                     for el in row.iter() {
@@ -552,8 +548,8 @@ impl Hash for Value {
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Set(set) => todo!(),
-            Value::Matrix(mat) => todo!(),
+            Value::Set(_set) => todo!(),
+            Value::Matrix(_mat) => todo!(),
             Value::Scalar(complex) => {
                 complex.re.fmt(f)?;
 
@@ -578,11 +574,11 @@ impl Display for Value {
 
 /* -------------------------------- FUNCTIONS ------------------------------- */
 
-pub fn mat_exp(mat: Mat<Complex64>) -> Mat<Complex64> {
+pub fn mat_exp(_mat: Mat<Complex64>) -> Mat<Complex64> {
     todo!()
 }
 
-pub fn mat_ln(mat: &Mat<Complex64>) -> Mat<Complex64> {
+pub fn mat_ln(_mat: &Mat<Complex64>) -> Mat<Complex64> {
     todo!()
 }
 

@@ -1,8 +1,6 @@
-use core::slice;
 use std::{
     hash::Hash,
     ops::{Deref, DerefMut},
-    vec,
 };
 
 use ahash::AHashMap;
@@ -63,7 +61,7 @@ where
         }
     }
 
-    pub fn replace_with(&mut self, val: T, at: Idx, key: Key) {}
+    pub fn replace_with(&mut self, _val: T, _at: Idx, _key: Key) {}
 
     pub fn key(&self, v: &T) -> Option<&Key> {
         self.cons.get(v)

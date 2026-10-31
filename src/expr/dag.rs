@@ -1,22 +1,20 @@
 use std::{
-    hash::{Hash, Hasher},
-    marker::PhantomData,
+    hash::Hash,
     num::NonZero,
     ops::{Index, IndexMut},
-    slice, vec,
+    vec,
 };
 
-use ahash::AHashMap;
-use derive_more::{Deref, From, Into, IsVariant};
+use derive_more::IsVariant;
 use kinded::Kinded;
 use num::complex::Complex64;
 
 use crate::{
     core::{consed::Consed, index::Size, util::impl_as_variant, value::Value},
-    expr::{Operand, dag, domain::Domain, shape::Shape},
+    expr::{Operand, shape::Shape},
     id,
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
-    simplify::{ClassId, pattern::Wildcard},
+    simplify::pattern::Wildcard,
     symbol::{Symbol, constants::Constant},
     units::{Quantity, Unit::Unitless},
 };
@@ -162,10 +160,10 @@ pub enum Leaf {
     Quantity(Quantity),
 }
 
-type FlattenedOperand = Operand<BoxedOperation, Leaf, BoxedMatrix>;
-pub struct BoxedMatrix(Matrix<FlattenedOperand>);
-pub struct BoxedOperation(Box<Operation<FlattenedOperand, BoxedCondition>>);
-pub struct BoxedCondition(Box<Condition<FlattenedOperand, BoxedCondition>>);
+// type FlattenedOperand = Operand<BoxedOperation, Leaf, BoxedMatrix>;
+// pub struct BoxedMatrix(Matrix<FlattenedOperand>);
+// pub struct BoxedOperation(Box<Operation<FlattenedOperand, BoxedCondition>>);
+// pub struct BoxedCondition(Box<Condition<FlattenedOperand, BoxedCondition>>);
 
 /// Mathematical expression DAG.
 /// Operations, conditions, matrices and leafs are hashconsed and referenced with strongly typed Ids.
@@ -231,7 +229,7 @@ impl<O, C> Operation<O, C> {
         match self {
             binary!(a, b) => 2,
             unary!(x) => 1,
-            Operation::Conditional { pass, fail, .. } => 2,
+            Operation::Conditional { pass: _, fail: _, .. } => 2,
         }
     }
 

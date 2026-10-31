@@ -1,8 +1,6 @@
 use std::{
-    cell::{LazyCell, OnceCell},
     hash::Hash,
     ops::{Add, Div, Mul, Neg, Sub},
-    rc::Rc,
 };
 
 use num::{complex::Complex64, pow::Pow};
@@ -14,12 +12,11 @@ use crate::{
         dag::{Leaf, Operation},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
-    simplify::pattern::Wildcard,
     symbol::{
         Symbol,
         constants::{Constant, e},
     },
-    units::{Quantity, Unit},
+    units::Quantity,
 };
 
 /* -------------------------------------------------------------------------- */

@@ -1,23 +1,19 @@
 /* --------------------------------- TRAITS --------------------------------- */
 
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
 use ahash::AHashMap;
-use faer::Mat;
 use itertools::Itertools;
 use nlopt::{Algorithm, Nlopt, Target};
-use num::{Complex, complex::Complex64};
+use num::Complex;
 use ordered_float::Pow;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
-    core::value::{EQ_ABS_TOL, Value},
+    core::value::Value,
     expr::{Expr, domain::Realized},
-    model::{
-        Variable,
-        eq::{Constraint, Equation},
-    },
-    symbol::{Realization, Symbol},
+    model::Variable,
+    symbol::Realization,
 };
 
 pub trait Solver {
@@ -131,7 +127,7 @@ impl Solver for NloptSolver {
                     objective.eval_realized(&bindings).as_scalar().unwrap().re;
 
                 println!("iter f = {}", f);
-                print!("\n");
+                println!();
 
                 f
             },

@@ -1,42 +1,43 @@
 /* --------------------------------- STRUCTS -------------------------------- */
 
-use std::{collections::HashMap, mem};
+use std::mem;
 
 use ahash::AHashMap;
 use cranelift::{
     codegen::{
         ir::{
-            AbiParam, ExtFuncData, ExternalName, FuncRef, InstBuilder,
-            MemFlagsData, UserFuncName,
-            types::{self, F64},
+            AbiParam, FuncRef, InstBuilder, MemFlagsData, UserFuncName,
+            types::F64,
         },
         settings::{self, Configurable},
     },
     frontend::{FunctionBuilder, FunctionBuilderContext},
     jit::{JITBuilder, JITModule},
     module::{Linkage, Module, default_libcall_names},
-    prelude::{self, Value},
+    prelude::Value,
 };
 use itertools::Itertools;
-use num::{Complex, complex::Complex64};
+use num::complex::Complex64;
 
 use crate::{
     core::value,
     expr::{
         Expr, Operand,
         dag::{Leaf, Operation},
-        domain::{Domain, Realized},
+        domain::Realized,
     },
     symbol::{
-        Realization::{self, Imag, Primary, Real},
+        Realization::{self},
         Symbol,
-        constants::e,
     },
 };
 
 pub struct CompiledExpr {
     func: unsafe extern "C" fn(*const f64, *mut f64),
     args: Vec<Symbol>,
+    // We need to keep module alive for as long as the
+    // compiled expr, otherwise the JIT memory is dropped
+    #[allow(unused)]
     module: JITModule,
 }
 
@@ -194,7 +195,7 @@ impl Realized {
             expr.fold(bcx, |bcx, _, folded| match folded {
                 Operand::Leaf(leaf) => match leaf {
                     Leaf::Symbol(symbol) => {
-                        symbols.get(&symbol).copied().unwrap()
+                        symbols.get(symbol).copied().unwrap()
                     }
                     Leaf::Constant(constant) => {
                         let qty = constant
@@ -255,11 +256,11 @@ impl Realized {
                     Operation::Det(_) => todo!(),
                     Operation::Rank(_) => todo!(),
                     Operation::Trace(_) => todo!(),
-                    Operation::Conditional { cond, pass, fail } => {
+                    Operation::Conditional { cond: _, pass: _, fail: _ } => {
                         todo!()
                     }
                 },
-            }, |bcx, _, c| todo!())
+            }, |_bcx, _, _c| todo!())
         }
 
         let (re, im) = (

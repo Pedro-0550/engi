@@ -7,40 +7,27 @@ pub mod ops;
 pub mod shape;
 
 use std::{
-    cell::{Cell, OnceCell, RefCell},
-    collections::{HashMap, HashSet},
+    cell::Cell,
     hash::{BuildHasher, Hash, Hasher},
-    iter::empty,
-    mem::{self, variant_count},
-    ops::{Add, Div, Mul, Neg, Sub},
-    slice,
-    sync::mpsc::Iter,
+    mem::variant_count,
 };
 
 use ahash::AHashMap;
-use derive_more::{From, IsVariant};
-use faer::{linalg::svd::ComputeSvdVectors::No, traits::ByRef};
+use derive_more::IsVariant;
 use itertools::Itertools;
 use kinded::Kinded;
-use num::complex::{Complex64, c64};
 use ordered_float::Pow;
 
 use crate::{
-    core::{util::impl_as_variant, value::Value},
-    expr::{
-        dag::{
+    expr::dag::{
             Condition, ConditionId, Dag, Leaf, LeafId, LeafKind, Matrix,
             MatrixId, Operation, OperationId, OperationKind,
         },
-        shape::Shape,
-    },
-    model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
-    simplify::{self, EquivalencyGraph, pattern::Wildcard, rules},
+    simplify::{EquivalencyGraph, rules},
     symbol::{
         Symbol,
-        constants::{Constant, e},
+        constants::e,
     },
-    units::{Quantity, Unit::Unitless},
 };
 
 /// A mathematical expression based on a directed acryllic graph
@@ -170,7 +157,7 @@ impl<W, O, C, M> Operand<W, Operation<O, C>, Leaf, M> {
     pub fn kind(&self) -> OperandKind {
         match self {
             Operand::Leaf(l) => OperandKind::Leaf(l.kind()),
-            Operand::Matrix(m) => OperandKind::Matrix,
+            Operand::Matrix(_m) => OperandKind::Matrix,
             Operand::Operation(op) => OperandKind::Operation(op.kind()),
             Operand::Wildcard(_) => OperandKind::Wildcard,
         }
@@ -181,7 +168,7 @@ impl<W, O, C, M> Operand<W, &Operation<O, C>, &Leaf, M> {
     pub fn kind(&self) -> OperandKind {
         match self {
             Operand::Leaf(l) => OperandKind::Leaf(l.kind()),
-            Operand::Matrix(m) => OperandKind::Matrix,
+            Operand::Matrix(_m) => OperandKind::Matrix,
             Operand::Operation(op) => OperandKind::Operation(op.kind()),
             Operand::Wildcard(_) => OperandKind::Wildcard,
         }
@@ -237,7 +224,7 @@ where
         EditContext { expr: Cell::new(Some(self)) }
     }
 
-    pub fn as_single(&self) -> Option<FetchedOperand<W>> {
+    pub fn as_single(&self) -> Option<FetchedOperand<'_, W>> {
         if self.size() == 1 {
             self.dag.root.map(|op| self.fetch(op))
         } else {

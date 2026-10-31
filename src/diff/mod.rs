@@ -1,16 +1,13 @@
-use std::collections::HashMap;
 
-use num::{Zero, complex::Complex64};
+use num::Zero;
 
 use crate::{
-    core::value::{EQ_ABS_TOL, Set},
     expr::{
-        self, Expr, Operand, cos, cosh,
+        Expr, Operand,
         dag::{Leaf, Operation},
-        domain::{Domain, Numeric},
-        ln, sin, sinh, sqrt,
+        domain::Numeric,
     },
-    symbol::{Symbol, constants::e},
+    symbol::Symbol,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -240,11 +237,11 @@ impl Expr {
                         Operation::Det(_) => todo!(),
                         Operation::Rank(_) => todo!(),
                         Operation::Trace(_) => todo!(),
-                        Operation::Conditional { cond, pass: (pass, d_pass), fail: (_, d_fail) } => {
+                        Operation::Conditional { cond: _, pass: (_pass, _d_pass), fail: (_, _d_fail) } => {
                             todo!()
                         }
                     },
-                    Operand::Matrix(m) => dx.push(Operand::Matrix(m.map(|(el, d_el)| *d_el))),
+                    Operand::Matrix(m) => dx.push(Operand::Matrix(m.map(|(_el, d_el)| *d_el))),
                     Operand::Wildcard(never) => never,
                 },
             )

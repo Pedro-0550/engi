@@ -1,15 +1,17 @@
-use std::ops::{Add, Div, Mul, Sub};
+use std::{
+    ops::{Add, Div, Mul, Sub},
+    prelude::rust_2024,
+};
 
 use float_eq::FloatEq;
-use num::{Complex, bigint::Sign};
 use ordered_float::Pow;
 
 use super::dag::Leaf;
 use crate::{
     core::value::EQ_ABS_TOL,
     expr::{
-        Expr, FoldedOperand, Operand, OperationId,
-        dag::{Matrix, Operation},
+        Expr, FoldedOperand, Operand,
+        dag::Operation,
         domain::Endpoint::{Neg, Pos, Zero},
     },
     symbol::constants::e,
@@ -222,14 +224,14 @@ impl Domain {
 }
 
 impl Interval {
-    pub fn min(&self, other: Interval) -> Interval {
+    pub fn min(&self, _other: Interval) -> Interval {
         todo!()
     }
-    pub fn max(&self, other: Interval) -> Interval {
+    pub fn max(&self, _other: Interval) -> Interval {
         todo!()
     }
 
-    pub fn union(&self, other: Interval) -> Interval {
+    pub fn union(&self, _other: Interval) -> Interval {
         todo!()
     }
 
@@ -260,7 +262,7 @@ impl Interval {
         Self::R
     }
 
-    pub fn atan2(&self, y: &Self) -> Self {
+    pub fn atan2(&self, _y: &Self) -> Self {
         Self::R
     }
 
@@ -593,11 +595,11 @@ impl FoldedOperand<'_, Domain, ()> {
                         (u2_im).sinh() / (u2_re.cos() + u2_im.cosh()),
                     )
                 }
-                Operation::Asin(_) => todo!(),
+                Operation::Asin(x) => Domain::COMPLEX, //todo
                 Operation::Acos(_) => todo!(),
                 Operation::Atan(_) => todo!(),
-                Operation::Sinh(_) => todo!(),
-                Operation::Cosh(_) => todo!(),
+                Operation::Sinh(_) => Domain::COMPLEX, //todo
+                Operation::Cosh(_) => Domain::COMPLEX, //todo
                 Operation::Tanh(_) => todo!(),
                 Operation::Asinh(_) => todo!(),
                 Operation::Acosh(_) => todo!(),
@@ -640,7 +642,7 @@ impl FoldedOperand<'_, Domain, ()> {
                         (ln_arg.im * ln_base.re - ln_arg.re * ln_base.im) / den,
                     )
                 }
-                Operation::Atan2 { x, y } => Domain::REAL,
+                Operation::Atan2 { x: _, y: _ } => Domain::REAL,
                 Operation::Transpose(x) => **x,
                 Operation::Det(_) => todo!(),
                 Operation::Rank(_) => todo!(),
@@ -820,18 +822,22 @@ impl Expr {
                                 )
                             }
                         }
-                        Operation::Atan2 { x, y } => todo!(),
+                        Operation::Atan2 { x: _, y: _ } => todo!(),
                         Operation::Transpose(_) => todo!(),
                         Operation::Det(_) => todo!(),
                         Operation::Rank(_) => todo!(),
                         Operation::Trace(_) => todo!(),
-                        Operation::Conditional { cond, pass, fail } => todo!(),
+                        Operation::Conditional {
+                            cond: _,
+                            pass: _,
+                            fail: _,
+                        } => todo!(),
                     },
                     Operand::Matrix(_) => todo!(),
                     Operand::Wildcard(never) => never, // ! never occurs
                 }
             },
-            |_, c, _| {
+            |_, _c, _| {
                 // let ctx = working.edit();
                 todo!();
             },

@@ -1,7 +1,7 @@
-use std::ops::{Add, BitXor, Div, DivAssign, Mul, MulAssign, Sub};
+use std::ops::{Div, DivAssign, Mul, MulAssign};
 
 use num::{
-    complex::{Complex32, Complex64},
+    complex::Complex64,
     pow::Pow,
 };
 

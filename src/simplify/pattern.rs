@@ -1,14 +1,7 @@
 /* --------------------------------- STRUCTS -------------------------------- */
 
-use std::{
-    collections::HashMap,
-    mem,
-    ops::{Index, Neg},
-    rc::Rc,
-};
+use std::{mem, ops::Neg};
 
-use ahash::AHashMap;
-use derive_more::Into;
 // use cranelift::codegen::ir::Constant;
 use kinded::Kinded;
 use num::{complex::Complex64, pow::Pow};
@@ -20,25 +13,21 @@ use crate::{
         value::Value,
     },
     expr::{
-        Expr, Operand, OperandKind, Order,
-        dag::{
-            self, Dag, LeafId, LeafKind, MatrixId, Operation, OperationId,
-            OperationKind,
-        },
+        Expr, Operand, OperandKind,
+        dag::{LeafId, LeafKind, Operation, OperationKind},
         domain::Domain,
         shape::Shape,
     },
     id,
-    model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::{
-        ClassId, EquivalencyClass, EquivalencyDag, EquivalencyGraph, Leaf,
+        ClassId, EquivalencyClass, EquivalencyDag, EquivalencyGraph,
         Substitution,
     },
     symbol::{
         Symbol,
         constants::{Constant, e},
     },
-    units::{Quantity, Unit},
+    units::Quantity,
 };
 
 type Allocations = Indexed<[Option<RegisterId>; WILDCARD_COUNT], Wildcard>;
@@ -113,7 +102,7 @@ impl Structure {
     fn kind(&self) -> OperandKind {
         match self {
             Structure::Leaf(leaf_kind, _) => OperandKind::Leaf(*leaf_kind),
-            Structure::Matrix(shape) => OperandKind::Matrix,
+            Structure::Matrix(_shape) => OperandKind::Matrix,
             Structure::Operation(operation_kind) => {
                 OperandKind::Operation(*operation_kind)
             }
@@ -199,7 +188,7 @@ impl Pattern {
         self.compile_inner(
             self.root().expect("Cannot compile a rootless pattern.. what are you even trying to do"),
             RegisterId(0),
-            &conditions,
+            conditions,
             &mut state,
             tailored_to,
         );
@@ -393,7 +382,7 @@ impl Machine {
                     let ctx = ConditionContext {
                         allocations: &program.allocations,
                         graph,
-                        registers: (&*registers).into(),
+                        registers,
                     };
 
                     if f(ctx) {

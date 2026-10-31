@@ -1,45 +1,32 @@
 use std::{
     array,
-    cell::{Cell, OnceCell},
-    collections::{HashMap, HashSet, hash_map::Entry},
-    hash::{BuildHasher, Hash, RandomState},
-    iter::once,
+    cell::Cell,
+    collections::HashSet,
+    hash::Hash,
     mem::{self, variant_count},
-    ops::Mul,
-    rc::Rc,
-    sync::LazyLock,
-    thread,
-    time::Duration,
 };
 
 use ahash::AHashMap;
-use float_eq::assert_float_eq;
 use itertools::Itertools;
 use kinded::Kinded;
-use nlopt::Algorithm::Newuoa;
-use num::{One, Zero, complex::ComplexFloat, pow::Pow as _};
+use num::{Zero, complex::ComplexFloat, pow::Pow as _};
 
 use crate::{
     core::{
-        consed::Insertion::{self, Existed},
+        consed::Insertion::{self},
         index::{Indexed, Size},
-        interned::Interned,
-        value::{ComplexExt, Value, gcd_f64},
     },
     expr::{
         Expr, FoldedOperand, Operand,
         dag::{
-            self, ConditionId, Dag, Leaf, LeafKind, Matrix, Operation,
-            OperationId, OperationKind,
+            Condition, ConditionId, Dag, Leaf, LeafKind, Matrix, Operation,
+            OperationKind,
         },
         domain::Domain,
         shape::Shape,
     },
     id,
-    simplify::pattern::{
-        Machine, Pattern, Program, Rule, WILDCARD_COUNT, Wildcard,
-    },
-    symbol::{Symbol, constants::Constant},
+    simplify::pattern::{Machine, Rule, WILDCARD_COUNT, Wildcard},
     units::Quantity,
 };
 
@@ -73,7 +60,7 @@ pub struct EquivalencyClass {
     // even though a hashmap would only need to hash 2 bytes..
     // I guess its done so often that its worth it, at least thats what i got from profiling
     operands_by_kind: [Vec<Operand>; {
-        variant_count::<LeafKind>() + variant_count::<OperationKind>() + 1 // 1 for matrix
+        variant_count::<LeafKind>() + variant_count::<OperationKind>() + 2 // 1 for matrix
     }],
     operands: Vec<Operand>,
     child_of: Vec<ClassId>,
@@ -122,7 +109,7 @@ impl Analysis {
             }
             // This is true because it implies that the other side gained information as well, even if we dont mutate it here.
             (Some(_), None) => true,
-            (Some(a), Some(b)) => {
+            (Some(_a), Some(_b)) => {
                 // we should implemnet some form of approx comparison, which is kinda hard since Value
                 // can be a lot of different things
                 false
@@ -330,7 +317,9 @@ impl EquivalencyGraph {
                     Operation::Det(_) => todo!(),
                     Operation::Rank(_) => todo!(),
                     Operation::Trace(_) => todo!(),
-                    Operation::Conditional { cond, pass, fail } => return None,
+                    Operation::Conditional { cond: _, pass: _, fail: _ } => {
+                        return None;
+                    }
                 },
             ),
             Operand::Matrix(_) => todo!(),
@@ -401,15 +390,14 @@ impl EquivalencyGraph {
 
                 for class_id in &pending_match {
                     // why even bother matching if this class dosent contain any nodes of that kind
-                    if self.classes[*class_id].operands_by_kind
-                        [root_kind.id() as usize]
+                    if self.classes[*class_id].operands_by_kind[root_kind.id()]
                         .is_empty()
                     {
                         continue;
                     }
 
                     let mut subs = Vec::new();
-                    Machine::execute(self, &program, *class_id, &mut subs);
+                    Machine::execute(self, program, *class_id, &mut subs);
 
                     for sub in subs {
                         prod.matched += 1;
@@ -474,10 +462,8 @@ impl EquivalencyGraph {
                     {
                         let mut operands = mem::take(&mut class.operands);
                         let mut child_of = mem::take(&mut class.child_of);
-                        let mut operands_by_kind = class
-                            .operands_by_kind
-                            .each_mut()
-                            .map(|v| mem::take(v));
+                        let mut operands_by_kind =
+                            class.operands_by_kind.each_mut().map(mem::take);
                         let analysis = class.analysis.clone();
 
                         let parent_class = &mut self.classes[parent];
@@ -489,10 +475,9 @@ impl EquivalencyGraph {
                                 .extend(parent_class.child_of.iter().copied());
                         }
 
-                        for (i, mut ids) in
-                            operands_by_kind.iter_mut().enumerate()
+                        for (i, ids) in operands_by_kind.iter_mut().enumerate()
                         {
-                            parent_class.operands_by_kind[i].append(&mut ids);
+                            parent_class.operands_by_kind[i].append(ids);
                         }
 
                         changed.push(parent);
@@ -661,7 +646,7 @@ impl EquivalencyGraph {
             }
         }
 
-        self.matchlist.extend(new_matchlist.into_iter());
+        self.matchlist.extend(new_matchlist);
     }
 
     fn find(&self, id: ClassId) -> ClassId {
@@ -708,7 +693,139 @@ impl EquivalencyGraph {
     }
 
     pub(crate) fn extract(&self) -> Expr {
-        todo!()
+        let mut best_ops = AHashMap::new();
+
+        fn calculate_cost(
+            graph: &EquivalencyGraph,
+            op: Operand,
+            best_ops: &AHashMap<ClassId, (usize, Operand)>,
+        ) -> Option<usize> {
+            let fetched = graph.fetch(op);
+
+            let mut cost = Some(fetched.cost());
+            match fetched {
+                Operand::Matrix(m) => {
+                    for el in m.elements() {
+                        cost = cost.zip_with(best_ops.get(el), |a, b| a + b.0);
+                    }
+                }
+                Operand::Operation(o) => o.for_each_operand(|op| {
+                    cost = cost.zip_with(best_ops.get(op), |a, b| a + b.0)
+                }),
+                _ => (),
+            }
+
+            cost
+        }
+
+        loop {
+            let mut changed = false;
+
+            for (id, class) in self.classes.iter() {
+                if self.find(id) != id {
+                    continue;
+                }
+
+                for op in &class.operands {
+                    if let Some(cost) = calculate_cost(self, *op, &best_ops) {
+                        let best_cost = best_ops
+                            .get(&id)
+                            .map(|entry| entry.0)
+                            .unwrap_or(usize::MAX);
+
+                        if best_cost > cost {
+                            best_ops.insert(id, (cost, *op));
+                            changed = true
+                        }
+                    }
+                }
+            }
+
+            if !changed {
+                break;
+            }
+        }
+
+        let mut expr = Expr::new();
+
+        fn build_condition(
+            graph: &EquivalencyGraph,
+            cond: ConditionId,
+            best_ops: &AHashMap<ClassId, (usize, Operand)>,
+            into: &mut Expr,
+        ) -> ConditionId {
+            let cond = graph.dag.conditions[cond];
+            let mapped = match cond {
+                Condition::Eq(a, b) => Condition::Eq(
+                    build_operand(graph, a, best_ops, into),
+                    build_operand(graph, b, best_ops, into),
+                ),
+                Condition::Ne(a, b) => Condition::Ne(
+                    build_operand(graph, a, best_ops, into),
+                    build_operand(graph, b, best_ops, into),
+                ),
+                Condition::Lt(a, b) => Condition::Lt(
+                    build_operand(graph, a, best_ops, into),
+                    build_operand(graph, b, best_ops, into),
+                ),
+                Condition::Le(a, b) => Condition::Le(
+                    build_operand(graph, a, best_ops, into),
+                    build_operand(graph, b, best_ops, into),
+                ),
+                Condition::Gt(a, b) => Condition::Gt(
+                    build_operand(graph, a, best_ops, into),
+                    build_operand(graph, b, best_ops, into),
+                ),
+                Condition::Ge(a, b) => Condition::Ge(
+                    build_operand(graph, a, best_ops, into),
+                    build_operand(graph, b, best_ops, into),
+                ),
+                Condition::And(conds) => Condition::And(
+                    conds.map(|x| build_condition(graph, x, best_ops, into)),
+                ),
+                Condition::Or(conds) => Condition::Or(
+                    conds.map(|x| build_condition(graph, x, best_ops, into)),
+                ),
+                Condition::Not(x) => {
+                    Condition::Not(build_condition(graph, x, best_ops, into))
+                }
+            };
+
+            into.dag.conditions.push(mapped)
+        }
+
+        fn build_operand(
+            graph: &EquivalencyGraph,
+            class: ClassId,
+            best_ops: &AHashMap<ClassId, (usize, Operand)>,
+            into: &mut Expr,
+        ) -> Operand {
+            let op = best_ops[&class].1;
+            let fetched = graph.fetch(op);
+            let mapped = match fetched {
+                Operand::Leaf(l) => Operand::Leaf(l.clone()),
+                Operand::Matrix(m) => Operand::Matrix(
+                    m.map(|el| build_operand(graph, *el, best_ops, into)),
+                ),
+                Operand::Operation(o) => Operand::Operation(o.map_with(
+                    into,
+                    |into, o| build_operand(graph, *o, best_ops, into),
+                    |into, c| build_condition(graph, *c, best_ops, into),
+                )),
+                Operand::Wildcard(_) => unreachable!(),
+            };
+            into.push(mapped)
+        }
+
+        let root_id = build_operand(
+            self,
+            self.dag.root.expect("Cant go far without a root"),
+            &best_ops,
+            &mut expr,
+        );
+        expr.set_root(root_id);
+
+        expr
     }
 
     pub(crate) fn new(expr: &Expr) -> Self {
@@ -771,9 +888,9 @@ impl FetchedOperand<'_> {
     fn cost(&self) -> usize {
         match self {
             Operand::Leaf(leaf) => match leaf {
-                Leaf::Symbol(symbol) => 1,
-                Leaf::Constant(constant) => 1,
-                Leaf::Quantity(quantity) => 1,
+                Leaf::Symbol(_symbol) => 1,
+                Leaf::Constant(_constant) => 1,
+                Leaf::Quantity(_quantity) => 1,
             },
             Operand::Operation(op) => match op {
                 Operation::Add(_)

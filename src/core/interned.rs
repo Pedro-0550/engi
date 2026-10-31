@@ -1,24 +1,19 @@
 use std::{
-    collections::HashMap,
     fmt::Debug,
     hash::Hash,
     marker::PhantomData,
-    ops::Deref,
     sync::{
-        self, LazyLock, RwLock, RwLockReadGuard,
-        atomic::{Atomic, AtomicUsize, Ordering},
+        LazyLock,
+        atomic::{Atomic, Ordering},
     },
 };
 
 use dashmap::{
     DashMap,
-    mapref::{
-        multiple::RefMulti,
-        one::{Ref, RefMut},
-    },
+    mapref::one::{Ref, RefMut},
 };
 
-use crate::{core::index::Size, expr::dag};
+use crate::core::index::Size;
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
@@ -86,7 +81,7 @@ where
     pub fn modify(
         &self,
         id: Handle<T>,
-        f: impl FnOnce(RefMut<'_, Handle<T>, T>) -> (),
+        f: impl FnOnce(RefMut<'_, Handle<T>, T>),
     ) {
         self.handle_to_element.get_mut(&id).map(f);
     }

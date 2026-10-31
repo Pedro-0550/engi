@@ -63,7 +63,7 @@ constants! {
     // TODO: add more useful constants
 }
 
-#[derive(Hash, Debug, Copy)]
+#[derive(Hash, Debug, Copy, Clone)]
 pub struct Constant {
     name: &'static str,
     value: fn() -> Quantity,
@@ -85,11 +85,11 @@ impl Constant {
     }
 }
 
-impl Clone for Constant {
-    fn clone(&self) -> Self {
-        Self { name: self.name, value: self.value.clone() }
-    }
-}
+// impl Clone for Constant {
+//     fn clone(&self) -> Self {
+//         Self { name: self.name, value: self.value.clone() }
+//     }
+// }
 
 impl Eq for Constant {}
 

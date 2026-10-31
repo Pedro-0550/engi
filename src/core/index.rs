@@ -1,11 +1,7 @@
 use std::{
     marker::PhantomData,
-    ops::{self, Deref, DerefMut, Index, IndexMut},
+    ops::{Index, IndexMut},
 };
-
-use derive_more::{From, Into};
-
-use crate::expr::dag;
 
 #[cfg(feature = "large_exprs")]
 pub type Size = usize;

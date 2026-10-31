@@ -1,44 +1,32 @@
 use core::panic;
 use std::{
-    any::{Any, TypeId},
-    cell::{Cell, OnceCell, Ref, RefCell, RefMut},
-    collections::{HashMap, HashSet},
+    cell::{Ref, RefCell},
+    collections::HashSet,
     fmt::Debug,
     hash::Hash,
-    marker::PhantomData,
     mem,
-    rc::Rc,
-    sync::{
-        Arc, RwLock,
-        atomic::{AtomicUsize, Ordering},
-    },
 };
 
 use ahash::{AHashMap, AHashSet};
-use derive_more::From;
-use engi_macros::{relation, relations};
-use itertools::{Either, Itertools};
-use num::complex::Complex;
+use engi_macros::relation;
+use itertools::Itertools;
 use petgraph::{
     algo::{maximum_matching, tarjan_scc},
-    graph::{DiGraph, UnGraph},
     graphmap::{DiGraphMap, UnGraphMap},
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
     self as engi,
-    core::{index::Indexed, value::Value},
-    expr::{self, Expr},
+    core::index::Indexed,
+    expr::Expr,
     id,
     model::{
         eq::{Constraint, Equation},
         solve::Solver,
     },
-    simplify::ClassId,
-    symbol::{self, Symbol},
-    symbols,
-    units::{Dimensioned, Quantity, Unit, si::Hz},
+    symbol::Symbol,
+    units::Quantity,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
