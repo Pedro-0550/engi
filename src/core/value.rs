@@ -6,16 +6,14 @@ use std::{
 };
 
 use derive_more::IsVariant;
-use faer::{
-    Mat, Scale, linalg::solvers::DenseSolveCore,
-};
-use float_eq::{FloatEq, float_eq};
+// use faer::{Mat, Scale, linalg::solvers::DenseSolveCore};
+// use float_eq::{FloatEq, float_eq};
 use num::{
     Complex, Float,
     complex::{Complex64, ComplexFloat, c64},
 };
-use ordered_float::OrderedFloat;
 
+// use ordered_float::OrderedFloat;
 use crate::{
     core::{
         index::Size,
@@ -27,8 +25,10 @@ use crate::{
     },
 };
 
-pub const EQ_ABS_TOL: f64 = 1e-14;
+pub const EQ_REL_TOL: f64 = 1e-12;
+// pub const ZERO_ABS_TOL: f64 = 1e-24;
 
+// TODO: fixed numbers
 /* --------------------------------- TRAITS --------------------------------- */
 
 pub trait ComplexExt
@@ -153,44 +153,9 @@ impl Value {
         match self {
             Value::Set(_set) => todo!(),
             Value::Matrix(_mat) => todo!(),
-            Value::Scalar(complex) => Domain::new(
-                match complex.re {
-                    re if re < -EQ_ABS_TOL => {
-                        if re.round().eq_abs(&re, &EQ_ABS_TOL) {
-                            Interval::Z_NP
-                        } else {
-                            Interval::R_NP
-                        }
-                    }
-                    re if re.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::ZERO,
-                    re if re > EQ_ABS_TOL => {
-                        if re.round().eq_abs(&re, &EQ_ABS_TOL) {
-                            Interval::Z_NN
-                        } else {
-                            Interval::R_NN
-                        }
-                    }
-                    _ => unreachable!(),
-                },
-                match complex.im {
-                    im if im < -EQ_ABS_TOL => {
-                        if im.round().eq_abs(&im, &EQ_ABS_TOL) {
-                            Interval::Z_NP
-                        } else {
-                            Interval::R_NP
-                        }
-                    }
-                    im if im.eq_abs(&0.0, &EQ_ABS_TOL) => Interval::ZERO,
-                    im if im > EQ_ABS_TOL => {
-                        if im.round().eq_abs(&im, &EQ_ABS_TOL) {
-                            Interval::Z_NN
-                        } else {
-                            Interval::R_NN
-                        }
-                    }
-                    _ => unreachable!(),
-                },
-            ),
+            Value::Scalar(Complex { re, im }) => {
+                Domain::new(Interval::singleton(*re), Interval::singleton(*im))
+            }
         }
     }
 
@@ -233,13 +198,13 @@ impl Value {
             Value::Set(_set) => todo!(),
             Value::Matrix(mat) => mat.row_iter().all(|r| {
                 r.iter().all(|el| {
-                    el.re.eq_abs(&0.0, &EQ_ABS_TOL)
-                        && el.im.eq_abs(&0.0, &EQ_ABS_TOL)
+                    el.re.eq_rel(&0.0, &EQ_REL_TOL)
+                        && el.im.eq_rel(&0.0, &EQ_REL_TOL)
                 })
             }),
             Value::Scalar(complex) => {
-                complex.re.eq_abs(&0.0, &EQ_ABS_TOL)
-                    && complex.im.eq_abs(&0.0, &EQ_ABS_TOL)
+                complex.re.eq_rel(&0.0, &EQ_REL_TOL)
+                    && complex.im.eq_rel(&0.0, &EQ_REL_TOL)
             }
         }
     }
@@ -351,17 +316,17 @@ impl Value {
 
 impl ComplexExt for Complex64 {
     fn is_integer(&self) -> bool {
-        self.im.abs() <= EQ_ABS_TOL
+        self.im.eq_rel(&0.0, &EQ_REL_TOL)
             && self.re.is_finite()
-            && self.re.eq_abs(&self.re.round(), &EQ_ABS_TOL)
+            && self.re.eq_rel(&self.re.round(), &EQ_REL_TOL)
     }
 
     fn is_real(&self) -> bool {
-        float_eq!(self.im, 0.0, abs <= EQ_ABS_TOL)
+        self.im.eq_rel(&0.0, &EQ_REL_TOL)
     }
 
     fn is_imag(&self) -> bool {
-        self.im.abs() > EQ_ABS_TOL && self.re.abs() <= EQ_ABS_TOL
+        self.im.ne_rel(&0.0, &EQ_REL_TOL) && self.re.eq_rel(&0.0, &EQ_REL_TOL)
     }
 
     fn as_integer(&self) -> Option<i64> {
@@ -378,8 +343,8 @@ impl ComplexExt for Complex64 {
 
     fn eq_approx(&self, other: impl Into<Complex64>) -> bool {
         let other = other.into();
-        float_eq!(self.re, other.re, abs <= EQ_ABS_TOL)
-            && float_eq!(self.im, other.im, abs <= EQ_ABS_TOL)
+        self.re.eq_rel(&other.re, &EQ_REL_TOL)
+            && self.im.eq_rel(&other.im, &EQ_REL_TOL)
     }
 }
 
@@ -582,28 +547,28 @@ pub fn mat_ln(_mat: &Mat<Complex64>) -> Mat<Complex64> {
     todo!()
 }
 
-pub fn gcd_f64(mut a: f64, mut b: f64) -> f64 {
-    a = a.abs();
-    b = b.abs();
+// pub fn gcd_f64(mut a: f64, mut b: f64) -> f64 {
+//     a = a.abs();
+//     b = b.abs();
 
-    if a <= EQ_ABS_TOL {
-        return b;
-    }
+//     if a.eq_rel(&0.0, &EQ_REL_TOL) {
+//         return b;
+//     }
 
-    if b <= EQ_ABS_TOL {
-        return a;
-    }
+//     if a.eq_rel(&0.0, &EQ_REL_TOL) {
+//         return a;
+//     }
 
-    while b >= EQ_ABS_TOL {
-        let r = a % b;
+//     while b >= EQ_ABS_TOL {
+//         let r = a % b;
 
-        if r.abs() < EQ_ABS_TOL {
-            return b;
-        }
+//         if r.abs() < EQ_ABS_TOL {
+//             return b;
+//         }
 
-        a = b;
-        b = r.abs();
-    }
+//         a = b;
+//         b = r.abs();
+//     }
 
-    a
-}
+//     a
+// }

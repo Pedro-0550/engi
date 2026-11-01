@@ -32,6 +32,9 @@ pub struct NloptSolver {
     algo: Algorithm,
 }
 
+// /// Solves 1-variable blocks symbolically, by manipulating equations algebraically, obtaining exact solutions
+// pub struct SymbolicSolver;
+
 /* ---------------------------------- IMPLS --------------------------------- */
 
 impl NloptSolver {
@@ -92,13 +95,10 @@ impl Solver for NloptSolver {
             .fold(Expr::from(0.0), |acc, resid| acc + resid.pow(2))
             .simplified();
 
-        println!("OBJ -> {}\n\n", objective);
-
         let gradient: Vec<_> = symbols
             .par_iter()
             .map(|s| {
                 let d = objective.diff(*s);
-                println!("GRAD -> {}\n\n", d);
                 Realized::from_real(objective.diff(*s)).compile()
             })
             .collect();
@@ -108,8 +108,6 @@ impl Solver for NloptSolver {
             self.algo,
             symbols.len(),
             |x, grad, _| {
-                println!("iter x = [{}]", x.iter().join(", "));
-
                 let bindings = symbols
                     .iter()
                     .enumerate()
@@ -126,18 +124,14 @@ impl Solver for NloptSolver {
                 let f =
                     objective.eval_realized(&bindings).as_scalar().unwrap().re;
 
-                println!("iter f = {}", f);
-                println!();
-
                 f
             },
             Target::Minimize,
             (),
         );
 
-        optimizer.set_ftol_rel(1e-12).unwrap();
-        optimizer.set_xtol_rel(1e-12).unwrap();
-
+        optimizer.set_ftol_rel(1e-18).unwrap();
+        optimizer.set_xtol_rel(1e-18).unwrap();
         let mut x = vec![1.0; symbols.len()];
 
         match optimizer.optimize(&mut x) {
@@ -150,13 +144,14 @@ impl Solver for NloptSolver {
         Ok(x.into_iter()
             .enumerate()
             .map(|(i, v)| {
-                let var = Variable(symbols[i]);
+                let sym = symbols[i];
+                let primary = sym.as_primary().unwrap();
                 let scale = guesses
-                    .get(&var)
+                    .get(&Variable(primary))
                     .and_then(|x| x.as_scalar().copied())
                     .unwrap_or(Complex::ONE);
 
-                match var.0.realization() {
+                match sym.realization() {
                     Realization::Real(pri) => {
                         (Variable(pri), (scale.re * v).into())
                     }
@@ -169,3 +164,21 @@ impl Solver for NloptSolver {
             .collect_vec())
     }
 }
+
+// impl Solver for SymbolicSolver {
+//     type Error = ();
+
+//     fn solve(
+//         &self,
+//         residuals: Vec<Expr>,
+//         guesses: &AHashMap<Variable, Value>,
+//     ) -> Result<Vec<(Variable, Value)>, Self::Error> {
+//         assert_eq!(
+//             residuals.len(),
+//             1,
+//             "SymbolicSolver can only solve 1-equation blocks",
+//         );
+//         let lhs = residuals.pop();
+//         let rhs = Expr::from(0);
+//     }
+// }

@@ -8,7 +8,7 @@ use ordered_float::Pow;
 
 use super::dag::Leaf;
 use crate::{
-    core::value::EQ_ABS_TOL,
+    core::value::EQ_REL_TOL,
     expr::{
         Expr, FoldedOperand, Operand,
         dag::Operation,
@@ -271,15 +271,15 @@ impl Interval {
     }
 
     pub fn singleton(val: f64) -> Self {
-        let universe = if val.round().eq_abs(&val, &EQ_ABS_TOL) {
+        let universe = if val.round().eq_rel(&val, &EQ_REL_TOL) {
             Universe::Integer
         } else {
             Universe::Real
         };
 
-        if val.eq_abs(&0.0, &EQ_ABS_TOL) {
+        if val.eq_rel(&0.0, &EQ_REL_TOL) {
             Interval::ZERO
-        } else if val > EQ_ABS_TOL {
+        } else if val > 0.0 {
             Interval {
                 from: Edge::Open(Endpoint::Zero),
                 to: Edge::Open(Endpoint::Pos),
@@ -801,25 +801,41 @@ impl Expr {
 
                             let (p, q) = ln_z(*arg_re, *arg_im);
 
-                            if try { *old.as_leaf()?.as_constant()? == e }
-                                .unwrap_or(false)
-                            {
-                                (p, q)
-                            } else {
-                                let (r, s) = ln_z(*base_re, *base_im);
-                                let den =
-                                    ctx.add(ctx.pow(r, two), ctx.pow(s, two));
+                            match old.as_operation() {
+                                Some(Operation::Log { base, arg })
+                                    if try {
+                                        *self
+                                            .fetch(*base)
+                                            .as_leaf()?
+                                            .as_constant()?
+                                            == e
+                                    }
+                                    .unwrap_or(false) =>
+                                {
+                                    (p, q)
+                                }
+                                _ => {
+                                    let (r, s) = ln_z(*base_re, *base_im);
+                                    let den = ctx
+                                        .add(ctx.pow(r, two), ctx.pow(s, two));
 
-                                (
-                                    ctx.div(
-                                        ctx.add(ctx.mul(p, r), ctx.mul(q, s)),
-                                        den,
-                                    ),
-                                    ctx.div(
-                                        ctx.sub(ctx.mul(q, r), ctx.mul(p, s)),
-                                        den,
-                                    ),
-                                )
+                                    (
+                                        ctx.div(
+                                            ctx.add(
+                                                ctx.mul(p, r),
+                                                ctx.mul(q, s),
+                                            ),
+                                            den,
+                                        ),
+                                        ctx.div(
+                                            ctx.sub(
+                                                ctx.mul(q, r),
+                                                ctx.mul(p, s),
+                                            ),
+                                            den,
+                                        ),
+                                    )
+                                }
                             }
                         }
                         Operation::Atan2 { x: _, y: _ } => todo!(),

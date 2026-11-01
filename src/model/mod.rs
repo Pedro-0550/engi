@@ -15,10 +15,11 @@ use petgraph::{
     graphmap::{DiGraphMap, UnGraphMap},
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use tabled::Table;
 
 use crate::{
     self as engi,
-    core::index::Indexed,
+    core::{index::Indexed, value::Value},
     expr::Expr,
     id,
     model::{
@@ -71,13 +72,23 @@ pub trait Interface {
 
 pub trait ModelSolution {
     fn disassemble(assembled: AssembledModelSolution) -> Self;
+    fn table(&self) -> Table;
+    fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>);
 }
 
 pub trait InterfaceSolution {
     fn disassemble(assembled: AssembledInterfaceSolution) -> Self;
+    fn collect_sections(
+        &self,
+        into: &mut Vec<(String, Vec<[String; 3]>)>,
+        name: String,
+    );
 }
 
-pub trait ModelBuilder {}
+pub trait ModelBuilder {
+    type Builds: Model;
+    fn path(&self) -> &ModelPath;
+}
 
 pub trait Model: Relations + Clone {
     type Solution: ModelSolution;
@@ -114,14 +125,15 @@ pub struct AssembledModel {
     pub submodels: Vec<AssembledModel>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct AssembledModelSolution {
+    pub name: String,
     pub variables: Vec<Quantity>,
     pub interfaces: Vec<AssembledInterfaceSolution>,
     pub submodels: Vec<AssembledModelSolution>,
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub struct AssembledInterfaceSolution {
     pub connectors: Vec<Quantity>,
 }
@@ -172,7 +184,7 @@ pub struct CompiledSystem {
 }
 
 pub struct SolvedSystem {
-    solutions: Vec<AssembledModelSolution>,
+    models: Vec<AssembledModelSolution>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -356,6 +368,64 @@ impl ModelPath {
     }
 }
 
+impl AssembledInterface {
+    fn solution(
+        self,
+        knowns: &AHashMap<Variable, Value>,
+    ) -> AssembledInterfaceSolution {
+        let mut sol = AssembledInterfaceSolution::default();
+
+        for conn in self.connectors {
+            sol.connectors
+                .push(knowns[&conn.variable].clone() * conn.variable.0.unit());
+        }
+
+        sol
+    }
+}
+
+impl AssembledModel {
+    fn solution(
+        self,
+        knowns: &AHashMap<Variable, Value>,
+    ) -> AssembledModelSolution {
+        let mut sol = AssembledModelSolution::default();
+
+        for var in self.variables {
+            sol.variables.push(knowns[&var].clone() * var.0.unit());
+        }
+
+        for interface in self.interfaces {
+            sol.interfaces.push(interface.solution(knowns));
+        }
+
+        for submodel in self.submodels {
+            sol.submodels.push(submodel.solution(knowns));
+        }
+        sol.name = self.name;
+
+        sol
+    }
+}
+
+impl SolvedSystem {
+    fn get<'s, B: ModelBuilder>(
+        &self,
+        builder: B,
+    ) -> <B::Builds as Model>::Solution {
+        let mut current = &self.models;
+        let path = builder.path();
+        let mut iter = path.0.iter();
+
+        for component in iter.by_ref().take(path.0.len() - 1) {
+            current = &current[*component].submodels;
+        }
+
+        let sol = &current[*iter.next().unwrap()];
+        <B::Builds as Model>::Solution::disassemble(sol.clone())
+    }
+}
+
 impl System {
     pub fn new() -> Self {
         Self::default()
@@ -509,8 +579,6 @@ impl System {
 
                 resid = resid.simplified();
 
-                println!("{}", resid);
-
                 if try { resid.as_single()?.as_leaf()?.as_quantity()? }
                     .is_some_and(|x| x.value() == 0)
                 {
@@ -599,7 +667,7 @@ impl System {
         }
     }
 
-    pub fn solve(self, solver: impl Solver) -> AssembledModelSolution {
+    pub fn solve(&self, solver: impl Solver) -> SolvedSystem {
         let mut knowns = AHashMap::new();
         let mut guesses = AHashMap::new();
 
@@ -650,7 +718,8 @@ impl System {
             }
         }
 
-        let compiled = self.compile();
+        let models = self.models.clone().into_inner();
+        let compiled = self.clone().compile();
 
         for mut block in compiled.blocks.into_iter().rev() {
             let bindings = knowns
@@ -664,19 +733,17 @@ impl System {
                 }
             }
 
-            println!(
-                "solving [{}]",
-                block.iter().map(|x| x.to_string()).join(",\n   ")
-            );
-
             let solution = solver.solve(block, &guesses).unwrap();
             knowns.extend(solution);
         }
 
-        for (Variable(sym), val) in knowns {
-            println!("{sym} -> {:.3e}", val.as_scalar().unwrap());
+        let mut solved = SolvedSystem { models: Vec::new() };
+
+        for model in models {
+            solved.models.push(model.solution(&knowns));
         }
-        todo!()
+
+        solved
     }
 }
 
@@ -691,7 +758,7 @@ mod test {
         expr::{exp, real},
         model::{
             Condition, Connector, InterfaceArrayExt, InterfaceBuilder, Model,
-            Relations, System, Variable,
+            ModelSolution, Relations, System, Variable,
             eq::{Constraint, Equation},
             solve::NloptSolver,
         },
@@ -711,6 +778,8 @@ mod test {
     /* -------------------------------------------------------------------------- */
     #[derive(Model, Clone)]
     pub struct ElectricalPort {
+        name: String,
+
         #[interface]
         p: ElectricalPin,
 
@@ -726,7 +795,7 @@ mod test {
 
     impl Relations for ElectricalPort {
         fn equations(&self) -> Vec<Equation> {
-            let ElectricalPort { p, n, v, i } = self;
+            let ElectricalPort { p, n, v, i, .. } = self;
 
             relations! {
                 p.i + n.i = 0;
@@ -748,6 +817,8 @@ mod test {
     /* -------------------------------------------------------------------------- */
     #[derive(Model, Clone)]
     pub struct JunctionThermal {
+        name: String,
+
         #[var(unit = K, desc = "Ambient temperature")]
         t_a: Variable,
 
@@ -766,7 +837,7 @@ mod test {
 
     impl Relations for JunctionThermal {
         fn equations(&self) -> Vec<Equation> {
-            let JunctionThermal { t_a, t_c, rθ_jc, rθ_ca, port } = self;
+            let JunctionThermal { t_a, t_c, rθ_jc, rθ_ca, port, .. } = self;
 
             relations! [
                 port.t - t_c = rθ_jc * port.p;
@@ -778,6 +849,8 @@ mod test {
     /* -------------------------------------------------------------------------- */
     #[derive(Model, Clone)]
     pub struct StaticBjt {
+        name: String,
+
         #[var(unit = A, desc = "Reverse saturation current")]
         i_s: Variable,
 
@@ -825,6 +898,7 @@ mod test {
                 c,
                 e,
                 thermal,
+                ..
             } = self;
 
             relations! {
@@ -845,6 +919,8 @@ mod test {
     /* -------------------------------------------------------------------------- */
     #[derive(Model, Clone)]
     pub struct Impedance {
+        name: String,
+
         #[var(unit = Ω, desc = "Complex impedance")]
         z: Variable,
         #[model]
@@ -855,7 +931,7 @@ mod test {
 
     impl Relations for Impedance {
         fn equations(&self) -> Vec<Equation> {
-            let Impedance { z, port } = self;
+            let Impedance { z, port, .. } = self;
             relations! {
                 port.v = port.i * z;
                 // thermal.p = real(port.v * port.i)
@@ -873,13 +949,15 @@ mod test {
     /* -------------------------------------------------------------------------- */
     #[derive(Model, Clone)]
     pub struct Ground {
+        name: String,
+
         #[interface]
         pin: ElectricalPin,
     }
 
     impl Relations for Ground {
         fn equations(&self) -> Vec<Equation> {
-            let Ground { pin } = self;
+            let Ground { pin, .. } = self;
             relations! {
                 pin.v = 0;
             }
@@ -889,6 +967,8 @@ mod test {
     /* -------------------------------------------------------------------------- */
     #[derive(Model, Clone)]
     pub struct IdealSupply {
+        name: String,
+
         #[var(unit = V, desc = "Supply output voltage")]
         v: Variable,
         #[model]
@@ -897,7 +977,7 @@ mod test {
 
     impl Relations for IdealSupply {
         fn equations(&self) -> Vec<Equation> {
-            let IdealSupply { out, v } = self;
+            let IdealSupply { out, v, .. } = self;
             relations! {
                 out.v = v;
             }
@@ -937,9 +1017,9 @@ mod test {
         v_c.v.bind(12 * V);
 
         r_c.z.bind(10e3 * Ω);
-        q1.v_ce.bind(6 * V);
-        q1.v_be.guess(0.4 * V);
-        q1.v_t.guess(25e-3 * V);
+        r_c.port.n.v.bind(6 * V);
+        q1.v_be.guess(0.6 * V);
+        q1.v_t.guess(26e-3 * V);
         q1.β_f.bind(100);
         q1.β_r.bind(10);
         q1.i_s.bind(100e-9 * A);
@@ -948,12 +1028,12 @@ mod test {
         q1_thermal.rθ_jc.bind(10 * K / W);
         q1_thermal.rθ_ca.bind(20 * K / W);
         q1_thermal.t_a.bind(300 * K);
-        q1_thermal.t_c.guess(350 * K);
-        q1.thermal.t.guess(360 * K);
+        q1_thermal.t_c.guess(300 * K);
+        q1.thermal.t.guess(300 * K);
+        q1.thermal.p.guess(1e-3 * W);
 
-        let solution = system
-            .solve(NloptSolver::new(nlopt::Algorithm::TNewtonPrecondRestart));
-        // panic!("{:#?}", compiled)
-        // println!("{}", solution.get(bjt))
+        let solution =
+            system.solve(NloptSolver::new(nlopt::Algorithm::TNewtonPrecond));
+        println!("{}", solution.get(q1).table());
     }
 }

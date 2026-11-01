@@ -64,8 +64,18 @@ pub fn model(input: TokenStream) -> TokenStream {
     let (mut vars, mut submodels, mut interfaces) =
         (Vec::new(), Vec::new(), Vec::new());
 
+    let mut has_name = false;
+
     for field in &fields {
         let mut attrs = HashMap::new();
+        if field.ident.as_ref().unwrap().to_string() == "name" {
+            if field.ty.to_token_stream().to_string().ends_with("String") {
+                has_name = true;
+                continue;
+            } else {
+                panic!("`name` field must be String")
+            }
+        }
 
         for ident in ["var", "interface", "model"] {
             let Ok(attr) = field
@@ -123,6 +133,10 @@ pub fn model(input: TokenStream) -> TokenStream {
             }
             _ => (),
         }
+    }
+
+    if !has_name {
+        panic!("Model struct must have a `name: String` field")
     }
 
     /* -------------------------------------------------------------------------- */
@@ -226,16 +240,24 @@ pub fn model(input: TokenStream) -> TokenStream {
 
     quote! {
         #vis struct #builder_ident<'s> {
+            path: engi::model::ModelPath,
             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Builder<'s>,)*
             #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Builder<'s>,)*
             #(#variable_vis #variable_idents: engi::model::VariableBuilder<'s>,)*
         }
 
-        impl<'s> engi::model::ModelBuilder for #builder_ident<'s> {}
+        impl<'s> engi::model::ModelBuilder for #builder_ident<'s> {
+            type Builds = #ident;
+
+            fn path(&self) -> &engi::model::ModelPath {
+                &self.path
+            }
+        }
 
         /* -------------------------------------------------------------------------- */
 
         #vis struct #solution_ident {
+            name: String,
             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Solution,)*
             #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Solution,)*
             #(#variable_vis #variable_idents: engi::units::Quantity,)*
@@ -249,10 +271,85 @@ pub fn model(input: TokenStream) -> TokenStream {
                 let mut variable_iter = assembled.variables.into_iter();
 
                 Self {
+                    name: assembled.name,
                     #(#submodel_idents: <#submodel_tys as Model>::Solution::disassemble(submodel_iter.next().unwrap()),)*
                     #(#interface_idents: <#interface_tys as Interface>::Solution::disassemble(interface_iter.next().unwrap()),)*
                     #(#variable_idents: variable_iter.next().unwrap(),)*
                 }
+            }
+
+            fn table(&self) -> engi::tabled::Table {
+                use engi::tabled::settings::{
+                    Alignment, Modify, Highlight, Style, Theme,
+                    object::Rows,
+                };
+                use engi::tabled::grid::config::HorizontalLine;
+
+                let mut builder = engi::tabled::builder::Builder::new();
+                let mut sections = Vec::new();
+                let mut header_rows = Vec::new();
+
+                self.collect_sections(&mut sections);
+                builder.push_record(["Variable", "Value", "Unit"]);
+
+                let mut row_idx = 1;
+
+                for (name, rows) in sections {
+                    header_rows.push(row_idx);
+
+                    builder.push_record([name.clone(), name.clone(), name]);
+                    row_idx += 1;
+
+                    for row in rows {
+                        builder.push_record(row);
+                        row_idx += 1;
+                    }
+                }
+
+                let mut table = builder.build();
+
+                table.with(engi::tabled::settings::Merge::horizontal());
+
+                for &row in &header_rows {
+                    table.with(
+                        Modify::new(Rows::one(row))
+                            .with(Alignment::center()),
+                    );
+                    table.with(
+                            Highlight::new(Rows::one(row))
+                        );
+
+                }
+
+                let mut theme = Theme::from_style(Style::rounded());
+
+                for &row in &header_rows {
+                    theme.insert_horizontal_line(
+                        row,
+                        HorizontalLine::full('─', '┼', '├', '┤'),
+                    );
+                    theme.insert_horizontal_line(
+                        row + 1,
+                        HorizontalLine::full('─', '┼', '├', '┤'),
+                    );
+                }
+
+                table.with(theme);
+
+                table
+            }
+
+            fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>) {
+                use engi::model::{ModelSolution, InterfaceSolution};
+
+                let vars = vec![
+                    #([stringify!(#variable_idents).to_owned(), self.#variable_idents.value().to_string(), self.#variable_idents.unit().to_string()],)*
+                ];
+
+                into.push((self.name.clone(), vars));
+
+                #(self.#submodel_idents.collect_sections(into);)*
+                #(self.#interface_idents.collect_sections(into, format!("{}.{}", self.name, stringify!(#interface_idents)));)*
             }
         }
 
@@ -264,6 +361,7 @@ pub fn model(input: TokenStream) -> TokenStream {
 
             fn new(name: &str) -> Self {
                 Self {
+                    name: name.to_owned(),
                     #(#constructor,)*
                 }
             }
@@ -272,6 +370,7 @@ pub fn model(input: TokenStream) -> TokenStream {
                 use engi::model::*;
 
                 #builder_ident {
+                    path: path.clone(),
                     #(#variable_idents: VariableBuilder::new(
                         VariableId::new(path.clone(), #variable_idxs),
                         system
@@ -291,12 +390,12 @@ pub fn model(input: TokenStream) -> TokenStream {
                 use engi::model::{Interface, Model};
 
                 engi::model::AssembledModel {
-                    name: "todo".to_owned(),
                     equations: self.equations(),
                     constraints: self.constraints(),
                     variables: vec![#(self.#variable_idents,)*],
                     interfaces: vec![#(self.#interface_idents.assemble(),)*],
-                    submodels: vec![#(self.#submodel_idents.assemble(),)*]
+                    submodels: vec![#(self.#submodel_idents.assemble(),)*],
+                    name: self.name,
                 }
             }
         }
@@ -434,6 +533,14 @@ pub fn interface(input: TokenStream) -> TokenStream {
                 Self {
                     #(#connector_idents: iter.next().unwrap(),)*
                 }
+            }
+
+            fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>, name: String) {
+                let conns = vec![
+                    #([stringify!(#connector_idents).to_owned(), self.#connector_idents.value().to_string(), self.#connector_idents.unit().to_string()],)*
+                ];
+
+                into.push((name, conns));
             }
         }
 

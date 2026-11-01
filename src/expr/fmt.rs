@@ -240,7 +240,13 @@ impl Display for Expr {
                     Operation::Real(x) => impl_unary_fmt!(f, x, expr, real),
                     Operation::Imag(x) => impl_unary_fmt!(f, x, expr, imag),
                     Operation::Sign(x) => impl_unary_fmt!(f, x, expr, sign),
-                    Operation::Atan2 { x, y } => todo!(),
+                    Operation::Atan2 { x, y } => {
+                        write!(f, "atan2(")?;
+                        fmt_inner(expr, *x, f)?;
+                        write!(f, ", ")?;
+                        fmt_inner(expr, *y, f)?;
+                        write!(f, ")")
+                    }
                     Operation::Norm(x) => {
                         write!(f, "|")?;
                         fmt_inner(expr, *x, f)?;

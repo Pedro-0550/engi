@@ -10,12 +10,15 @@
 #![feature(option_zip)]
 #![warn(unused_crate_dependencies)]
 
+pub use tabled;
+
+pub mod math;
 pub mod core {
     pub mod consed;
     pub mod index;
     pub mod interned;
     pub mod util;
-    pub mod value;
+    // pub mod value;
 }
 
 pub mod diff;
