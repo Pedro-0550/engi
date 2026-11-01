@@ -4,9 +4,10 @@ use std::{
     collections::HashSet,
     hash::Hash,
     mem::{self, variant_count},
+    ops::Index,
 };
 
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use itertools::Itertools;
 use kinded::Kinded;
 use num::{Zero, complex::ComplexFloat, pow::Pow as _};
@@ -17,16 +18,18 @@ use crate::{
         index::{Indexed, Size},
     },
     expr::{
-        Expr, FoldedOperand, Operand,
+        Expr, FoldedOperand, Operand, OperandKind,
         dag::{
-            Condition, ConditionId, Dag, Leaf, LeafKind, Matrix, Operation,
-            OperationKind,
+            Condition, ConditionId, Dag, Leaf, LeafId, LeafKind, Matrix,
+            Operation, OperationKind,
         },
         domain::Domain,
         shape::Shape,
     },
     id,
-    simplify::pattern::{Machine, Rule, WILDCARD_COUNT, Wildcard},
+    simplify::pattern::{
+        Machine, Pattern, Program, Rule, WILDCARD_COUNT, Wildcard,
+    },
     units::Quantity,
 };
 
@@ -41,7 +44,9 @@ mod test;
 /* --------------------------------- STRUCTS -------------------------------- */
 
 id!(ClassId);
+id!(MatchlistCursor);
 
+#[derive(Hash, PartialEq, Eq, Clone)]
 pub struct Substitution {
     bindings: Indexed<[Option<ClassId>; WILDCARD_COUNT], Wildcard>,
 }
@@ -50,7 +55,7 @@ pub struct Substitution {
 pub struct EquivalencyGraph {
     dag: EquivalencyDag,
     classes: Indexed<Vec<EquivalencyClass>, ClassId>,
-    matchlist: Vec<ClassId>,
+    matchlist: Matchlist,
     updatelist: Vec<ClassId>,
     dirty: bool,
 }
@@ -60,7 +65,7 @@ pub struct EquivalencyClass {
     // even though a hashmap would only need to hash 2 bytes..
     // I guess its done so often that its worth it, at least thats what i got from profiling
     operands_by_kind: [Vec<Operand>; {
-        variant_count::<LeafKind>() + variant_count::<OperationKind>() + 2 // 1 for matrix
+        variant_count::<LeafKind>() + variant_count::<OperationKind>() + 2
     }],
     operands: Vec<Operand>,
     child_of: Vec<ClassId>,
@@ -68,6 +73,12 @@ pub struct EquivalencyClass {
 
     parent: Cell<ClassId>,
     analysis: Analysis,
+}
+
+#[derive(Default)]
+pub struct Matchlist {
+    entries: Vec<ClassId>,
+    offset: Size,
 }
 
 #[derive(Clone)]
@@ -140,37 +151,28 @@ impl Analysis {
     }
 }
 
-impl FetchedOperand<'_> {
-    // fn key(&self) -> usize {
-    //     match self {
-    //         Operand::Leaf(leaf) => leaf.kind() as usize,
-    //         Operand::Operation(op) => {
-    //             op.kind() as usize + (variant_count::<LeafKind>() as usize)
-    //         }
-    //         Operand::Matrix(_) => {
-    //             variant_count::<OperationKind>() as usize
-    //                 + variant_count::<LeafKind>() as usize
-    //         }
-    //         Operand::Wildcard(_) => {
-    //             variant_count::<OperationKind>() as usize
-    //                 + variant_count::<LeafKind>() as usize
-    //                 + 1
-    //         }
-    //     }
-    // }
+impl Matchlist {
+    fn push(&mut self, class: ClassId) {
+        self.entries.push(class);
+    }
+
+    fn compact(&mut self, to: MatchlistCursor) {
+        self.entries.drain(..(to.0 - self.offset) as usize);
+        self.offset = to.0;
+    }
+
+    fn since(&self, start: MatchlistCursor) -> &[ClassId] {
+        &self.entries[(start.0 - self.offset) as usize..]
+    }
+
+    fn end(&self) -> MatchlistCursor {
+        MatchlistCursor(self.offset + self.entries.len() as u16)
+    }
+
+    fn start(&self) -> MatchlistCursor {
+        MatchlistCursor(self.offset)
+    }
 }
-
-// impl PartialEq for EquivalencyExpr {
-//     fn eq(&self, other: &Self) -> bool {
-//         self.key() == other.key()
-//     }
-// }
-
-// impl Hash for EquivalencyExpr {
-//     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-//         state.write_u128(self.key().0);
-//     }
-// }
 
 impl EquivalencyGraph {
     #[inline(always)]
@@ -248,7 +250,7 @@ impl EquivalencyGraph {
             },
         };
 
-        self.matchlist.push(next_id);
+        self.matchlist.entries.push(next_id);
         self.classes.push(class);
 
         if let Some(q) = qty {
@@ -327,122 +329,214 @@ impl EquivalencyGraph {
     }
 
     pub fn rewrite(&mut self, rules: &[Rule]) {
-        const CLASS_LIMIT: usize = 5000;
-        const MATCH_LIMIT: usize = 1000;
-        const PER_RULE_MATCH_LIMIT: usize = 100;
+        /// Ratio between a rule'ss matched and merged classes.
+        /// If its larger than this value in any iteration it will be banned.
+        const MATCH_MERGE_RATIO: usize = 2;
+        /// Minimum number of matches a rule needs to have to qualify for scheduling
+        const MIN_SCHEDULING_MATCHES: usize = 10;
 
-        #[derive(Default, Clone, Copy)]
-        struct Productivity {
-            merged: usize,
-            matched: usize,
-            ban_length: usize = 8,
+        const BASE_BAN: usize = 10;
+
+        const CLASS_LIMIT: usize = 5000;
+        const MATCH_LIMIT: usize = 100;
+
+        struct RuleState<'p> {
+            program: Program,
+            to: &'p Pattern,
+            root_kind: OperandKind,
+
+            cursor: MatchlistCursor,
             banned_for: usize,
+            times_banned: usize,
+            times_exceeded: usize,
+
+            applied: AHashSet<(ClassId, Substitution)>,
+            matched: usize,
+            merged: usize,
         }
 
         // Compile
 
-        let compiled = rules
+        let mut states = rules
             .iter()
-            .map(|r| {
-                (
-                    r.from.root().map(|op| r.from.fetch(op)).unwrap().kind(),
-                    r.from.compile(&r.conds, &mut self.dag),
-                    &r.to,
-                )
+            .map(|r| RuleState {
+                program: r.from.compile(&r.conds, self),
+                to: &r.to,
+                root_kind: r
+                    .from
+                    .root()
+                    .map(|op| r.from.fetch(op))
+                    .unwrap()
+                    .kind(),
+                cursor: self.matchlist.start(),
+                banned_for: 0,
+                times_banned: 0,
+                applied: AHashSet::new(),
+                times_exceeded: 0,
+                matched: 0,
+                merged: 0,
             })
             .collect_vec();
 
-        let mut prod = vec![Productivity::default(); compiled.len()];
-
         loop {
-            let mut matches = Vec::new();
+            let mut grouped_matches = Vec::new();
 
-            let mut pending_match = mem::take(&mut self.matchlist);
+            let mut changed = false;
+            let mut hit_class_limit = false;
 
-            for pending in &mut pending_match {
-                *pending = self.find(*pending);
-            }
+            let end = self.matchlist.end();
 
-            pending_match.sort_unstable();
-            pending_match.dedup();
-
-            // Search
-
-            for (rule_idx, (root_kind, program, to)) in
-                compiled.iter().enumerate()
-            {
-                let prod = &mut prod[rule_idx];
-                if prod.banned_for > 0 {
-                    prod.banned_for -= 1;
+            for (i, state) in states.iter_mut().enumerate() {
+                if state.banned_for > 0 {
+                    state.banned_for -= 1;
                     continue;
                 }
 
-                if prod.matched > 10 && prod.matched > prod.merged * 2 {
-                    prod.banned_for += prod.ban_length;
-                    prod.ban_length *= 3;
-                    prod.merged = 0;
-                    prod.matched = 0;
+                if state.matched > MIN_SCHEDULING_MATCHES
+                    && state.matched > state.merged * MATCH_MERGE_RATIO
+                {
+                    state.banned_for =
+                        BASE_BAN << state.times_banned.min(Size::BITS as usize);
+                    state.times_banned += 1;
+                    state.merged = 0;
+                    state.matched = 0;
                     continue;
                 }
 
-                prod.merged = 0;
-                prod.matched = 0;
+                state.merged = 0;
+                state.matched = 0;
 
-                for class_id in &pending_match {
+                // Search
+
+                let mut work = self
+                    .matchlist
+                    .since(state.cursor)
+                    .iter()
+                    .map(|c| self.find(*c))
+                    .collect_vec();
+                work.sort_unstable();
+                work.dedup();
+
+                let limit = MATCH_LIMIT
+                    << state.times_exceeded.min(Size::BITS as usize);
+                let mut exceeded = false;
+
+                let mut matches = Vec::new();
+
+                'search: for class_id in &work {
                     // why even bother matching if this class dosent contain any nodes of that kind
-                    if self.classes[*class_id].operands_by_kind[root_kind.id()]
-                        .is_empty()
+                    if self.classes[*class_id].operands_by_kind
+                        [state.root_kind.id()]
+                    .is_empty()
                     {
                         continue;
                     }
 
                     let mut subs = Vec::new();
-                    Machine::execute(self, program, *class_id, &mut subs);
+                    Machine::execute(
+                        self,
+                        &state.program,
+                        *class_id,
+                        &mut subs,
+                    );
 
                     for sub in subs {
-                        prod.matched += 1;
-                        if prod.matched >= PER_RULE_MATCH_LIMIT
-                            || matches.len() >= MATCH_LIMIT
-                        {
-                            break;
+                        if state.applied.contains(&(*class_id, sub.clone())) {
+                            continue;
                         }
 
-                        matches.push((rule_idx, *class_id, to, sub));
+                        state.matched += 1;
+
+                        matches.push((*class_id, sub));
+                    }
+
+                    if matches.len() > limit {
+                        exceeded = true;
+                        break 'search;
                     }
                 }
+
+                if exceeded {
+                    state.banned_for =
+                        BASE_BAN << state.times_banned.min(Size::BITS as usize);
+                    state.times_banned += 1;
+                    state.times_exceeded += 1;
+                    state.matched = 0;
+                    continue;
+                }
+
+                grouped_matches.push((i, matches));
             }
 
-            let mut graph_changed = false;
-
             // Apply
-            for (rule_idx, id, to, sub) in matches {
-                let subbed = to.build(self, &sub);
+            'apply: for (i, matches) in grouped_matches {
+                let state = &mut states[i];
+                for (id, sub) in matches {
+                    if self.classes.len() >= CLASS_LIMIT {
+                        hit_class_limit = true;
+                        break 'apply;
+                    }
+                    state.applied.insert((id, sub.clone()));
 
-                if self.union(id, subbed).is_some() {
-                    self.updatelist.push(id);
+                    let subbed = state.to.build(self, &sub);
 
-                    prod[rule_idx].merged += 1;
-                    graph_changed = true;
+                    if self.union(id, subbed).is_some() {
+                        self.updatelist.push(id);
+
+                        state.merged += 1;
+                        changed = true;
+                    }
                 }
+                state.cursor = end
+            }
+
+            // Compact
+            if let Some(min_cursor) = states.iter().map(|x| x.cursor).min() {
+                self.matchlist.compact(min_cursor);
             }
 
             // Rebuild
-            self.rebuild();
-
-            if !graph_changed || self.classes.len() > CLASS_LIMIT {
+            self.rebuild(end);
+            if hit_class_limit {
                 break;
             }
 
-            // println!(
-            //     "tid {:?} -> iter {i}, {} classes, {} exprs",
-            //     thread::current().id(),
-            //     self.classes.len(),
-            //     self.exprs.len()
-            // );
+            // if !changed {
+            //     if discarded {
+            //         for s in &mut states {
+            //             s.banned_for = 0;
+            //             s.matched = 0;
+            //             s.merged = 0;
+            //         }
+            //         continue;
+            //     }
+
+            //     if states.iter().any(|s| s.banned_for > 0) {
+            //         states.iter_mut().for_each(|s| s.banned_for = 0);
+            //         continue;
+            //     }
+            //     if states.iter().all(|s| s.cursor == self.matchlist.end()) {
+            //         break;
+            //     }
+            //     break;
+            // }
+            if !changed {
+                // if skipped {
+                //     for s in &mut states {
+                //         s.banned_for = 0;
+                //         s.matched = 0;
+                //         s.merged = 0; // otherwise the ratio check re-bans immediately
+                //     }
+                //     continue;
+                // }
+                break;
+            }
+
+            // println!("{} classes", self.classes.len(),);
         }
     }
 
-    fn rebuild(&mut self) {
+    fn rebuild(&mut self, since: MatchlistCursor) {
         // let mut updatelist = mem::take(&mut self.updatelist);
 
         loop {
@@ -490,7 +584,8 @@ impl EquivalencyGraph {
 
             // Step 2: dedup merged roots & append qty leaves
             for id in changed {
-                let class = &mut self.classes[id];
+                let parent = self.find(id);
+                let class = &mut self.classes[parent];
 
                 class.operands.sort_unstable();
                 class.operands.dedup();
@@ -507,7 +602,7 @@ impl EquivalencyGraph {
                 if let Some(ref qty) = class.analysis.qty {
                     let qty = qty.clone();
                     let qty_class = self.add(qty.into());
-                    self.union(id, qty_class);
+                    self.union(parent, qty_class);
                 }
             }
 
@@ -515,7 +610,7 @@ impl EquivalencyGraph {
             // in this step we also merge classes if any operations in them canonicalize to the same thing
 
             for i in 0..self.classes.len() {
-                let id = ClassId(i as u16);
+                let id = ClassId(i as Size);
                 let parent = self.find(id);
 
                 if parent != id {
@@ -623,30 +718,26 @@ impl EquivalencyGraph {
         }
 
         //  update matchlist recursively to include parents of changed classes
-        let mut new_matchlist = HashSet::new();
-        fn queue_parents(
-            into: &mut HashSet<ClassId>,
-            of: ClassId,
-            graph: &EquivalencyGraph,
-        ) {
-            let class = &graph.classes[of];
+        let mut touched: Vec<ClassId> =
+            self.matchlist.since(since).iter().map(|c| self.find(*c)).collect();
+        touched.sort_unstable();
+        touched.dedup();
 
-            for parent in &class.child_of {
-                let parent = graph.find(*parent);
-                if into.insert(parent) {
-                    queue_parents(into, parent, graph);
+        let mut seen: HashSet<ClassId> = touched.iter().copied().collect();
+        let mut stack = touched;
+        while let Some(c) = stack.pop() {
+            let parents: Vec<ClassId> = self.classes[c]
+                .child_of
+                .iter()
+                .map(|p| self.find(*p))
+                .collect();
+            for p in parents {
+                if seen.insert(p) {
+                    self.matchlist.push(p);
+                    stack.push(p);
                 }
             }
         }
-
-        for pending in mem::take(&mut self.matchlist) {
-            let pending = self.find(pending);
-            if new_matchlist.insert(pending) {
-                queue_parents(&mut new_matchlist, pending, &*self);
-            }
-        }
-
-        self.matchlist.extend(new_matchlist);
     }
 
     fn find(&self, id: ClassId) -> ClassId {
@@ -684,7 +775,7 @@ impl EquivalencyGraph {
                 };
 
             self.classes[moved].parent.set(kept);
-            self.matchlist.push(kept);
+            self.matchlist.entries.push(kept);
 
             Some(kept)
         } else {
@@ -800,7 +891,7 @@ impl EquivalencyGraph {
             best_ops: &AHashMap<ClassId, (usize, Operand)>,
             into: &mut Expr,
         ) -> Operand {
-            let op = best_ops[&class].1;
+            let op = best_ops[&graph.find(class)].1;
             let fetched = graph.fetch(op);
             let mapped = match fetched {
                 Operand::Leaf(l) => Operand::Leaf(l.clone()),
@@ -846,9 +937,23 @@ impl EquivalencyGraph {
             |graph, _, c| graph.dag.conditions.push(c.map(|o| **o, |c| **c)),
         );
         graph.dag.root = Some(root);
-        graph.rebuild();
+        graph.rebuild(MatchlistCursor(0));
 
         graph
+    }
+
+    fn intern_leaf(&mut self, leaf: &Leaf) -> LeafId {
+        let class = self.add(Operand::Leaf(leaf.clone()));
+        let class = self.find(class);
+
+        self.classes[class]
+            .operands
+            .iter()
+            .find_map(|op| match op {
+                Operand::Leaf(id) if self.dag.leaves[*id] == *leaf => Some(*id),
+                _ => None,
+            })
+            .expect("interned leaf must be in its own class")
     }
 
     fn domain(&self, op: Operand) -> Domain {

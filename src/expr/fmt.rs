@@ -10,12 +10,16 @@ use super::{
     dag::{Leaf, Operation},
 };
 use crate::{
+    core::util::to_superscript,
     expr::{
         Expr, FetchedOperand, OperandKind,
         dag::OperationKind,
         fmt::Joinabability::{Disjoint, DisjointParens, Joinable, Lhs, Rhs},
     },
-    symbol::{Symbol, constants::Constant},
+    symbol::{
+        Symbol,
+        constants::{Constant, e},
+    },
     units::{Quantity, Unit::Unitless},
 };
 
@@ -34,11 +38,11 @@ enum Joinabability {
     /// such as v_be or t_initial or functions like sin(x).
     Disjoint,
     /// This operand can be joined when its on the left-hand side of a multiplication,
-    /// when the right-hand side is Joinable.
+    /// when the right-hand side is Joinable or Rhs.
     /// Unitless numbers are only lhs-joinable, as it is visually pleasing to have 2x but not x2
     Lhs,
     /// This operand can be joined when its on the right-hand side of a multiplication,
-    /// when the left-hand side is Joinable.
+    /// when the left-hand side is Joinable or Lhs.
     /// Pow operations are rhs-joinable if their base is joinable, such that 10·x^y is just 10x^y
     Rhs,
     /// This operand is joinable under any circumstances.
@@ -56,7 +60,7 @@ impl Expr {
                 }
                 Leaf::Quantity(quantity) => {
                     if quantity.unit() == Unitless {
-                        Joinable
+                        Lhs
                     } else {
                         DisjointParens
                     }
@@ -103,7 +107,17 @@ impl Expr {
                     todo!()
                 }
                 Operation::Pow { base, exp } => {
-                    if self.joinability_of(*base) == Joinable {
+                    if try {
+                        self.fetch(*exp)
+                            .as_leaf()?
+                            .as_quantity()?
+                            .value()
+                            .as_scalar_integer()?
+                    }
+                    .is_some()
+                    {
+                        Joinable
+                    } else if self.joinability_of(*base) == Joinable {
                         Rhs
                     } else {
                         Disjoint
@@ -146,7 +160,35 @@ impl Display for Expr {
                         write!(f, " + ")?;
                         fmt_inner(expr, *b, f)
                     }
-                    Operation::Mul(_) => todo!(),
+                    Operation::Mul([a, b]) => {
+                        let join = matches!(
+                            (expr.joinability_of(*a), expr.joinability_of(*b)),
+                            (Lhs, Rhs)
+                                | (Lhs, Joinable)
+                                | (Joinable, Rhs)
+                                | (Joinable, Joinable)
+                        );
+
+                        if expr.joinability_of(*a) == DisjointParens {
+                            write!(f, "(")?;
+                            fmt_inner(expr, *a, f)?;
+                            write!(f, ")")?;
+                        } else {
+                            fmt_inner(expr, *a, f)?;
+                        }
+
+                        if !join {
+                            write!(f, "·")?;
+                        }
+
+                        if expr.joinability_of(*b) == DisjointParens {
+                            write!(f, "(")?;
+                            fmt_inner(expr, *b, f)?;
+                            write!(f, ")")
+                        } else {
+                            fmt_inner(expr, *b, f)
+                        }
+                    }
                     Operation::Min([a, b]) | Operation::Max([a, b]) => {
                         let mut flattened = Vec::new();
 
@@ -197,12 +239,67 @@ impl Display for Expr {
                     Operation::Conj(x) => impl_unary_fmt!(f, x, expr, conj),
                     Operation::Real(x) => impl_unary_fmt!(f, x, expr, real),
                     Operation::Imag(x) => impl_unary_fmt!(f, x, expr, imag),
+                    Operation::Sign(x) => impl_unary_fmt!(f, x, expr, sign),
                     Operation::Atan2 { x, y } => todo!(),
-                    Operation::Norm(_) => todo!(),
-                    Operation::Sign(_) => todo!(),
-                    Operation::Pow { base, exp } => todo!(),
-                    Operation::Log { base, arg } => todo!(),
-                    Operation::Transpose(_) => todo!(),
+                    Operation::Norm(x) => {
+                        write!(f, "|")?;
+                        fmt_inner(expr, *x, f)?;
+                        write!(f, "|")
+                    }
+                    Operation::Pow { base, exp } => {
+                        if let Some(exp) = try {
+                            expr.fetch(*exp)
+                                .as_leaf()?
+                                .as_quantity()?
+                                .value()
+                                .as_scalar_integer()?
+                        } {
+                            if expr.joinability_of(*base) <= Disjoint {
+                                write!(f, "(")?;
+                                fmt_inner(expr, *base, f)?;
+                                write!(f, ")")?;
+                            } else {
+                                fmt_inner(expr, *base, f)?;
+                            }
+
+                            f.write_str(&to_superscript(exp))
+                        } else {
+                            if expr.joinability_of(*base) <= Disjoint {
+                                write!(f, "(")?;
+                                fmt_inner(expr, *base, f)?;
+                                write!(f, ")")?;
+                            } else {
+                                fmt_inner(expr, *base, f)?;
+                            }
+
+                            write!(f, "^")?;
+
+                            if expr.joinability_of(*exp) <= Disjoint {
+                                write!(f, "(")?;
+                                fmt_inner(expr, *exp, f)?;
+                                write!(f, ")")
+                            } else {
+                                fmt_inner(expr, *exp, f)
+                            }
+                        }
+                    }
+                    Operation::Log { base, arg } => {
+                        if try { *expr.fetch(*base).as_leaf()?.as_constant()? }
+                            == Some(e)
+                        {
+                            impl_unary_fmt!(f, arg, expr, ln)
+                        } else {
+                            write!(f, "log(")?;
+                            fmt_inner(expr, *base, f)?;
+                            write!(f, ", ")?;
+                            fmt_inner(expr, *arg, f)?;
+                            write!(f, ")")
+                        }
+                    }
+                    Operation::Transpose(x) => {
+                        fmt_inner(expr, *x, f)?;
+                        write!(f, "ᵀ")
+                    }
                     Operation::Det(_) => todo!(),
                     Operation::Rank(_) => todo!(),
                     Operation::Trace(_) => todo!(),
@@ -269,7 +366,7 @@ mod test {
         symbols!(x, y, z);
 
         assert_eq!((10 * x.pow(2) * y).to_string(), "10x²y");
-        assert_eq!((10 * x.pow(2 * y)).to_string(), "10x^(2 + y)");
+        assert_eq!((10 * x.pow(2 * y)).to_string(), "10x^(2y)");
         assert_eq!(((10 * x).pow(2 * y)).to_string(), "(10x)^(2 + y)");
         assert_eq!((10 * x.pow(2 * y) * z).to_string(), "(10x^(2 + y))·z");
         assert_eq!((10.pow(x) * y.pow(x)).to_string(), "(10^x)·(y^x)");

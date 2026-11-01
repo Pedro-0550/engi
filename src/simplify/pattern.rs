@@ -177,7 +177,7 @@ impl Pattern {
     pub(crate) fn compile(
         &self,
         conditions: &[Condition],
-        tailored_to: &mut EquivalencyDag,
+        tailored_to: &mut EquivalencyGraph,
     ) -> Program {
         let mut state = CompilerState {
             instructions: Vec::new(),
@@ -206,7 +206,7 @@ impl Pattern {
         target: RegisterId,
         conditions: &[Condition],
         state: &mut CompilerState,
-        tailored_to: &mut EquivalencyDag,
+        tailored_to: &mut EquivalencyGraph,
     ) {
         match self.fetch(op) {
             Operand::Wildcard(w) => {
@@ -226,7 +226,7 @@ impl Pattern {
             }
 
             Operand::Leaf(l) => {
-                let leaf_id = tailored_to.leaves.push(l.clone());
+                let leaf_id = tailored_to.intern_leaf(l);
                 state.instructions.push(Instruction::Bind {
                     structure: Structure::Leaf(l.kind(), leaf_id),
                     target,

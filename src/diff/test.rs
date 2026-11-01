@@ -18,6 +18,6 @@ fn diff() {
         + (x.pow(2) * y + x * y.pow(2) + 1.0)
             * log(x + y, x.pow(2) + y + 1.0)
             * tan(x * y);
-
-    panic!("{}", f_of_xy.diff(x));
+    let df_dx = f_of_xy.diff(x);
+    panic!("{}, {}", df_dx, df_dx.size());
 }

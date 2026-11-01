@@ -20,14 +20,11 @@ use ordered_float::Pow;
 
 use crate::{
     expr::dag::{
-            Condition, ConditionId, Dag, Leaf, LeafId, LeafKind, Matrix,
-            MatrixId, Operation, OperationId, OperationKind,
-        },
-    simplify::{EquivalencyGraph, rules},
-    symbol::{
-        Symbol,
-        constants::e,
+        Condition, ConditionId, Dag, Leaf, LeafId, LeafKind, Matrix, MatrixId,
+        Operation, OperationId, OperationKind,
     },
+    simplify::{EquivalencyGraph, rules},
+    symbol::{Symbol, constants::e},
 };
 
 /// A mathematical expression based on a directed acryllic graph
@@ -337,10 +334,12 @@ where
             src: &self,
         };
 
-        rebuild_operand(
+        let root_id = rebuild_operand(
             self.root().expect("Cannot substitute for a rootless expression"),
             &mut ctx,
         );
+
+        ctx.out.set_root(root_id);
 
         Some(ctx.out)
     }
