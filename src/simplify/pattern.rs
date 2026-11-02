@@ -10,7 +10,6 @@ use crate::{
     core::{
         index::{Indexed, Size},
         util::impl_op_permutations,
-        value::Value,
     },
     expr::{
         Expr, Operand, OperandKind,

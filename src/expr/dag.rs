@@ -10,9 +10,10 @@ use kinded::Kinded;
 use num::complex::Complex64;
 
 use crate::{
-    core::{consed::Consed, index::Size, util::impl_as_variant, value::Value},
+    core::{consed::Consed, index::Size, util::impl_as_variant},
     expr::{Operand, shape::Shape},
     id,
+    math::Value,
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::pattern::Wildcard,
     symbol::{Symbol, constants::Constant},

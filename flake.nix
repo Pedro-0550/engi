@@ -52,6 +52,8 @@
               pkgs.llvmPackages.bintools
               git
               samply
+
+              python3Packages.mpmath
             ]
             ++ [ pkgs-tracy.tracy ];
           LIBCLANG_PATH = "${pkgs.libclang}/lib";

@@ -4,14 +4,12 @@ use std::fmt::Debug;
 
 use ahash::AHashMap;
 use itertools::Itertools;
-use nlopt::{Algorithm, Nlopt, Target};
 use num::Complex;
-use ordered_float::Pow;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{
-    core::value::Value,
     expr::{Expr, domain::Realized},
+    math::Value,
     model::Variable,
     symbol::Realization,
 };

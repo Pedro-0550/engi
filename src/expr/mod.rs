@@ -16,7 +16,6 @@ use ahash::AHashMap;
 use derive_more::IsVariant;
 use itertools::Itertools;
 use kinded::Kinded;
-use ordered_float::Pow;
 
 use crate::{
     expr::dag::{

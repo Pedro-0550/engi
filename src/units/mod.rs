@@ -4,16 +4,15 @@ use std::{
 };
 
 use itertools::Itertools;
-use ordered_float::{OrderedFloat, Pow};
 use thiserror::Error;
 
 use crate::{
     core::{
         interned::{Handle, Interned},
         util::to_superscript,
-        value::Value,
     },
     expr::Expr,
+    math::{Value, real::Real},
     units::isq::DIMENSIONLESS,
 };
 
@@ -105,7 +104,7 @@ pub enum Unit {
     Linear {
         symbol: &'static str,
         base: &'static Unit,
-        scale: OrderedFloat<f64>,
+        scale: Real,
     },
     // Affine {
     //     symbol: &'static str,

@@ -1,6 +1,6 @@
 use std::time::{self, Instant};
 
-use ordered_float::Pow;
+use num::pow::Pow;
 
 use crate as engi;
 use crate::expr::{cos, sin};

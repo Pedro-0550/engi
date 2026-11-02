@@ -327,7 +327,6 @@ impl Debug for Expr {
 
 #[cfg(test)]
 mod test {
-    use ordered_float::Pow;
 
     use crate as engi;
     use crate::symbols;

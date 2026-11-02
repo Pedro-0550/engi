@@ -19,9 +19,10 @@ use tabled::Table;
 
 use crate::{
     self as engi,
-    core::{index::Indexed, value::Value},
+    core::index::Indexed,
     expr::Expr,
     id,
+    math::Value,
     model::{
         eq::{Constraint, Equation},
         solve::Solver,
@@ -580,7 +581,7 @@ impl System {
                 resid = resid.simplified();
 
                 if try { resid.as_single()?.as_leaf()?.as_quantity()? }
-                    .is_some_and(|x| x.value() == 0)
+                    .is_some_and(|x| *x.value() == 0)
                 {
                     None
                 } else {

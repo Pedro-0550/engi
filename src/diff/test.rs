@@ -1,5 +1,3 @@
-use ordered_float::Pow;
-
 use crate as engi;
 use crate::{
     expr::{cos, cosh, ln, log, sin, sinh, tan},

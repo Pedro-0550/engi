@@ -1,16 +1,33 @@
 use std::{
-    fmt::Display,
-    ops::{Neg, Shl, Shr},
+    fmt::{
+        Binary, Debug, Display, Formatter, LowerExp, LowerHex, Octal, UpperExp,
+        UpperHex,
+    },
+    ops::{Neg, Shl, ShlAssign, Shr, ShrAssign},
 };
 
 use approx::{AbsDiffEq, RelativeEq, UlpsEq};
 use derive_more::*;
-use fixed::{FixedI128, traits::Fixed, types::extra::U86};
+use fixed::{
+    FixedI128, ParseFixedError,
+    traits::{Fixed, FromFixed, ToFixed},
+    types::extra::U86,
+};
 use nalgebra::{ComplexField, Field, RealField, SimdValue};
-use num::{FromPrimitive, Num, One, Signed, Zero};
+use num::{FromPrimitive, Num, One, Signed, Zero, pow::Pow};
 use simba::{scalar::SubsetOf, simd::PrimitiveSimdValue};
 
-type Base = FixedI128<U86>;
+use crate::{
+    core::util::impl_op_permutations,
+    math::{
+        cordic::{
+            acos, acosh, asin, asinh, atan, atanh, exp, ln, sin_cos, sinh_cosh,
+        },
+        newton::{cbrt, sqrt},
+    },
+};
+
+pub type Base = FixedI128<U86>;
 
 #[derive(
     PartialEq,
@@ -22,8 +39,6 @@ type Base = FixedI128<U86>;
     Copy,
     Debug,
     Default,
-    From,
-    Into,
     Add,
     Sub,
     Mul,
@@ -43,6 +58,15 @@ type Base = FixedI128<U86>;
 #[rem_assign(forward)]
 pub struct Real(Base);
 
+#[macro_export]
+macro_rules! r {
+    ($lit:literal) => {
+        $crate::math::real::Real::from($crate::math::real::Base::lit(
+            stringify!($lit),
+        ))
+    };
+}
+
 impl Neg for Real {
     type Output = Real;
 
@@ -59,6 +83,12 @@ impl Shr<u8> for Real {
     }
 }
 
+impl ShrAssign<u8> for Real {
+    fn shr_assign(&mut self, rhs: u8) {
+        *self = *self >> rhs
+    }
+}
+
 impl Shl<u8> for Real {
     type Output = Real;
 
@@ -67,58 +97,26 @@ impl Shl<u8> for Real {
     }
 }
 
-impl cordic::CordicNumber for Real {
-    fn floor(self) -> Self {
-        Self(self.0.floor())
-    }
-
-    fn zero() -> Self {
-        Self(Base::ZERO)
-    }
-
-    fn one() -> Self {
-        Self(Base::ONE)
-    }
-
-    fn frac_pi_2() -> Self {
-        Self(Base::FRAC_2_PI)
-    }
-
-    fn pi() -> Self {
-        Self(Base::PI)
-    }
-
-    fn e() -> Self {
-        Self(Base::E)
-    }
-
-    fn from_u0f64(val: fixed::types::U0F64) -> Self {
-        Real(val.to_num())
-    }
-
-    fn num_fract_bits() -> u8 {
-        86
-    }
-
-    fn num_bits() -> u8 {
-        127
+impl ShlAssign<u8> for Real {
+    fn shl_assign(&mut self, rhs: u8) {
+        *self = *self << rhs
     }
 }
 
-// impl SimdValue for Real {
-
-// }
-
-// impl Field for Real {}
-
 impl Num for Real {
-    type FromStrRadixErr = ();
+    type FromStrRadixErr = ParseFixedError;
 
     fn from_str_radix(
         str: &str,
         radix: u32,
     ) -> Result<Self, Self::FromStrRadixErr> {
-        todo!()
+        match radix {
+            2 => Base::from_str_binary(str).map(Real),
+            8 => Base::from_str_octal(str).map(Real),
+            10 => Base::from_str(str).map(Real),
+            16 => Base::from_str_hex(str).map(Real),
+            _ => unimplemented!(),
+        }
     }
 }
 
@@ -128,7 +126,7 @@ impl Zero for Real {
     }
 
     fn is_zero(&self) -> bool {
-        self == 0
+        *self == 0
     }
 }
 
@@ -172,7 +170,7 @@ impl FromPrimitive for Real {
 
 impl SubsetOf<Real> for f64 {
     fn to_superset(&self) -> Real {
-        Real(Base::from_num(self))
+        Real(Base::from_num(*self))
     }
 
     fn from_superset_unchecked(element: &Real) -> Self {
@@ -186,7 +184,7 @@ impl SubsetOf<Real> for f64 {
 
 impl SubsetOf<Real> for f32 {
     fn to_superset(&self) -> Real {
-        Real(Base::from_num(self))
+        Real(Base::from_num(*self))
     }
 
     fn from_superset_unchecked(element: &Real) -> Self {
@@ -235,13 +233,24 @@ impl RelativeEq for Real {
         epsilon: Self::Epsilon,
         max_relative: Self::Epsilon,
     ) -> bool {
-        todo!()
+        let abs_diff = self.abs_sub(other);
+
+        if abs_diff <= epsilon {
+            return true;
+        }
+
+        let abs_self = self.abs();
+        let abs_other = other.abs();
+
+        let largest = if abs_other > abs_self { abs_other } else { abs_self };
+
+        abs_diff <= largest * max_relative
     }
 }
 
 impl UlpsEq for Real {
     fn default_max_ulps() -> u32 {
-        todo!()
+        unimplemented!()
     }
 
     fn ulps_eq(
@@ -250,7 +259,7 @@ impl UlpsEq for Real {
         epsilon: Self::Epsilon,
         max_ulps: u32,
     ) -> bool {
-        todo!()
+        unimplemented!()
     }
 }
 
@@ -317,19 +326,34 @@ impl RealField for Real {
     }
 
     fn max(self, other: Self) -> Self {
-        self.max(other)
+        Ord::max(self, other)
     }
 
     fn min(self, other: Self) -> Self {
-        self.min(other)
+        Ord::min(self, other)
     }
 
     fn clamp(self, min: Self, max: Self) -> Self {
-        self.clamp(min, max)
+        Ord::clamp(self, min, max)
     }
 
     fn atan2(self, other: Self) -> Self {
-        cordic::atan2(self, other)
+        let x = self;
+        let y = other;
+
+        if x > r!(0) {
+            atan(y / x)
+        } else if x < Real::ZERO && y >= Real::ZERO {
+            atan(y / x) + Real::PI
+        } else if x < Real::ZERO {
+            atan(y / x) - Real::PI
+        } else if y > Real::ZERO {
+            Real::FRAC_PI_2
+        } else if y < Real::ZERO {
+            -Real::FRAC_PI_2
+        } else {
+            Real::ZERO // x == 0 && y == 0, undefined; 0 by convention
+        }
     }
 
     fn min_value() -> Option<Self> {
@@ -436,7 +460,7 @@ impl ComplexField for Real {
 
     #[inline]
     fn argument(self) -> Self::RealField {
-        if self >= Self::zero() { Self::zero() } else { Self::pi() }
+        if self >= Self::ZERO { Self::ZERO } else { Self::PI }
     }
 
     #[inline]
@@ -477,99 +501,106 @@ impl ComplexField for Real {
     }
 
     fn sin_cos(self) -> (Self, Self) {
-        cordic::sin_cos(self)
+        sin_cos(self)
     }
 
     fn tan(self) -> Self {
-        cordic::tan(self)
+        let (sin, cos) = self.sin_cos();
+
+        sin / cos
     }
 
     fn asin(self) -> Self {
-        cordic::asin(self)
+        asin(self)
     }
 
     fn acos(self) -> Self {
-        cordic::acos(self)
+        acos(self)
     }
 
     fn atan(self) -> Self {
-        cordic::atan(self)
+        atan(self)
+    }
+
+    fn sinh_cosh(self) -> (Self, Self) {
+        sinh_cosh(self)
     }
 
     fn sinh(self) -> Self {
-        todo!()
+        self.sinh_cosh().0
     }
 
     fn cosh(self) -> Self {
-        todo!()
+        self.sinh_cosh().1
     }
 
     fn tanh(self) -> Self {
-        todo!()
+        let (sinh, cosh) = self.sinh_cosh();
+        sinh / cosh
     }
 
     fn asinh(self) -> Self {
-        todo!()
+        asinh(self)
     }
 
     fn acosh(self) -> Self {
-        todo!()
+        acosh(self)
     }
 
     fn atanh(self) -> Self {
-        todo!()
+        atanh(self)
     }
 
     fn log(self, base: Self::RealField) -> Self {
-        todo!()
+        ln(self) / ln(base)
     }
 
     fn log2(self) -> Self {
-        todo!()
+        ln(self) / Self::ln_2()
     }
 
     fn log10(self) -> Self {
-        todo!()
+        ln(self) / Self::ln_10()
     }
 
     fn ln(self) -> Self {
-        todo!()
+        ln(self)
     }
 
     fn ln_1p(self) -> Self {
-        todo!()
+        ln(r!(1) + self)
     }
 
     fn sqrt(self) -> Self {
-        cordic::sqrt(self)
+        sqrt(self)
     }
 
     fn exp(self) -> Self {
-        cordic::exp(self)
+        exp(self)
     }
 
     fn exp2(self) -> Self {
-        todo!()
+        r!(2).powf(self)
     }
 
     fn exp_m1(self) -> Self {
-        todo!()
+        exp(self) - r!(1)
     }
 
     fn powi(self, n: i32) -> Self {
-        todo!()
+        exp(Real::from(n) * ln(self))
     }
 
     fn powf(self, n: Self::RealField) -> Self {
-        todo!()
+        self.pow(n)
     }
 
     fn powc(self, n: Self) -> Self {
-        todo!()
+        self.pow(n)
     }
 
     fn cbrt(self) -> Self {
-        todo!()
+        cbrt(self)
     }
 
     fn is_finite(&self) -> bool {
@@ -579,10 +610,167 @@ impl ComplexField for Real {
     fn try_sqrt(self) -> Option<Self> {
         Some(self.sqrt())
     }
+
+    fn floor(self) -> Self {
+        Self(self.0.floor())
+    }
+
+    fn ceil(self) -> Self {
+        Self(self.0.ceil())
+    }
+
+    fn round(self) -> Self {
+        Self(self.0.round())
+    }
+
+    fn trunc(self) -> Self {
+        Self(self.0.int())
+    }
+
+    fn fract(self) -> Self {
+        Self(self.0.frac() * self.0.signum())
+    }
+
+    fn mul_add(self, a: Self, b: Self) -> Self {
+        Self(self.0.mul_add(a.0, b.0))
+    }
+
+    fn abs(self) -> Self::RealField {
+        Self(self.0.abs())
+    }
+
+    fn hypot(self, other: Self) -> Self::RealField {
+        sqrt(self * self + other * other)
+    }
 }
 
+impl Real {
+    pub const ZERO: Real = r!(0);
+    pub const ONE: Real = r!(1);
+
+    pub const MAX: Real = Real(Base::MAX);
+    pub const MIN: Real = Real(Base::MIN);
+    pub const DELTA: Real = Real(Base::DELTA);
+    pub const EPSILON: Real = Real(Base::DELTA);
+
+    pub const FRAC_NBITS: u8 = Base::FRAC_NBITS as u8;
+    pub const INT_NBITS: u8 = Base::INT_NBITS as u8;
+
+    pub const PI: Real = Real(Base::PI);
+    pub const TAU: Real = Real(Base::TAU);
+    pub const FRAC_PI_2: Real = Real(Base::FRAC_PI_2);
+    pub const FRAC_PI_3: Real = Real(Base::FRAC_PI_3);
+    pub const FRAC_PI_4: Real = Real(Base::FRAC_PI_4);
+    pub const FRAC_PI_6: Real = Real(Base::FRAC_PI_6);
+    pub const FRAC_PI_8: Real = Real(Base::FRAC_PI_8);
+    pub const FRAC_1_PI: Real = Real(Base::FRAC_1_PI);
+    pub const FRAC_2_PI: Real = Real(Base::FRAC_2_PI);
+    pub const FRAC_2_SQRT_PI: Real = Real(Base::FRAC_2_SQRT_PI);
+
+    pub const SQRT_2: Real = Real(Base::SQRT_2);
+    pub const FRAC_1_SQRT_2: Real = Real(Base::FRAC_1_SQRT_2);
+
+    pub const E: Real = Real(Base::E);
+    pub const LOG2_E: Real = Real(Base::LOG2_E);
+    pub const LOG10_E: Real = Real(Base::LOG10_E);
+    pub const LOG2_10: Real = Real(Base::LOG2_10);
+    pub const LOG10_2: Real = Real(Base::LOG10_2);
+    pub const LN_2: Real = Real(Base::LN_2);
+    pub const LN_10: Real = Real(Base::LN_10);
+
+    pub const fn leading_zeros(&self) -> u8 {
+        self.0.leading_zeros() as u8
+    }
+
+    pub const fn leading_ones(&self) -> u8 {
+        self.0.leading_ones() as u8
+    }
+
+    pub const fn from_bits(bits: i128) -> Real {
+        Real(Base::from_bits(bits))
+    }
+}
+
+impl<T> From<T> for Real
+where
+    T: ToFixed,
+{
+    fn from(value: T) -> Self {
+        Real(Base::from_num(value))
+    }
+}
+
+impl<T> Into<T> for Real
+where
+    T: FromFixed,
+{
+    fn into(self) -> T {
+        self.0.to_num()
+    }
+}
+
+impl Pow<Real> for Real {
+    type Output = Real;
+
+    fn pow(self, rhs: Real) -> Self::Output {
+        exp(rhs * ln(self))
+    }
+}
+
+impl_op_permutations!(
+    types = [f64, f32, i64, i32, i16, i8, u64, u32, u16, u8, Real],
+    exclude_specific = [(Real, Real)],
+    exclude_permutations = [f64, f32, i64, i32, i16, i8, u64, u32, u16, u8],
+    into = Real,
+    out = Real,
+    add = { lhs + rhs },
+    sub = { lhs - rhs },
+    mul = { lhs * rhs },
+    div = { lhs / rhs },
+    pow = { lhs.pow(rhs) },
+    partial_eq = { lhs == rhs },
+);
+
+/* -------------------------------------------------------------------------- */
+
 impl Display for Real {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        <Base as Display>::fmt(&self.0, f)
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.0, f)
+    }
+}
+
+impl Binary for Real {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Binary::fmt(&self.0, f)
+    }
+}
+
+impl Octal for Real {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        Octal::fmt(&self.0, f)
+    }
+}
+
+impl LowerHex for Real {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl UpperHex for Real {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        UpperHex::fmt(&self.0, f)
+    }
+}
+
+impl LowerExp for Real {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        LowerExp::fmt(&self.0, f)
+    }
+}
+
+impl UpperExp for Real {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        UpperExp::fmt(&self.0, f)
     }
 }

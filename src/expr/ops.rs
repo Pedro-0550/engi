@@ -6,7 +6,7 @@ use std::{
 use num::{complex::Complex64, pow::Pow};
 
 use crate::{
-    core::{util::impl_op_permutations, value::Value},
+    core::util::impl_op_permutations,
     expr::{
         BuiltOperand, EditContext, Expr, Operand,
         dag::{Leaf, Operation},

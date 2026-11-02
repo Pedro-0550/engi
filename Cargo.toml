@@ -19,7 +19,6 @@ nalgebra = "0.35"
 approx = "0.5.1"
 simba = "0.10.1"
 fixed = "1.31"
-cordic = "0.1.5"
 levenberg-marquardt = "0.15"
 
 # nlopt = "0.8"

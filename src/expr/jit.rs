@@ -7,7 +7,7 @@ use cranelift::{
     codegen::{
         ir::{
             AbiParam, FuncRef, InstBuilder, MemFlagsData, UserFuncName,
-            types::F64,
+            types::{self, F64, I128},
         },
         settings::{self, Configurable},
     },
@@ -20,12 +20,13 @@ use itertools::Itertools;
 use num::complex::Complex64;
 
 use crate::{
-    core::value,
     expr::{
         Expr, Operand,
         dag::{Leaf, Operation},
         domain::Realized,
     },
+    math::{self, complex::Complex, real::Real},
+    r,
     symbol::{
         Realization::{self},
         Symbol,
@@ -33,7 +34,7 @@ use crate::{
 };
 
 pub struct CompiledExpr {
-    func: unsafe extern "C" fn(*const f64, *mut f64),
+    func: unsafe extern "C" fn(*const Real, *mut Real),
     args: Vec<Symbol>,
     // We need to keep module alive for as long as the
     // compiled expr, otherwise the JIT memory is dropped
@@ -177,10 +178,10 @@ impl Realized {
                 (
                     *s,
                     bcx.ins().load(
-                        F64,
+                        I128,
                         MemFlagsData::new().with_aligned(),
                         symbols_ptr,
-                        (i * 8) as i32,
+                        (i * size_of::<Real>()) as i32,
                     ),
                 )
             })
@@ -205,7 +206,7 @@ impl Realized {
                             .into_scalar()
                             .unwrap();
 
-                        bcx.ins().f64const(qty.re)
+                        bcx.ins().iconst(types::I128, qty.re)
                     }
                     Leaf::Quantity(quantity) => {
                         let qty = quantity
@@ -214,7 +215,7 @@ impl Realized {
                             .clone()
                             .into_scalar()
                             .unwrap();
-                        bcx.ins().f64const(qty.re)
+                        bcx.ins().iconst(types::I128, qty.re)
                     }
                 },
                 Operand::Matrix(_) => panic!(
@@ -222,10 +223,10 @@ impl Realized {
                     The fact a matrix is present here indicates a soundness issue in scalarize."
                 ),
                 Operand::Operation(operation) => match operation {
-                    Operation::Add([a, b]) => bcx.ins().fadd(*a, *b),
-                    Operation::Mul([a, b]) => bcx.ins().fmul(*a, *b),
-                    Operation::Min([a, b]) => bcx.ins().fmin(*a, *b),
-                    Operation::Max([a, b]) => bcx.ins().fmax(*a, *b),
+                    Operation::Add([a, b]) => bcx.ins().iadd(*a, *b),
+                    Operation::Mul([a, b]) => bcx.ins().imul(*a, *b),
+                    Operation::Min([a, b]) => bcx.ins().smin(*a, *b),
+                    Operation::Max([a, b]) => bcx.ins().smax(*a, *b),
                     Operation::Sin(v) => funcs.sin(bcx, *v),
                     Operation::Cos(v) => funcs.cos(bcx, *v),
                     Operation::Tan(v) => funcs.tan(bcx, *v),
@@ -243,13 +244,13 @@ impl Realized {
                     Operation::Norm(v) => funcs.abs(bcx, *v),
                     Operation::Sign(v) => funcs.signum(bcx, *v),
                     Operation::Real(v) => *v,
-                    Operation::Imag(_) => bcx.ins().f64const(0.0),
+                    Operation::Imag(_) => bcx.ins().iconst(I128, 0.0),
                     Operation::Pow { base, exp } => funcs.powf(bcx, *base, *exp),
                     Operation::Log { base, arg } => {
                         let a = funcs.ln(bcx, *arg);
                         let b = funcs.ln(bcx, *base);
 
-                        bcx.ins().fdiv(a, b)
+                        bcx.ins().sdiv(a, b)
                     }
                     Operation::Atan2 { x: a, y: b } => funcs.atan2(bcx, *a, *b),
                     Operation::Transpose(_) => todo!(),
@@ -273,7 +274,7 @@ impl Realized {
             MemFlagsData::trusted(),
             im,
             output_ptr,
-            size_of::<f64>() as i32,
+            size_of::<Real>() as i32,
         );
 
         bcx.ins().return_(&[]);
@@ -285,7 +286,7 @@ impl Realized {
         module.finalize_definitions().unwrap();
 
         let eval_ptr = unsafe {
-            mem::transmute::<_, extern "C" fn(*const f64, *mut f64)>(
+            mem::transmute::<_, extern "C" fn(*const Real, *mut Real)>(
                 module.get_finalized_function(eval_func),
             )
         };
@@ -295,7 +296,7 @@ impl Realized {
 }
 
 impl CompiledExpr {
-    pub fn eval(&self, bindings: &AHashMap<Symbol, Complex64>) -> value::Value {
+    pub fn eval(&self, bindings: &AHashMap<Symbol, Complex>) -> math::Value {
         let assembled_args = self
             .args
             .iter()
@@ -309,28 +310,28 @@ impl CompiledExpr {
             })
             .collect_vec();
 
-        let mut output = [0.0_f64; 2];
+        let mut output = [r!(0); 2];
 
         unsafe {
             (self.func)(assembled_args.as_ptr(), output.as_mut_ptr());
         }
 
-        Complex64::new(output[0], output[1]).into()
+        Complex::new(output[0], output[1]).into()
     }
 
     pub fn eval_realized(
         &self,
-        bindings: &AHashMap<Symbol, f64>,
-    ) -> value::Value {
+        bindings: &AHashMap<Symbol, Real>,
+    ) -> math::Value {
         let assembled_args =
             self.args.iter().map(|s| *bindings.get(s).unwrap()).collect_vec();
 
-        let mut output = [0.0_f64; 2];
+        let mut output = [r!(0); 2];
 
         unsafe {
             (self.func)(assembled_args.as_ptr(), output.as_mut_ptr());
         }
 
-        Complex64::new(output[0], output[1]).into()
+        Complex::new(output[0], output[1]).into()
     }
 }
