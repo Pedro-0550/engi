@@ -37,7 +37,6 @@ pub type Base = FixedI128<U86>;
     Hash,
     Clone,
     Copy,
-    Debug,
     Default,
     Add,
     Sub,
@@ -66,6 +65,8 @@ macro_rules! r {
         ))
     };
 }
+
+/* -------------------------------------------------------------------------- */
 
 impl Neg for Real {
     type Output = Real;
@@ -102,6 +103,30 @@ impl ShlAssign<u8> for Real {
         *self = *self << rhs
     }
 }
+
+impl Pow<Real> for Real {
+    type Output = Real;
+
+    fn pow(self, rhs: Real) -> Self::Output {
+        exp(rhs * ln(self))
+    }
+}
+
+impl_op_permutations!(
+    types = [f64, i64, Real],
+    exclude_specific = [(Real, Real)],
+    exclude_permutations = [f64, f32, i64, i32, i16, i8, u64, u32, u16, u8],
+    into = Real,
+    out = Real,
+    add = { lhs + rhs },
+    sub = { lhs - rhs },
+    mul = { lhs * rhs },
+    div = { lhs / rhs },
+    pow = { lhs.pow(rhs) },
+    partial_eq = { lhs == rhs },
+);
+
+/* -------------------------------------------------------------------------- */
 
 impl Num for Real {
     type FromStrRadixErr = ParseFixedError;
@@ -338,8 +363,8 @@ impl RealField for Real {
     }
 
     fn atan2(self, other: Self) -> Self {
-        let x = self;
-        let y = other;
+        let y = self;
+        let x = other;
 
         if x > r!(0) {
             atan(y / x)
@@ -644,6 +669,8 @@ impl ComplexField for Real {
     }
 }
 
+/* -------------------------------------------------------------------------- */
+
 impl Real {
     pub const ZERO: Real = r!(0);
     pub const ONE: Real = r!(1);
@@ -695,43 +722,44 @@ impl<T> From<T> for Real
 where
     T: ToFixed,
 {
-    fn from(value: T) -> Self {
+    default fn from(value: T) -> Self {
         Real(Base::from_num(value))
     }
 }
 
-impl<T> Into<T> for Real
-where
-    T: FromFixed,
-{
-    fn into(self) -> T {
-        self.0.to_num()
+const impl From<Base> for Real {
+    fn from(value: Base) -> Self {
+        Self(value)
     }
 }
 
-impl Pow<Real> for Real {
-    type Output = Real;
+macro_rules! impl_real_from_scalar {
+    ($($t:ty),*) => {
+        $(
+        impl From<$t> for Real {
+            fn from(v: $t) -> Self {
+                Real(Base::from_num(v))
+            }
+        }
 
-    fn pow(self, rhs: Real) -> Self::Output {
-        exp(rhs * ln(self))
-    }
+        impl From<Real> for $t {
+            fn from(v: Real) -> Self {
+                v.0.to_num()
+            }
+        }
+        )*
+    };
 }
 
-impl_op_permutations!(
-    types = [f64, f32, i64, i32, i16, i8, u64, u32, u16, u8, Real],
-    exclude_specific = [(Real, Real)],
-    exclude_permutations = [f64, f32, i64, i32, i16, i8, u64, u32, u16, u8],
-    into = Real,
-    out = Real,
-    add = { lhs + rhs },
-    sub = { lhs - rhs },
-    mul = { lhs * rhs },
-    div = { lhs / rhs },
-    pow = { lhs.pow(rhs) },
-    partial_eq = { lhs == rhs },
-);
+impl_real_from_scalar!(i64, i32, i16, i8, u64, u32, u16, u8, f64, f32);
 
 /* -------------------------------------------------------------------------- */
+
+impl Debug for Real {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Real").field(&self.0.to_string()).finish()
+    }
+}
 
 impl Display for Real {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

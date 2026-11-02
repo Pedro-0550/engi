@@ -1,4 +1,4 @@
-# script to generate CORDIC tables
+# script to generate CORDIC tables & gain
 precision = 86
 
 import mpmath as mp

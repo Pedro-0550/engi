@@ -40,17 +40,15 @@ pub const nmi: Unit =
 
 /// Degree
 pub const deg: Unit =
-    Unit::Linear { symbol: "°", base: &rad, scale: Real::pi() / r!(180.0) };
+    Unit::Linear { symbol: "°", base: &rad, scale: Real::PI / r!(180.0) };
 
 /// Arc-minute, 1/60th of a degree
 pub const arcmin: Unit =
-    Unit::Linear { symbol: "′", base: &rad, scale: Real::pi() / r!(10800.0) };
+    Unit::Linear { symbol: "′", base: &rad, scale: Real::PI / r!(10800.0) };
 
 /// Arc-second, 1/3600th of a degree
 pub const arcsec: Unit =
-    Unit::Linear {
-        symbol: "″", base: &rad, scale: Real::pi() / r!(648000.0)
-    };
+    Unit::Linear { symbol: "″", base: &rad, scale: Real::PI / r!(648000.0) };
 
 // Energy
 
@@ -67,9 +65,9 @@ pub const cal: Unit =
 /// Metric Ton
 pub const t: Unit = Unit::Linear { symbol: "t", base: &kg, scale: r!(1000.0) };
 
-/// Atomic mass unit
-pub const u: Unit =
-    Unit::Linear { symbol: "u", base: &kg, scale: r!(1.660_539_066_60e-27) };
+// /// Atomic mass unit
+// pub const u: Unit =
+//     Unit::Linear { symbol: "u", base: &kg, scale: r!(1.660_539_066_60e-27) };
 
 /// Astronomical unit
 pub const au: Unit =

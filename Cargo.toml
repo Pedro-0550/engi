@@ -50,6 +50,7 @@ engi-macros = { path = "./macros" }
 
 [dev-dependencies]
 criterion = "0.8"
+dashu-float = "0.6.2"
 
 [build-dependencies]
 syn = { version = "3.0", features = ["full"] }
@@ -59,7 +60,7 @@ itertools = "0.15"
 
 [features]
 ## Uses usize for expression node IDs, allowing up to 2^64 nodes on 64-bit systems, instead of the default 2^16
-## Should only be enabled if you actually need that many nodes, since larger IDs has a significant performance cost
+## Should only be enabled if you actually need that many nodes, since larger IDs have a performance cost
 large_exprs = []
 
 [[bench]]

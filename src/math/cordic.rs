@@ -9,7 +9,8 @@ use crate::{
     r,
 };
 
-const STEPS: u8 = Base::FRAC_NBITS as u8;
+const STEPS: u8 = 76; // enough for <1e-22 error on all operations
+
 const MAX_K: i64 = Base::INT_NBITS as i64 - 1;
 const ATANH_DIRECT_MAX: Real = r!(0.8069);
 
@@ -233,6 +234,63 @@ pub fn ln(x: Real) -> Real {
     z + z + Real::from(e) * Real::ln_2()
 }
 
+#[cfg(test)]
+mod test {
+
+    use std::str::FromStr;
+
+    use dashu_float::{DBig, FBig, ops::Abs};
+    use nalgebra::ComplexField;
+
+    use crate::math::real::Real;
+
+    macro_rules! cordic_test {
+        ($f:ident, $points:literal, [$from:literal, $to:literal]) => {
+            #[test]
+            fn $f() {
+                const POINTS: u32 = $points;
+                const FROM: f64 = $from;
+                const TO: f64 = $to;
+                let max_error: DBig = DBig::from_str("1e-22").unwrap();
+
+                for i in 0..POINTS {
+                    let t = FROM + i as f64 * (TO - FROM) / POINTS as f64;
+                    let x = Real::from(t);
+
+                    let x_f = DBig::from_str(&format!("{:.86}", x)).unwrap();
+                    let cordic = DBig::from_str(&format!("{:.86}", x.$f())).unwrap();
+                    let f = x_f.with_precision(Real::FRAC_NBITS as usize).value().$f();
+
+                    let abs_err = (cordic.clone() - f.clone()).abs();
+                    let err = abs_err / f.clone().abs().max(DBig::ONE);
+
+                    if err > max_error {
+                        panic!(
+                            "{f} excedeed max err with x = {}, CORDIC {f}(x) = {:e}, DBig {f}(x) = {:e}, err = {:e}",
+                            x, cordic, f, err, f=stringify!($f),
+                        )
+                    }
+                }
+            }
+        };
+    }
+
+    cordic_test!(sin, 1000, [-10.0, 10.0]);
+    cordic_test!(cos, 1000, [-10.0, 10.0]);
+    cordic_test!(asin, 1000, [-1.0, 1.0]);
+    cordic_test!(acos, 1000, [-1.0, 1.0]);
+    cordic_test!(atan, 1000, [-10.0, 10.0]);
+
+    cordic_test!(sinh, 1000, [-10.0, 10.0]);
+    cordic_test!(cosh, 1000, [-10.0, 10.0]);
+    cordic_test!(asinh, 1000, [-1.0, 1.0]);
+    cordic_test!(acosh, 1000, [1.0, 10.0]);
+    cordic_test!(atanh, 1000, [-0.99999, 0.99999]);
+
+    cordic_test!(exp, 1000, [-50.0, 25.0]);
+    cordic_test!(ln, 1000, [0.0000000000001, 10.0]);
+}
+
 const ATAN: [Real; 86] = [
     r!(0.78539816339744830961566084581987572104929234984377645524373614807695410157155224965701),
     r!(0.4636476090008061162142562314612144020285370542861202638109330887201978641657417053006),
@@ -323,7 +381,7 @@ const ATAN: [Real; 86] = [
 ];
 
 const ATANH: [Real; 86] = [
-    Real::max_value().unwrap(),
+    Real::MAX,
     r!(0.54930614433405484569762261846126285232374527891137472586734716681874714660930448343681),
     r!(0.25541281188299534160275704815183096743905539822288413508897677891834234724452439887826),
     r!(0.12565721414045303884256886520093583982894819303181885750499925866870436184257433297979),
