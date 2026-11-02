@@ -7,6 +7,7 @@ use std::{
 };
 
 use derive_more::{From, Into};
+use itertools::Itertools;
 use nalgebra::{ComplexField, Field, RealField, SimdValue};
 use num::{Float, FromPrimitive, Num, One, Signed, Zero, pow::Pow};
 use simba::{scalar::SubsetOf, simd::PrimitiveSimdValue};
@@ -171,7 +172,7 @@ impl_op_permutations!(
 
 impl SubsetOf<Complex> for f64 {
     fn to_superset(&self) -> Complex {
-        Complex::new(*self, 0)
+        Complex::from_parts(*self, 0)
     }
 
     fn from_superset_unchecked(element: &Complex) -> Self {
@@ -185,7 +186,7 @@ impl SubsetOf<Complex> for f64 {
 
 impl SubsetOf<Complex> for f32 {
     fn to_superset(&self) -> Complex {
-        Complex::new(*self, 0)
+        Complex::from_parts(*self, 0)
     }
 
     fn from_superset_unchecked(element: &Complex) -> Self {
@@ -213,11 +214,11 @@ impl SubsetOf<Complex> for Complex {
 
 impl FromPrimitive for Complex {
     fn from_i64(n: i64) -> Option<Self> {
-        Some(Self::new(n, 0))
+        Some(Self::from_parts(n, 0))
     }
 
     fn from_u64(n: u64) -> Option<Self> {
-        Some(Self::new(n, 0))
+        Some(Self::from_parts(n, 0))
     }
 }
 
@@ -289,13 +290,37 @@ impl Zero for Complex {
 }
 
 impl Num for Complex {
-    type FromStrRadixErr = ();
+    // TODO actual error handling
+    type FromStrRadixErr = <Real as Num>::FromStrRadixErr;
 
     fn from_str_radix(
         str: &str,
         radix: u32,
     ) -> Result<Self, Self::FromStrRadixErr> {
-        todo!()
+        let iter = str.split("+");
+        let mut parts = iter.collect_vec();
+
+        if parts.len() > 2 {
+            panic!("Invalid complex number str")
+        }
+
+        let mut im = parts.extract_if(.., |x| x.ends_with("i")).collect_vec();
+
+        if im.len() > 1 {
+            panic!("Cannot have more than one imaginary part")
+        }
+
+        let im = im.pop();
+        let re = parts.pop();
+
+        Ok(Self {
+            re: re
+                .map(|str| Real::from_str_radix(str, radix))
+                .unwrap_or(Ok(Real::ZERO))?,
+            im: im
+                .map(|str| Real::from_str_radix(str, radix))
+                .unwrap_or(Ok(Real::ZERO))?,
+        })
     }
 }
 
@@ -303,7 +328,7 @@ impl ComplexField for Complex {
     type RealField = Real;
 
     fn from_real(re: Self::RealField) -> Self {
-        Complex::new(re, 0)
+        Complex::from_parts(re, 0)
     }
 
     fn real(self) -> Self::RealField {
@@ -415,39 +440,52 @@ impl ComplexField for Complex {
     }
 
     fn asin(self) -> Self {
-        todo!()
+        let w = (1 - self * self).sqrt();
+        (self * Complex::I + w).ln() * -Complex::I
     }
 
     fn acos(self) -> Self {
-        todo!()
+        Complex::FRAC_PI_2 - self.asin()
     }
 
     fn atan(self) -> Self {
-        todo!()
+        let iz = self * Complex::I;
+        ((1 - iz).ln() - (1 + iz).ln()) * Complex::I >> 1
+    }
+
+    fn sinh_cosh(self) -> (Self, Self) {
+        let (sinh_re, cosh_re) = self.re.sinh_cosh();
+        let (sin_im, cos_im) = self.im.sin_cos();
+
+        (
+            Self { re: sinh_re * cos_im, im: cosh_re * sin_im },
+            Self { re: cosh_re * cos_im, im: sinh_re * sin_im },
+        )
     }
 
     fn sinh(self) -> Self {
-        todo!()
+        self.sinh_cosh().0
     }
 
     fn cosh(self) -> Self {
-        todo!()
+        self.sinh_cosh().1
     }
 
     fn tanh(self) -> Self {
-        todo!()
+        let (sinh, cosh) = self.sinh_cosh();
+        sinh / cosh
     }
 
     fn asinh(self) -> Self {
-        todo!()
+        (self + (self * self + 1).sqrt()).ln()
     }
 
     fn acosh(self) -> Self {
-        todo!()
+        (self + (self + 1).sqrt() * (self - 1).sqrt()).ln()
     }
 
     fn atanh(self) -> Self {
-        todo!()
+        ((1 + self).ln() - (1 - self).ln()) >> 1
     }
 
     fn log(self, base: Self::RealField) -> Self {
@@ -525,22 +563,54 @@ impl ComplexField for Complex {
 
 /* -------------------------------------------------------------------------- */
 
+impl Complex {
+    pub const ZERO: Complex = c!(0);
+    pub const ONE: Complex = c!(1);
+    pub const I: Complex = c!(0, 1);
+
+    pub const PI: Complex = Complex::new(Real::PI, Real::ZERO);
+    pub const TAU: Complex = Complex::new(Real::TAU, Real::ZERO);
+    pub const FRAC_PI_2: Complex = Complex::new(Real::FRAC_PI_2, Real::ZERO);
+    pub const FRAC_PI_3: Complex = Complex::new(Real::FRAC_PI_3, Real::ZERO);
+    pub const FRAC_PI_4: Complex = Complex::new(Real::FRAC_PI_4, Real::ZERO);
+    pub const FRAC_PI_6: Complex = Complex::new(Real::FRAC_PI_6, Real::ZERO);
+    pub const FRAC_PI_8: Complex = Complex::new(Real::FRAC_PI_8, Real::ZERO);
+    pub const FRAC_1_PI: Complex = Complex::new(Real::FRAC_1_PI, Real::ZERO);
+    pub const FRAC_2_PI: Complex = Complex::new(Real::FRAC_2_PI, Real::ZERO);
+    pub const FRAC_2_SQRT_PI: Complex =
+        Complex::new(Real::FRAC_2_SQRT_PI, Real::ZERO);
+
+    pub const SQRT_2: Complex = Complex::new(Real::SQRT_2, Real::ZERO);
+    pub const FRAC_1_SQRT_2: Complex =
+        Complex::new(Real::FRAC_1_SQRT_2, Real::ZERO);
+
+    pub const E: Complex = Complex::new(Real::E, Real::ZERO);
+    pub const LOG2_E: Complex = Complex::new(Real::LOG2_E, Real::ZERO);
+    pub const LOG10_E: Complex = Complex::new(Real::LOG10_E, Real::ZERO);
+    pub const LOG2_10: Complex = Complex::new(Real::LOG2_10, Real::ZERO);
+    pub const LOG10_2: Complex = Complex::new(Real::LOG10_2, Real::ZERO);
+    pub const LN_2: Complex = Complex::new(Real::LN_2, Real::ZERO);
+    pub const LN_10: Complex = Complex::new(Real::LN_10, Real::ZERO);
+
+    pub const fn new(re: Real, im: Real) -> Self {
+        Self { re, im }
+    }
+
+    pub fn from_parts(re: impl Into<Real>, im: impl Into<Real>) -> Self {
+        Self { re: re.into(), im: im.into() }
+    }
+}
+
 macro_rules! impl_complex_from_scalar {
     ($($t:ty),*) => {
         $(
         impl From<$t> for Complex {
             fn from(v: $t) -> Self {
-                Complex::new(v, 0)
+                Complex::new(Real::from(v), Real::ZERO)
             }
         }
         )*
     };
-}
-
-impl Complex {
-    pub fn new(re: impl Into<Real>, im: impl Into<Real>) -> Self {
-        Self { re: re.into(), im: im.into() }
-    }
 }
 
 impl_complex_from_scalar!(i64, i32, i16, i8, u64, u32, u16, u8, f64, f32, Real);
