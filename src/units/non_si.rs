@@ -40,15 +40,15 @@ pub const nmi: Unit =
 
 /// Degree
 pub const deg: Unit =
-    Unit::Linear { symbol: "°", base: &rad, scale: Real::PI / r!(180.0) };
+    Unit::Linear { symbol: "°", base: &rad, scale: r!(0.01745329252) };
 
 /// Arc-minute, 1/60th of a degree
 pub const arcmin: Unit =
-    Unit::Linear { symbol: "′", base: &rad, scale: Real::PI / r!(10800.0) };
+    Unit::Linear { symbol: "′", base: &rad, scale: r!(0.0002908882087) };
 
 /// Arc-second, 1/3600th of a degree
 pub const arcsec: Unit =
-    Unit::Linear { symbol: "″", base: &rad, scale: Real::PI / r!(648000.0) };
+    Unit::Linear { symbol: "″", base: &rad, scale: r!(0.000004848136811) };
 
 // Energy
 

@@ -599,6 +599,30 @@ impl Complex {
     pub fn from_parts(re: impl Into<Real>, im: impl Into<Real>) -> Self {
         Self { re: re.into(), im: im.into() }
     }
+
+    pub fn is_integer(&self) -> bool {
+        self.im.is_zero() && self.fract().is_zero()
+    }
+
+    pub fn is_real(&self) -> bool {
+        self.im.is_zero()
+    }
+
+    pub fn is_imag(&self) -> bool {
+        !self.im.is_zero() && self.re.is_zero()
+    }
+
+    pub fn as_integer(&self) -> Option<i64> {
+        if self.is_integer() { Some(self.re.into()) } else { None }
+    }
+
+    pub fn as_real(&self) -> Option<Real> {
+        if self.is_real() { Some(self.re) } else { None }
+    }
+
+    pub fn as_imag(&self) -> Option<Real> {
+        if self.is_imag() { Some(self.im) } else { None }
+    }
 }
 
 macro_rules! impl_complex_from_scalar {

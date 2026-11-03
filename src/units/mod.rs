@@ -4,6 +4,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use nalgebra::ComplexField;
 use thiserror::Error;
 
 use crate::{
@@ -71,6 +72,8 @@ pub struct Dimension {
     J: i8, // luminous intensity
     N: i8, // amount of substance
 }
+
+// TODO: COnsider making units zero-cost by making their runtime repr be combinations of ZSTs, or intern the whole thing
 
 /// This type is a *representation* of a unit.
 ///
@@ -151,7 +154,7 @@ impl Quantity {
         loop {
             let normalized = match current_unit {
                 Unit::Linear { base, scale, .. } => {
-                    current_val *= scale.0;
+                    current_val *= scale;
                     *base
                 }
                 Unit::Composed(id) => {

@@ -240,7 +240,7 @@ mod test {
     use std::str::FromStr;
 
     use dashu_float::{DBig, FBig, ops::Abs};
-    use nalgebra::ComplexField;
+    use nalgebra::{ComplexField, DMatrix};
 
     use crate::math::real::Real;
 

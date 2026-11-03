@@ -76,30 +76,46 @@ impl Neg for Real {
     }
 }
 
-impl Shr<u8> for Real {
+impl<N> Shr<N> for Real
+where
+    Base: Shr<N>,
+    <Base as Shr<N>>::Output: Into<Base>,
+{
     type Output = Real;
 
-    fn shr(self, s: u8) -> Self::Output {
-        Self(self.0 >> s)
+    fn shr(self, s: N) -> Self::Output {
+        Self((self.0 >> s).into())
     }
 }
 
-impl ShrAssign<u8> for Real {
-    fn shr_assign(&mut self, rhs: u8) {
+impl<N> ShrAssign<N> for Real
+where
+    Base: Shr<N>,
+    <Base as Shr<N>>::Output: Into<Base>,
+{
+    fn shr_assign(&mut self, rhs: N) {
         *self = *self >> rhs
     }
 }
 
-impl Shl<u8> for Real {
+impl<N> Shl<N> for Real
+where
+    Base: Shl<N>,
+    <Base as Shl<N>>::Output: Into<Base>,
+{
     type Output = Real;
 
-    fn shl(self, s: u8) -> Self::Output {
-        Self(self.0 << s)
+    fn shl(self, s: N) -> Self::Output {
+        Self((self.0 << s).into())
     }
 }
 
-impl ShlAssign<u8> for Real {
-    fn shl_assign(&mut self, rhs: u8) {
+impl<N> ShlAssign<N> for Real
+where
+    Base: Shl<N>,
+    <Base as Shl<N>>::Output: Into<Base>,
+{
+    fn shl_assign(&mut self, rhs: N) {
         *self = *self << rhs
     }
 }

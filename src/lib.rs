@@ -26,4 +26,4 @@ pub mod core {
 // pub mod model;
 // pub mod simplify;
 // pub mod symbol;
-// pub mod units;
+pub mod units;
