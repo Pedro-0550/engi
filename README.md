@@ -24,7 +24,7 @@ Implemented:
 
 - Units & dimensional analysis
 - First-class complex numbers & matrices
-- NLopt solver backend
+- `levenberg-marquadt` solver backend
 - Steady-state modeling
 - Simple expression syntax
 - Boilerplate macros
