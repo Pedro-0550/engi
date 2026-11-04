@@ -1,3 +1,5 @@
+use num::pow::Pow;
+
 use crate::simplify::pattern::{
     Condition, Rule, Wildcard, acos, acosh, asin, asinh, atan, atanh, cos,
     cosh, ln, log, sin, sinh, tan, tanh,

@@ -23,10 +23,7 @@ use crate::{
     expr::Expr,
     id,
     math::Value,
-    model::{
-        eq::{Constraint, Equation},
-        solve::Solver,
-    },
+    model::eq::{Constraint, Equation},
     symbol::Symbol,
     units::Quantity,
 };
@@ -34,9 +31,19 @@ use crate::{
 /* --------------------------------- MODULES -------------------------------- */
 
 pub mod eq;
-pub mod solve;
+pub mod lm;
 
 /* --------------------------------- TRAITS --------------------------------- */
+
+pub trait Solver {
+    type Error: Debug;
+
+    fn solve(
+        &self,
+        residuals: Vec<Expr>,
+        guesses: &AHashMap<Variable, Value>,
+    ) -> Result<Vec<(Variable, Value)>, Self::Error>;
+}
 
 pub trait InterfaceBuilder {
     fn id(&self) -> &InterfaceId;
@@ -581,7 +588,7 @@ impl System {
                 resid = resid.simplified();
 
                 if try { resid.as_single()?.as_leaf()?.as_quantity()? }
-                    .is_some_and(|x| *x.value() == 0)
+                    .is_some_and(|x| x.value().is_zero())
                 {
                     None
                 } else {
@@ -761,7 +768,7 @@ mod test {
             Condition, Connector, InterfaceArrayExt, InterfaceBuilder, Model,
             ModelSolution, Relations, System, Variable,
             eq::{Constraint, Equation},
-            solve::NloptSolver,
+            lm::LmSolver,
         },
         symbol::constants::{kB, q},
         units::si::*,
@@ -1033,8 +1040,7 @@ mod test {
         q1.thermal.t.guess(300 * K);
         q1.thermal.p.guess(1e-3 * W);
 
-        let solution =
-            system.solve(NloptSolver::new(nlopt::Algorithm::TNewtonPrecond));
+        let solution = system.solve(LmSolver);
         println!("{}", solution.get(q1).table());
     }
 }

@@ -14,7 +14,14 @@ use num::{Zero, pow::Pow};
 
 use crate::{
     c,
-    core::util::{impl_as_variant, impl_op_permutations},
+    core::{
+        index::Size,
+        util::{impl_as_variant, impl_op_permutations},
+    },
+    expr::{
+        domain::{Domain, Interval},
+        shape::Shape,
+    },
     math::{Value::Scalar, complex::Complex, real::Real},
 };
 pub mod complex;
@@ -67,15 +74,23 @@ impl Value {
     pub const ONE: Value = Value::Scalar(Complex::ONE);
     pub const I: Value = Value::Scalar(Complex::I);
 
-    // pub fn domain(&self) -> Domain {
-    //     match self {
-    //         Value::Set(_set) => todo!(),
-    //         Value::Matrix(_mat) => todo!(),
-    //         Value::Scalar(Complex { re, im }) => {
-    //             Domain::new(Interval::singleton(*re), Interval::singleton(*im))
-    //         }
-    //     }
-    // }
+    pub fn domain(&self) -> Domain {
+        match self {
+            Value::Matrix(_mat) => todo!(),
+            Value::Scalar(Complex { re, im }) => {
+                Domain::new(Interval::singleton(*re), Interval::singleton(*im))
+            }
+        }
+    }
+
+    pub fn shape(&self) -> Shape {
+        match self {
+            Value::Matrix(mat) => {
+                Shape::rect(mat.nrows() as Size, mat.ncols() as Size)
+            }
+            Value::Scalar(_complex) => Shape::SCALAR,
+        }
+    }
 
     pub fn realize(&self) -> [Value; 2] {
         match self {

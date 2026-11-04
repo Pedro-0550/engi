@@ -4,7 +4,7 @@ use std::{
 };
 
 use nalgebra::{ComplexField, RealField};
-use num::{FromPrimitive, pow::Pow};
+use num::{FromPrimitive, Zero as _, pow::Pow};
 
 use super::dag::Leaf;
 use crate::{
@@ -272,10 +272,13 @@ impl Interval {
     }
 
     pub fn singleton(val: Real) -> Self {
-        let universe =
-            if val.fract() == 0 { Universe::Integer } else { Universe::Real };
+        let universe = if val.fract().is_zero() {
+            Universe::Integer
+        } else {
+            Universe::Real
+        };
 
-        if val == 0 {
+        if val.is_zero() {
             Interval::ZERO
         } else if val > r!(0) {
             Interval {

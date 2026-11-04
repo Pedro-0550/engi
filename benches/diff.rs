@@ -6,7 +6,7 @@ use engi::{
     symbol::Symbol,
     symbols,
 };
-use ordered_float::Pow;
+use num::pow::Pow;
 
 fn small_expr(c: &mut Criterion) {
     c.bench_function("partial of small expr", |b| {

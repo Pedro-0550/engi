@@ -12,7 +12,11 @@ use nalgebra::{ComplexField, Field, RealField, SimdValue};
 use num::{Float, FromPrimitive, Num, One, Signed, Zero, pow::Pow};
 use simba::{scalar::SubsetOf, simd::PrimitiveSimdValue};
 
-use crate::{core::util::impl_op_permutations, math::real::Real};
+use crate::{
+    core::util::impl_op_permutations,
+    math::{newton::sqrt, real::Real},
+    r,
+};
 
 // Theres really no reason to use num_complex::Complex here because Real dosent implement Float anyway so we need to implement all the math manually
 #[derive(Clone, Copy, PartialEq, Eq, Hash, From, Into, Debug)]
@@ -150,6 +154,18 @@ impl Pow<Complex> for Complex {
     type Output = Self;
 
     fn pow(self, exp: Complex) -> Self::Output {
+        if self.is_zero() {
+            if exp.is_zero() {
+                return c!(1);
+            }
+
+            if exp.is_real() && exp.re > r!(0) {
+                return c!(0);
+            }
+
+            panic!("{self}^{exp} is undefined");
+        }
+
         (exp * self.ln()).exp()
     }
 }
@@ -180,7 +196,7 @@ impl SubsetOf<Complex> for f64 {
     }
 
     fn is_in_subset(element: &Complex) -> bool {
-        element.im == 0
+        element.im.is_zero()
     }
 }
 
@@ -194,7 +210,7 @@ impl SubsetOf<Complex> for f32 {
     }
 
     fn is_in_subset(element: &Complex) -> bool {
-        element.im == 0
+        element.im.is_zero()
     }
 }
 
@@ -285,7 +301,7 @@ impl Zero for Complex {
     }
 
     fn is_zero(&self) -> bool {
-        self.re == 0 && self.im == 0
+        self.re.is_zero() && self.im.is_zero()
     }
 }
 
@@ -340,7 +356,7 @@ impl ComplexField for Complex {
     }
 
     fn modulus(self) -> Self::RealField {
-        self.modulus_squared().sqrt()
+        self.re * sqrt(1 + (self.im / self.re) * (self.im / self.re))
     }
 
     fn modulus_squared(self) -> Self::RealField {

@@ -328,6 +328,8 @@ impl Debug for Expr {
 #[cfg(test)]
 mod test {
 
+    use num::pow::Pow;
+
     use crate as engi;
     use crate::symbols;
 

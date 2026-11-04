@@ -206,7 +206,7 @@ impl Realized {
                             .into_scalar()
                             .unwrap();
 
-                        bcx.ins().iconst(types::I128, qty.re)
+                        iconst_i128(bcx, qty.re.to_bits())
                     }
                     Leaf::Quantity(quantity) => {
                         let qty = quantity
@@ -215,7 +215,7 @@ impl Realized {
                             .clone()
                             .into_scalar()
                             .unwrap();
-                        bcx.ins().iconst(types::I128, qty.re)
+                        iconst_i128(bcx, qty.re.to_bits())
                     }
                 },
                 Operand::Matrix(_) => panic!(
@@ -244,7 +244,7 @@ impl Realized {
                     Operation::Norm(v) => funcs.abs(bcx, *v),
                     Operation::Sign(v) => funcs.signum(bcx, *v),
                     Operation::Real(v) => *v,
-                    Operation::Imag(_) => bcx.ins().iconst(I128, 0.0),
+                    Operation::Imag(_) => bcx.ins().iconst(I128, 0),
                     Operation::Pow { base, exp } => funcs.powf(bcx, *base, *exp),
                     Operation::Log { base, arg } => {
                         let a = funcs.ln(bcx, *arg);
@@ -334,4 +334,15 @@ impl CompiledExpr {
 
         Complex::new(output[0], output[1]).into()
     }
+}
+
+fn iconst_i128(bcs: &mut FunctionBuilder, value: i128) -> Value {
+    let lo = bcs.ins().iconst(types::I64, value as i64);
+    let hi = bcs.ins().iconst(types::I64, (value >> 64) as i64);
+
+    let lo = bcs.ins().uextend(types::I128, lo);
+    let hi = bcs.ins().sextend(types::I128, hi);
+    let hi = bcs.ins().ishl_imm_u(hi, 64);
+
+    bcs.ins().bor(lo, hi)
 }

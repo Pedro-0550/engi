@@ -167,7 +167,7 @@ impl Zero for Real {
     }
 
     fn is_zero(&self) -> bool {
-        *self == 0
+        *self < r!(1e-19)
     }
 }
 
@@ -731,6 +731,10 @@ impl Real {
 
     pub const fn from_bits(bits: i128) -> Real {
         Real(Base::from_bits(bits))
+    }
+
+    pub const fn to_bits(&self) -> i128 {
+        self.0.to_bits()
     }
 }
 
