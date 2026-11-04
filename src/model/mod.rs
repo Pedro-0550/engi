@@ -577,6 +577,7 @@ impl System {
             .par_iter()
             .filter_map(|eq| {
                 let mut resid = eq.residual();
+                let init = resid.clone();
 
                 loop {
                     let Some(step) = resid.substituted(&bindings) else {
@@ -586,6 +587,7 @@ impl System {
                 }
 
                 resid = resid.simplified();
+                println!("{init} -> {resid}");
 
                 if try { resid.as_single()?.as_leaf()?.as_quantity()? }
                     .is_some_and(|x| x.value().is_zero())
@@ -636,6 +638,10 @@ impl System {
         // }
 
         if !matching.is_perfect() {
+            println!("Imperfect matching:");
+            for (i, eq) in residuals.iter() {
+                println!("{}", eq)
+            }
             panic!()
         }
 
@@ -761,8 +767,8 @@ impl System {
 mod test {
     use engi_macros::{Interface, Model, relations};
 
-    use crate as engi;
     use crate::{
+        self as engi,
         expr::{exp, real},
         model::{
             Condition, Connector, InterfaceArrayExt, InterfaceBuilder, Model,
@@ -770,6 +776,7 @@ mod test {
             eq::{Constraint, Equation},
             lm::LmSolver,
         },
+        r,
         symbol::constants::{kB, q},
         units::si::*,
     };
@@ -910,7 +917,7 @@ mod test {
             } = self;
 
             relations! {
-                v_t = kB * thermal.t / q;
+                v_t = r!(0.000518947713) * thermal.t;
                 v_be = b.v - e.v;
                 v_bc = b.v - c.v;
                 v_ce = c.v - e.v;

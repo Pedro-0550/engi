@@ -213,7 +213,7 @@ pub fn exp(x: Real) -> Real {
 }
 
 pub fn ln(x: Real) -> Real {
-    assert!(x > Real::ZERO, "ln argument must be > 0");
+    assert!(x > Real::ZERO, "ln argument must be > 0, received {x}");
 
     // x = m · 2^e with m ∈ [0.75, 1.5)
     let mut m = x;

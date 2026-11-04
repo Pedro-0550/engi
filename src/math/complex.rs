@@ -355,12 +355,22 @@ impl ComplexField for Complex {
         self.im
     }
 
-    fn modulus(self) -> Self::RealField {
-        self.re * sqrt(1 + (self.im / self.re) * (self.im / self.re))
+    fn modulus(self) -> Real {
+        let (re_n, im_n) = (self.re.abs(), self.im.abs());
+        if im_n.is_zero() {
+            return re_n;
+        }
+        if re_n.is_zero() {
+            return im_n;
+        }
+        let m = if re_n > im_n { re_n } else { im_n }; // scale by the larger component
+        let (x, y) = (re_n / m, im_n / m);
+        m * sqrt(x * x + y * y)
     }
 
-    fn modulus_squared(self) -> Self::RealField {
-        self.re * self.re + self.im * self.im
+    fn modulus_squared(self) -> Real {
+        let m = self.modulus();
+        m * m
     }
 
     fn argument(self) -> Self::RealField {
@@ -415,8 +425,17 @@ impl ComplexField for Complex {
     }
 
     fn recip(self) -> Self {
-        let denom = self.modulus_squared();
-        Self { re: self.re / denom, im: -self.im / denom }
+        if self.im.is_zero() {
+            return Self { re: Real::ONE / self.re, im: Real::ZERO };
+        }
+        let m = if self.re.abs() > self.im.abs() {
+            self.re.abs()
+        } else {
+            self.im.abs()
+        };
+        let (a, b) = (self.re / m, self.im / m);
+        let d = a * a + b * b;
+        Self { re: a / d / m, im: -b / d / m }
     }
 
     fn conjugate(self) -> Self {

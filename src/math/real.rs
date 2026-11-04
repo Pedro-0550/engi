@@ -167,7 +167,7 @@ impl Zero for Real {
     }
 
     fn is_zero(&self) -> bool {
-        *self < r!(1e-23)
+        *self < r!(1e-24) && *self > r!(-1e-24)
     }
 }
 
