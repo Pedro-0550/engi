@@ -4,16 +4,16 @@ use std::{
 };
 
 use itertools::Itertools;
-use nalgebra::ComplexField;
+use ordered_float::{OrderedFloat, Pow};
 use thiserror::Error;
 
 use crate::{
     core::{
         interned::{Handle, Interned},
         util::to_superscript,
+        value::Value,
     },
     expr::Expr,
-    math::{Value, real::Real},
     units::isq::DIMENSIONLESS,
 };
 
@@ -73,8 +73,6 @@ pub struct Dimension {
     N: i8, // amount of substance
 }
 
-// TODO: COnsider making units zero-cost by making their runtime repr be combinations of ZSTs, or intern the whole thing
-
 /// This type is a *representation* of a unit.
 ///
 /// You can have `m * s`, and `s * m`, which are mathematically exactly the same,
@@ -107,7 +105,7 @@ pub enum Unit {
     Linear {
         symbol: &'static str,
         base: &'static Unit,
-        scale: Real,
+        scale: OrderedFloat<f64>,
     },
     // Affine {
     //     symbol: &'static str,
@@ -154,7 +152,7 @@ impl Quantity {
         loop {
             let normalized = match current_unit {
                 Unit::Linear { base, scale, .. } => {
-                    current_val *= scale;
+                    current_val *= scale.0;
                     *base
                 }
                 Unit::Composed(id) => {

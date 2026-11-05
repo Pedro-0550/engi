@@ -16,7 +16,7 @@ use ahash::AHashMap;
 use derive_more::IsVariant;
 use itertools::Itertools;
 use kinded::Kinded;
-use num::pow::Pow;
+use ordered_float::Pow;
 
 use crate::{
     expr::dag::{
@@ -708,13 +708,13 @@ pub fn exp(x: impl Into<Expr>) -> Expr {
 }
 
 pub fn sqrt(x: impl Into<Expr>) -> Expr {
-    x.into().pow(1.0 / 2.0)
+    x.into().pow(1 / 2)
 }
 
 pub fn cbrt(x: impl Into<Expr>) -> Expr {
-    x.into().pow(1.0 / 3.0)
+    x.into().pow(1 / 3)
 }
 
 pub fn qtrt(x: impl Into<Expr>) -> Expr {
-    x.into().pow(1.0 / 4.0)
+    x.into().pow(1 / 4)
 }

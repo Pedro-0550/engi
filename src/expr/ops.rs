@@ -3,15 +3,14 @@ use std::{
     ops::{Add, Div, Mul, Neg, Sub},
 };
 
-use num::pow::Pow;
+use num::{complex::Complex64, pow::Pow};
 
 use crate::{
-    core::util::impl_op_permutations,
+    core::{util::impl_op_permutations, value::Value},
     expr::{
         BuiltOperand, EditContext, Expr, Operand,
         dag::{Leaf, Operation},
     },
-    math::{Value, complex::Complex, real::Real},
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     symbol::{
         Symbol,
@@ -24,11 +23,11 @@ use crate::{
 
 impl_op_permutations!(
     types = [
-        i64, f64, Real, &Real, Complex, &Complex, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, &Symbol,
+        i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value, Constant, &Constant, Symbol, &Symbol,
         Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>,
         ConnectorBuilder<'_>, &ConnectorBuilder<'_>, Leaf, &Leaf, Expr, &Expr
     ],
-    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Complex, &Complex, Real, &Real],
+    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Complex64, &Complex64],
     exclude_specific = [(Expr, Expr)],
     into = Expr,
     out = Expr,

@@ -1,4 +1,4 @@
-use num::pow::Pow;
+use ordered_float::Pow;
 
 use crate as engi;
 use crate::{

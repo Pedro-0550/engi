@@ -1,4 +1,4 @@
-use num::pow::Pow;
+use ordered_float::Pow;
 
 use crate::simplify::pattern::{
     Condition, Rule, Wildcard, acos, acosh, asin, asinh, atan, atanh, cos,

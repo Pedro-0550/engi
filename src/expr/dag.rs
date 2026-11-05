@@ -10,10 +10,9 @@ use kinded::Kinded;
 use num::complex::Complex64;
 
 use crate::{
-    core::{consed::Consed, index::Size, util::impl_as_variant},
+    core::{consed::Consed, index::Size, util::impl_as_variant, value::Value},
     expr::{Operand, shape::Shape},
     id,
-    math::{Value, complex::Complex, real::Real},
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::pattern::Wildcard,
     symbol::{Symbol, constants::Constant},
@@ -542,12 +541,6 @@ impl Leaf {
     }
 }
 
-impl From<Real> for Leaf {
-    fn from(value: Real) -> Self {
-        Leaf::Quantity(value * Unitless)
-    }
-}
-
 impl From<f64> for Leaf {
     fn from(value: f64) -> Self {
         Leaf::Quantity(value * Unitless)
@@ -560,8 +553,8 @@ impl From<i64> for Leaf {
     }
 }
 
-impl From<Complex> for Leaf {
-    fn from(value: Complex) -> Self {
+impl From<Complex64> for Leaf {
+    fn from(value: Complex64) -> Self {
         Leaf::Quantity(value * Unitless)
     }
 }

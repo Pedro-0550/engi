@@ -3,18 +3,17 @@ use std::{
     prelude::rust_2024,
 };
 
-use nalgebra::{ComplexField, RealField};
-use num::{FromPrimitive, Zero as _, pow::Pow};
+use approx::RelativeEq;
+use ordered_float::Pow;
 
 use super::dag::Leaf;
 use crate::{
+    core::value::EQ_REL_TOL,
     expr::{
         Expr, FoldedOperand, Operand,
         dag::Operation,
         domain::Endpoint::{Neg, Pos, Zero},
     },
-    math::real::Real,
-    r,
     symbol::constants::e,
 };
 
@@ -271,16 +270,17 @@ impl Interval {
         *self
     }
 
-    pub fn singleton(val: Real) -> Self {
-        let universe = if val.fract().is_zero() {
-            Universe::Integer
-        } else {
-            Universe::Real
-        };
+    pub fn singleton(val: f64) -> Self {
+        let universe =
+            if val.round().relative_eq(&val, f64::EPSILON, EQ_REL_TOL) {
+                Universe::Integer
+            } else {
+                Universe::Real
+            };
 
-        if val.is_zero() {
+        if val.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL) {
             Interval::ZERO
-        } else if val > r!(0) {
+        } else if val > 0.0 {
             Interval {
                 from: Edge::Open(Endpoint::Zero),
                 to: Edge::Open(Endpoint::Pos),
@@ -381,7 +381,7 @@ impl Pow<Interval> for Interval {
     fn pow(self, rhs: Interval) -> Self::Output {
         // x^0 = 1
         if rhs.is_zero() {
-            return Interval::singleton(r!(1));
+            return Interval::singleton(1.0);
         }
 
         // 0^y = 0 for y > 0
@@ -540,13 +540,13 @@ impl Div<Interval> for Interval {
 
 impl From<i64> for Interval {
     fn from(value: i64) -> Self {
-        Interval::singleton(Real::from(value))
+        Interval::singleton(value as f64)
     }
 }
 
 impl From<f64> for Interval {
     fn from(value: f64) -> Self {
-        Interval::singleton(Real::from(value))
+        Interval::singleton(value)
     }
 }
 
@@ -588,8 +588,8 @@ impl FoldedOperand<'_, Domain, ()> {
                     -(u.re.sin() * u.im.sinh()),
                 ),
                 Operation::Tan(u) => {
-                    let u2_re: Interval = u.re * Interval::singleton(r!(2));
-                    let u2_im: Interval = u.im * Interval::singleton(r!(2));
+                    let u2_re: Interval = u.re * Interval::singleton(2.0);
+                    let u2_im: Interval = u.im * Interval::singleton(2.0);
 
                     Domain::new(
                         (u2_re).sin() / (u2_re.cos() + u2_im.cosh()),
@@ -614,8 +614,8 @@ impl FoldedOperand<'_, Domain, ()> {
                 Operation::Real(x) => x.real(),
                 Operation::Imag(x) => Domain::new(x.im, Interval::ZERO),
                 Operation::Pow { base, exp } => {
-                    let two = Interval::singleton(r!(2));
-                    let euler = Interval::singleton(Real::e());
+                    let two = Interval::singleton(2.0);
+                    let euler = Interval::singleton(std::f64::consts::E);
                     let ln_r = (base.re.pow(two) + base.im.pow(two)).ln() / two;
                     let θ = base.re.atan2(&base.im);
                     let a = exp.re * ln_r - exp.im * θ;
@@ -624,7 +624,7 @@ impl FoldedOperand<'_, Domain, ()> {
                     Domain::new(euler.pow(a) * b.cos(), euler.pow(a) * b.sin())
                 }
                 Operation::Log { base, arg } => {
-                    let two = Interval::singleton(r!(2));
+                    let two = Interval::singleton(2.0);
 
                     let ln_z = |x: Domain| {
                         Domain::new(

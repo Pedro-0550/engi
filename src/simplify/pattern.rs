@@ -4,12 +4,13 @@ use std::{mem, ops::Neg};
 
 // use cranelift::codegen::ir::Constant;
 use kinded::Kinded;
-use num::pow::Pow;
+use num::{complex::Complex64, pow::Pow};
 
 use crate::{
     core::{
         index::{Indexed, Size},
         util::impl_op_permutations,
+        value::Value,
     },
     expr::{
         Expr, Operand, OperandKind,
@@ -18,7 +19,6 @@ use crate::{
         shape::Shape,
     },
     id,
-    math::{Value, complex::Complex, real::Real},
     simplify::{
         ClassId, EquivalencyClass, EquivalencyDag, EquivalencyGraph,
         Substitution,
@@ -398,13 +398,13 @@ impl Machine {
 
 impl_op_permutations!(
     types = [
-        i64, f64, Real, &Real, Complex, &Complex, Quantity, &Quantity, Value,
-        &Value, Constant, &Constant, Symbol, &Symbol, Pattern, &Pattern, Expr,
-        &Expr, Wildcard, &Wildcard
+        i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value,
+        Constant, &Constant, Symbol, &Symbol, Pattern, &Pattern, Expr, &Expr,
+        Wildcard, &Wildcard
     ],
     exclude_permutations = [
-        i64, f64, Real, &Real, Complex, &Complex, Quantity, &Quantity, Value,
-        &Value, Constant, &Constant, Symbol, &Symbol, Expr, &Expr,
+        i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value,
+        Constant, &Constant, Symbol, &Symbol, Expr, &Expr,
     ],
     exclude_specific = [(Pattern, Pattern)],
     into = Pattern,

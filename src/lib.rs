@@ -12,13 +12,13 @@
 
 pub use tabled;
 
-pub mod math;
+// pub mod math;
 pub mod core {
     pub mod consed;
     pub mod index;
     pub mod interned;
     pub mod util;
-    // pub mod value;
+    pub mod value;
 }
 
 pub mod diff;

@@ -1,10 +1,15 @@
 use std::ops::{Div, DivAssign, Mul, MulAssign};
 
-use num::{complex::Complex64, pow::Pow};
+use num::{
+    complex::Complex64,
+    pow::Pow,
+};
 
 use crate::{
-    core::util::impl_op_permutations,
-    math::{Value, complex::Complex, real::Real},
+    core::{
+        util::impl_op_permutations,
+        value::{ComplexExt, Value},
+    },
     units::{
         COMPOSITIONS, DIMENSIONLESS, Dimension, Dimensioned, Quantity, Unit,
         si::rad,
@@ -172,7 +177,7 @@ macro_rules! impl_qty_from_scalar {
     };
 }
 
-impl_qty_from_scalar!(i64, f64, Real, Complex, Value);
+impl_qty_from_scalar!(i64, f64, Complex64, Value);
 
 macro_rules! impl_qty_trig_fn {
     ($ident:ident) => {
@@ -278,8 +283,8 @@ impl From<&Value> for Quantity {
 }
 
 impl_op_permutations! {
-    types = [i64, f64, Real, Complex, Value, Quantity, Unit],
-    exclude_permutations = [i64, f64, Real, Complex, Value,],
+    types = [i64, f64, Complex64, Value, &Value, Quantity, &Quantity, Unit],
+    exclude_permutations = [i64, f64, Complex64, Value, &Value],
     exclude_specific = [(Unit, Unit)],
     out = Quantity,
     into = Quantity,

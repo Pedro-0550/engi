@@ -199,6 +199,8 @@ impl EquivalencyGraph {
             other => other,
         };
 
+        let kind = canon_op.kind();
+
         let op = match canon_op {
             Operand::Leaf(leaf) => {
                 match self.dag.leaves.insert_with(leaf, next_id) {
@@ -233,7 +235,11 @@ impl EquivalencyGraph {
             Operand::Wildcard(_) => unreachable!(),
         };
 
-        let qty = self.evaluate(op);
+        let qty = if kind != OperandKind::Leaf(LeafKind::Quantity) {
+            self.evaluate(op)
+        } else {
+            None
+        };
 
         let class = EquivalencyClass {
             operands_by_kind: array::from_fn(|i| {

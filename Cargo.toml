@@ -11,7 +11,7 @@ itertools = "0.15"
 crabtime = "1.1.4"
 
 # float_eq = "1.0"
-# ordered-float = "5.3"
+ordered-float = "5.3"
 
 dashmap = "6"
 
