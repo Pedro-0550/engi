@@ -23,14 +23,14 @@ use crate::{
     expr::Expr,
     id,
     model::eq::{Constraint, Equation},
-    symbol::Symbol,
-    units::Quantity,
+    symbol::{Symbol, constants::q},
+    unit::Quantity,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
 
 pub mod eq;
-pub mod solve;
+pub mod lm;
 
 /* --------------------------------- TRAITS --------------------------------- */
 
@@ -286,11 +286,17 @@ impl<'s> ConnectorBuilder<'s> {
     }
 
     pub fn bind(&self, expr: impl Into<Expr>) {
+        let mut expr = expr.into();
+
+        if let Some(qty) = try { expr.as_single()?.as_leaf()?.as_quantity()? } {
+            expr = qty.clone().normalize().into()
+        }
+
         let None = self
             .system
             .conn_association
             .borrow_mut()
-            .insert(self.id.clone(), Associated::Binding(expr.into()))
+            .insert(self.id.clone(), Associated::Binding(expr))
         else {
             panic!(
                 "Connector already has associated guess or binding, cannot add a bind"
@@ -303,7 +309,7 @@ impl<'s> ConnectorBuilder<'s> {
             .system
             .conn_association
             .borrow_mut()
-            .insert(self.id.clone(), Associated::Guess(qty.into()))
+            .insert(self.id.clone(), Associated::Guess(qty.into().normalize()))
         else {
             panic!(
                 "Connector already has associated guess or binding, cannot add a guess"
@@ -767,10 +773,10 @@ mod test {
             Condition, Connector, InterfaceArrayExt, InterfaceBuilder, Model,
             ModelSolution, Relations, System, Variable,
             eq::{Constraint, Equation},
-            solve::LmSolver,
+            lm::LmSolver,
         },
         symbol::constants::{kB, q},
-        units::defs::*,
+        unit::defs::*,
     };
 
     #[derive(Interface, Clone)]
@@ -1006,8 +1012,8 @@ mod test {
 
         r_c.port.p.connect(&v_c.out.p);
         r_c.port.n.connect(&q1.c);
-        r_c.port.i.guess(6e-3 * A);
-        q1.c.i.guess(6e-3 * A);
+        r_c.port.i.guess(6 * mA);
+        q1.c.i.guess(6 * mA);
 
         r_b.port.p.connect(&v_b.out.p);
         r_b.port.n.connect(&q1.b);
@@ -1023,13 +1029,13 @@ mod test {
         v_b.v.bind(5 * V);
         v_c.v.bind(12 * V);
 
-        r_c.z.bind(10e3 * Ω);
+        r_c.z.bind(10 * kΩ);
         r_c.port.n.v.bind(6 * V);
         q1.v_be.guess(0.6 * V);
-        q1.v_t.guess(26e-3 * V);
+        q1.v_t.guess(26 * mV);
         q1.β_f.bind(100);
         q1.β_r.bind(10);
-        q1.i_s.bind(100e-9 * A);
+        q1.i_s.bind(100 * nA);
 
         // bjt_thermal.t_a.bind(25.0 * DEG_C);
         q1_thermal.rθ_jc.bind(10 * K / W);
@@ -1037,7 +1043,7 @@ mod test {
         q1_thermal.t_a.bind(300 * K);
         q1_thermal.t_c.guess(300 * K);
         q1.thermal.t.guess(300 * K);
-        q1.thermal.p.guess(1e-3 * W);
+        q1.thermal.p.guess(1 * mW);
 
         let solution = system.solve(LmSolver);
         println!("{}", solution.get(q1).table());

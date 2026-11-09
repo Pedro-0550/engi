@@ -11,7 +11,7 @@ use crate::{
     expr::{domain::Domain, shape::Shape},
     id,
     symbol::symbol_builder::IsComplete,
-    units::{Unit, defs::UNITLESS},
+    unit::{Unit, defs::UNITLESS},
 };
 
 /* --------------------------------- MODULES -------------------------------- */

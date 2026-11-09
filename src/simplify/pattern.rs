@@ -27,7 +27,7 @@ use crate::{
         Symbol,
         constants::{Constant, e},
     },
-    units::Quantity,
+    unit::Quantity,
 };
 
 type Allocations = Indexed<[Option<RegisterId>; WILDCARD_COUNT], Wildcard>;

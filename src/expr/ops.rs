@@ -16,7 +16,7 @@ use crate::{
         Symbol,
         constants::{Constant, e},
     },
-    units::Quantity,
+    unit::Quantity,
 };
 
 /* -------------------------------------------------------------------------- */

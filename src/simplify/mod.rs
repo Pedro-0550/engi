@@ -30,7 +30,7 @@ use crate::{
     simplify::pattern::{
         Machine, Pattern, Program, Rule, WILDCARD_COUNT, Wildcard,
     },
-    units::Quantity,
+    unit::Quantity,
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -340,7 +340,7 @@ impl EquivalencyGraph {
         /// If its larger than this value in any iteration it will be banned.
         const MATCH_MERGE_RATIO: usize = 2;
         /// Minimum number of matches a rule needs to have to qualify for scheduling
-        const MIN_SCHEDULING_MATCHES: usize = 10;
+        const MIN_SCHEDULING_MATCHES: usize = 5;
 
         const BASE_BAN: usize = 10;
 

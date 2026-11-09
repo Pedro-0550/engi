@@ -20,7 +20,7 @@ use crate::{
         Symbol,
         constants::{Constant, e},
     },
-    units::{Quantity, defs::UNITLESS},
+    unit::{Quantity, defs::UNITLESS},
 };
 
 /// Determines whether two operands can be joined in a multiplication

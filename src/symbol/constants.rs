@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use crate::units::{Quantity, Unit, defs::*};
+use crate::unit::{Quantity, Unit, defs::*};
 
 macro_rules! constants {
     (

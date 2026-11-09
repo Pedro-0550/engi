@@ -10,7 +10,9 @@
 #![feature(option_zip)]
 #![feature(mapped_lock_guards)]
 #![feature(const_default)]
+#![feature(macro_metavar_expr_concat)]
 #![warn(unused_crate_dependencies)]
+
 pub use tabled;
 
 // pub mod math;
@@ -26,7 +28,7 @@ pub mod expr;
 pub mod model;
 pub mod simplify;
 pub mod symbol;
-pub mod units;
+pub mod unit;
 
 pub mod prelude {
     pub use num::pow::Pow;
@@ -36,6 +38,6 @@ pub mod prelude {
             Interface, InterfaceArrayExt, Model, ModelBuilder, System,
             Variable, VariableBuilder,
         },
-        units::{Quantity, defs::*, ops::*},
+        unit::{Quantity, defs::*, ops::*},
     };
 }

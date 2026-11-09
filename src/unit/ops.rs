@@ -8,8 +8,8 @@ use crate::{
         value::{ComplexExt, Value},
     },
     prelude,
-    units::{
-        Dimension, Dimensioned, Node, Quantity, Unit,
+    unit::{
+        COMPOSITIONS, Dimension, Dimensioned, Quantity, Unit,
         defs::{UNITLESS, rad},
     },
 };
@@ -93,29 +93,31 @@ impl Mul for Unit {
 
     fn mul(self, rhs: Self) -> Self::Output {
         let result = {
-            match (&*self.fetch(), &*rhs.fetch()) {
-                (Node::Composed { terms: lhs_comp }, _) if rhs.is_atomic() => {
-                    let mut lhs_comp = lhs_comp.clone();
+            match (self, rhs) {
+                (Unit::Composed(lhs_id), _) if rhs.is_atomic() => {
+                    let mut lhs_comp =
+                        COMPOSITIONS.con_get(lhs_id).unwrap().clone();
                     lhs_comp.push((rhs, Ratio::ONE));
                     lhs_comp
                 }
 
-                (_, Node::Unitless) => return self,
+                (_, Unit::Unitless) => return self,
 
-                (_, Node::Composed { terms: rhs_comp }) if self.is_atomic() => {
+                (_, Unit::Composed(rhs_id)) if self.is_atomic() => {
+                    let mut rhs_comp =
+                        COMPOSITIONS.con_get(rhs_id).unwrap().clone();
                     let mut new_comp = vec![(self, Ratio::ONE)];
 
                     new_comp.append(&mut rhs_comp.clone());
                     new_comp
                 }
-                (Node::Unitless, _) => return rhs,
+                (Unit::Unitless, _) => return rhs,
 
-                (
-                    Node::Composed { terms: lhs_comp },
-                    Node::Composed { terms: rhs_comp },
-                ) => {
-                    let mut lhs_comp = lhs_comp.clone();
-                    let mut rhs_comp = rhs_comp.clone();
+                (Unit::Composed(lhs_id), Unit::Composed(rhs_id)) => {
+                    let mut lhs_comp =
+                        COMPOSITIONS.con_get(lhs_id).unwrap().clone();
+                    let mut rhs_comp =
+                        COMPOSITIONS.con_get(rhs_id).unwrap().clone();
                     lhs_comp.append(&mut rhs_comp);
                     lhs_comp
                 }
@@ -142,22 +144,36 @@ impl Div for Unit {
 impl Pow<i64> for Unit {
     type Output = Unit;
 
-    fn pow(self, exp: i64) -> Self::Output {
-        match &*self.fetch() {
-            Node::Unitless => self,
-            Node::Composed { terms } => {
-                let comp = terms
+    fn pow(self, rhs: i64) -> Self::Output {
+        self.pow(Ratio::new(rhs as i8, 1))
+    }
+}
+
+impl Pow<Ratio<i8>> for Unit {
+    type Output = Unit;
+
+    fn pow(self, exp: Ratio<i8>) -> Self::Output {
+        match self {
+            Unit::Unitless => self,
+            Unit::Composed(id) => {
+                let comp = COMPOSITIONS
+                    .con_get(id)
+                    .unwrap()
                     .iter()
-                    .map(|(unit, e)| (*unit, *e * exp as i8))
+                    .map(|(unit, e)| (*unit, *e * exp))
                     .collect();
 
                 Unit::new_composition(comp)
             }
-            _ if self.is_atomic() => {
-                Unit::new_composition(vec![(self, Ratio::new(exp as i8, 1))])
-            }
+            _ if self.is_atomic() => Unit::new_composition(vec![(self, exp)]),
             _ => unreachable!(),
         }
+    }
+}
+
+impl Unit {
+    pub fn sqrt(self) -> Self {
+        self.pow(Ratio::new(1, 2))
     }
 }
 

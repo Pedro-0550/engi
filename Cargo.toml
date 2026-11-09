@@ -67,6 +67,10 @@ large_exprs = []
 name = "diff"
 harness = false
 
+[[bench]]
+name = "unit"
+harness = false
+
 [profile.bench]
 debug = true
 

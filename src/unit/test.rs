@@ -1,5 +1,5 @@
 use super::*;
-use crate::units::defs::{B, Hz, J, K, eV, m, oC, s};
+use crate::unit::defs::{B, Hz, J, K, eV, m, oC, s};
 
 /* -------------------------------- FUNCTIONS ------------------------------- */
 

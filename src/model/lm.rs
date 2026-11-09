@@ -124,21 +124,6 @@ impl Solver for LmSolver {
             .with_scale_diag(true)
             .minimize(problem);
 
-        let residual_norm =
-            (p.evaluate().component_mul(&DVector::from_iterator(
-                symbols.len(),
-                symbols.iter().map(|s| {
-                    let primary = s.as_primary().unwrap();
-                    guesses
-                        .get(&Variable(primary))
-                        .and_then(|x| x.as_scalar().copied())
-                        .filter(|x| !x.is_zero())
-                        .unwrap_or(Complex::ONE)
-                        .re
-                }),
-            )))
-            .norm();
-
         assert!(report.termination.was_successful());
         assert!(report.objective_function.abs() < 1e-10);
 

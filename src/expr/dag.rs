@@ -18,7 +18,7 @@ use crate::{
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::pattern::Wildcard,
     symbol::{Symbol, constants::Constant},
-    units::{Quantity, defs::UNITLESS},
+    unit::{Quantity, defs::UNITLESS},
 };
 
 macro_rules! unary {

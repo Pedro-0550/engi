@@ -113,7 +113,7 @@ pub fn model(input: TokenStream) -> TokenStream {
                     var.desc.unwrap_or(LitStr::new("", Span::call_site()));
                 let unit = var.unit.unwrap_or(
                     Expr::parse
-                        .parse(quote! {engi::units::defs::UNITLESS}.into())
+                        .parse(quote! {engi::unit::defs::UNITLESS}.into())
                         .unwrap(),
                 );
 
@@ -262,7 +262,7 @@ pub fn model(input: TokenStream) -> TokenStream {
             name: String,
             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Solution,)*
             #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Solution,)*
-            #(#variable_vis #variable_idents: engi::units::Quantity,)*
+            #(#variable_vis #variable_idents: engi::unit::Quantity,)*
         }
 
         impl engi::model::ModelSolution for #solution_ident {
@@ -418,7 +418,7 @@ impl Default for ConnectAttr {
         Self {
             desc: LitStr::new("", Span::call_site()),
             unit: Expr::parse
-                .parse(quote! {engi::units::defs::UNITLESS}.into())
+                .parse(quote! {engi::unit::defs::UNITLESS}.into())
                 .unwrap(),
 
             shape: Expr::parse
@@ -535,7 +535,7 @@ pub fn interface(input: TokenStream) -> TokenStream {
         /* -------------------------------------------------------------------------- */
 
         #vis struct #solution_ident {
-            #(#connector_vis #connector_idents: engi::units::Quantity,)*
+            #(#connector_vis #connector_idents: engi::unit::Quantity,)*
         }
 
         impl engi::model::InterfaceSolution for #solution_ident {
