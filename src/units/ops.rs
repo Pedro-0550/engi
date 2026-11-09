@@ -1,23 +1,21 @@
 use std::ops::{Div, DivAssign, Mul, MulAssign};
 
-use num::{
-    complex::Complex64,
-    pow::Pow,
-};
+use num::{complex::Complex64, pow::Pow, rational::Ratio};
 
 use crate::{
     core::{
         util::impl_op_permutations,
         value::{ComplexExt, Value},
     },
+    prelude,
     units::{
-        COMPOSITIONS, DIMENSIONLESS, Dimension, Dimensioned, Quantity, Unit,
-        si::rad,
+        Dimension, Dimensioned, Node, Quantity, Unit,
+        defs::{UNITLESS, rad},
     },
 };
 
 impl Dimension {
-    pub const fn pow(self, exponent: i8) -> Self {
+    pub fn pow(self, exponent: Ratio<i8>) -> Self {
         Self {
             T: self.T * exponent,
             L: self.L * exponent,
@@ -95,35 +93,35 @@ impl Mul for Unit {
 
     fn mul(self, rhs: Self) -> Self::Output {
         let result = {
-            match (self, rhs) {
-                (Unit::Composed(id), rhs) if rhs.is_atomic() => {
-                    let mut lhs_comp = COMPOSITIONS.get_cloned(id).unwrap();
-
-                    lhs_comp.push((rhs, 1));
+            match (&*self.fetch(), &*rhs.fetch()) {
+                (Node::Composed { terms: lhs_comp }, _) if rhs.is_atomic() => {
+                    let mut lhs_comp = lhs_comp.clone();
+                    lhs_comp.push((rhs, Ratio::ONE));
                     lhs_comp
                 }
 
-                (_, Unit::Unitless) => return self,
+                (_, Node::Unitless) => return self,
 
-                (lhs, Unit::Composed(id)) if lhs.is_atomic() => {
-                    let mut rhs_comp = COMPOSITIONS.get_cloned(id).unwrap();
-                    let mut new_comp = vec![(self, 1)];
+                (_, Node::Composed { terms: rhs_comp }) if self.is_atomic() => {
+                    let mut new_comp = vec![(self, Ratio::ONE)];
 
-                    new_comp.append(&mut rhs_comp);
+                    new_comp.append(&mut rhs_comp.clone());
                     new_comp
                 }
-                (Unit::Unitless, _) => return rhs,
+                (Node::Unitless, _) => return rhs,
 
-                (Unit::Composed(lhs_id), Unit::Composed(rhs_id)) => {
-                    let mut lhs_comp = COMPOSITIONS.get_cloned(lhs_id).unwrap();
-                    let mut rhs_comp = COMPOSITIONS.get_cloned(rhs_id).unwrap();
-
+                (
+                    Node::Composed { terms: lhs_comp },
+                    Node::Composed { terms: rhs_comp },
+                ) => {
+                    let mut lhs_comp = lhs_comp.clone();
+                    let mut rhs_comp = rhs_comp.clone();
                     lhs_comp.append(&mut rhs_comp);
                     lhs_comp
                 }
 
-                (lhs, rhs) if lhs.is_atomic() && rhs.is_atomic() => {
-                    vec![(lhs, 1), (rhs, 1)]
+                (..) if self.is_atomic() && rhs.is_atomic() => {
+                    vec![(self, Ratio::ONE), (rhs, Ratio::ONE)]
                 }
                 _ => unreachable!(),
             }
@@ -145,20 +143,18 @@ impl Pow<i64> for Unit {
     type Output = Unit;
 
     fn pow(self, exp: i64) -> Self::Output {
-        match self {
-            Self::Unitless => self,
-            _ if self.is_atomic() => {
-                Unit::new_composition(vec![(self, exp as i8)])
-            }
-            Self::Composed(id) => {
-                let comp = COMPOSITIONS
-                    .get_cloned(id)
-                    .unwrap()
+        match &*self.fetch() {
+            Node::Unitless => self,
+            Node::Composed { terms } => {
+                let comp = terms
                     .iter()
-                    .map(|(unit, e)| (*unit, e * exp as i8))
+                    .map(|(unit, e)| (*unit, *e * exp as i8))
                     .collect();
 
                 Unit::new_composition(comp)
+            }
+            _ if self.is_atomic() => {
+                Unit::new_composition(vec![(self, Ratio::new(exp as i8, 1))])
             }
             _ => unreachable!(),
         }
@@ -170,7 +166,7 @@ macro_rules! impl_qty_from_scalar {
         $(
             impl From<$t> for Quantity {
                 fn from(value: $t) -> Self {
-                    Quantity(value.into(), Unit::Unitless)
+                    Quantity(value.into(), UNITLESS)
                 }
             }
         )*
@@ -182,7 +178,7 @@ impl_qty_from_scalar!(i64, f64, Complex64, Value);
 macro_rules! impl_qty_trig_fn {
     ($ident:ident) => {
         pub fn $ident(self) -> Quantity {
-            assert_eq!(self.1.dimension().unwrap(), DIMENSIONLESS, "Trig functions are transcedental, so they can only take dimensionless arguments");
+            assert_eq!(self.1.dimension().unwrap(), Dimension::DIMENSIONLESS, "Trig functions are transcedental, so they can only take dimensionless arguments");
 
             self.0.sin() * self.1
         }
@@ -214,10 +210,10 @@ impl Quantity {
     }
 
     pub fn log(self, base: Quantity) -> Quantity {
-        assert_eq!(base.1, Unit::Unitless, "Log base must be unitless");
-        assert_eq!(self.1, Unit::Unitless, "Log arg must be unitless");
+        assert_eq!(base.1, UNITLESS, "Log base must be unitless");
+        assert_eq!(self.1, UNITLESS, "Log arg must be unitless");
 
-        (self.0.ln() / base.0.ln()) * Unit::Unitless
+        (self.0.ln() / base.0.ln()) * UNITLESS
     }
 
     pub fn atan2(&self, y: &Quantity) -> Quantity {
@@ -321,11 +317,11 @@ impl_op_permutations! {
     },
 
     pow = {
-        if lhs.1 != Unit::Unitless {
+        if lhs.1 != UNITLESS {
             let exp = try { rhs.value().as_scalar()?.as_integer()? }.expect("Non unitless quantities can only be raised to integer powers for now");
             Quantity(lhs.0.pow(exp), lhs.1.pow(exp))
         } else {
-            Quantity(lhs.0.pow(rhs.0), Unit::Unitless)
+            Quantity(lhs.0.pow(rhs.0), UNITLESS)
         }
     },
 

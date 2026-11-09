@@ -20,7 +20,7 @@ use ordered_float::{OrderedFloat, Pow};
 // use ordered_float::OrderedFloat;
 use crate::{
     core::{
-        index::Size,
+        indexed::Size,
         util::{ArcExt, impl_as_variant, impl_op_permutations},
     },
     expr::{

@@ -19,7 +19,7 @@ use tabled::Table;
 
 use crate::{
     self as engi,
-    core::{index::Indexed, value::Value},
+    core::{indexed::Indexed, value::Value},
     expr::Expr,
     id,
     model::eq::{Constraint, Equation},
@@ -770,7 +770,7 @@ mod test {
             solve::LmSolver,
         },
         symbol::constants::{kB, q},
-        units::si::*,
+        units::defs::*,
     };
 
     #[derive(Interface, Clone)]

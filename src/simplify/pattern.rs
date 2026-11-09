@@ -8,7 +8,7 @@ use num::{complex::Complex64, pow::Pow};
 
 use crate::{
     core::{
-        index::{Indexed, Size},
+        indexed::{Indexed, Size},
         util::impl_op_permutations,
         value::Value,
     },
@@ -36,8 +36,8 @@ type Registers = Indexed<Vec<ClassId>, RegisterId>;
 // This should be updated if we ever use more than 4 wildcard ids in rules
 pub const WILDCARD_COUNT: usize = 4;
 
-id!(Wildcard, u8);
-id!(RegisterId);
+id!(pub Wildcard, u8);
+id!(pub(crate) RegisterId);
 
 pub struct Program {
     code: Vec<Instruction>,

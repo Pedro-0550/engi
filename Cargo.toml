@@ -5,20 +5,17 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-num = "0.4"
-
 itertools = "0.15"
 crabtime = "1.1.4"
 
 # float_eq = "1.0"
 ordered-float = "5.3"
 
-dashmap = "6"
-
+num = "0.4"
 nalgebra = "0.34"
 approx = "0.5.1"
 simba = "0.9"
-fixed = "1.31"
+# fixed = "1.31"
 levenberg-marquardt = "0.15"
 
 # nlopt = "0.8"
@@ -28,7 +25,10 @@ ahash = "*"
 rayon = "*"
 
 petgraph = "0.8.3"
+boxcar = "0.2"
+dashmap = "6.2"
 
+bon = "3.10"
 kinded = "*"
 thiserror = "2.0"
 derive_more = { version = "2", features = [
@@ -43,7 +43,7 @@ derive_more = { version = "2", features = [
     "mul_assign",
 
 ] }
-
+pastey = "0.2"
 tabled = "0.22"
 
 engi-macros = { path = "./macros" }

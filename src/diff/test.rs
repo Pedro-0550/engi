@@ -19,5 +19,6 @@ fn diff() {
             * log(x + y, x.pow(2) + y + 1.0)
             * tan(x * y);
     let df_dx = f_of_xy.diff(x);
+
     panic!("{}, {}", df_dx, df_dx.size());
 }

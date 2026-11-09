@@ -15,7 +15,7 @@ use num::{Zero, complex::ComplexFloat, pow::Pow as _};
 use crate::{
     core::{
         consed::Insertion::{self},
-        index::{Indexed, Size},
+        indexed::{Indexed, Size},
     },
     expr::{
         Expr, FoldedOperand, Operand, OperandKind,
@@ -43,8 +43,8 @@ mod test;
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-id!(ClassId);
-id!(MatchlistCursor);
+id!(pub(crate) ClassId);
+id!(pub(crate) MatchlistCursor);
 
 #[derive(Hash, PartialEq, Eq, Clone)]
 pub struct Substitution {
@@ -60,6 +60,7 @@ pub struct EquivalencyGraph {
     dirty: bool,
 }
 
+// Todo: convert to AoS
 pub struct EquivalencyClass {
     // while this does use a bit more memory, its 12% faster over a hashmap,
     // even though a hashmap would only need to hash 2 bytes..

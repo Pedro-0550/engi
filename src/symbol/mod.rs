@@ -1,9 +1,17 @@
-use std::{fmt::Display, hash::Hash};
+use std::{
+    fmt::Display,
+    hash::Hash,
+    sync::{LazyLock, RwLock},
+};
+
+use bon::Builder;
 
 use crate::{
-    core::interned::{Handle, Interned},
+    core::consed::{ConcurrentConsed, Consed},
     expr::{domain::Domain, shape::Shape},
-    units::Unit,
+    id,
+    symbol::symbol_builder::IsComplete,
+    units::{Unit, defs::UNITLESS},
 };
 
 /* --------------------------------- MODULES -------------------------------- */
@@ -12,7 +20,9 @@ pub mod constants;
 
 /* -------------------------------- CONSTANTS ------------------------------- */
 
-static SYMBOLS: Interned<SymbolInfo> = Interned::new();
+static SYMBOLS: LazyLock<ConcurrentConsed<Meta, MetaId>> =
+    LazyLock::new(|| ConcurrentConsed::default());
+id!(MetaId);
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
@@ -21,18 +31,33 @@ static SYMBOLS: Interned<SymbolInfo> = Interned::new();
 //     next_id: SymbolId,
 // }
 
-#[derive(Clone, Hash, Eq, PartialEq)]
-pub struct SymbolInfo {
-    name: &'static str,
-    desc: &'static str,
-    unit: Unit,
-    shape: Shape,
-    domain: Domain,
-    realization: Realization,
+#[derive(Clone, Hash, Eq, PartialEq, Builder)]
+#[builder(
+    builder_type(
+        name = SymbolBuilder,
+        vis = "pub"
+    ),
+    finish_fn(
+        name = build_internal,
+        vis = "pub(self)",
+    )
+)]
+struct Meta {
+    pub name: &'static str,
+    #[builder(default = "")]
+    pub desc: &'static str,
+    #[builder(default = UNITLESS)]
+    pub unit: Unit,
+    #[builder(default = Shape::SCALAR)]
+    pub shape: Shape,
+    #[builder(default = Domain::REAL)]
+    pub domain: Domain,
+    #[builder(default = Realization::Primary)]
+    pub realization: Realization,
 }
 
-#[derive(PartialEq, Clone, Debug, Copy, Hash, Eq)]
-pub struct Symbol(pub(crate) Handle<SymbolInfo>);
+#[derive(PartialEq, Clone, Debug, Copy, Hash, Eq, PartialOrd, Ord)]
+pub struct Symbol(pub(crate) MetaId);
 
 #[macro_export]
 macro_rules! symbols {
@@ -57,25 +82,41 @@ pub enum Realization {
 
 /* ---------------------------------- IMPLS --------------------------------- */
 
+impl<S> SymbolBuilder<S>
+where
+    S: IsComplete,
+{
+    pub fn build(self) -> Symbol {
+        let meta = self.build_internal();
+        let id = SYMBOLS.insert(meta);
+
+        Symbol(id)
+    }
+}
+
 impl Symbol {
+    pub fn builder() -> SymbolBuilder {
+        Meta::builder()
+    }
+
     pub fn new(name: &str) -> Self {
-        let handle = SYMBOLS.insert(SymbolInfo {
+        let id = SYMBOLS.insert(Meta {
             name: name.to_owned().leak(),
             desc: "",
-            unit: Unit::Unitless,
+            unit: UNITLESS,
             shape: Shape::SCALAR,
             domain: Domain::COMPLEX,
             realization: Realization::Primary,
         });
 
-        Symbol(handle)
+        Symbol(id)
     }
 
     /// Splits off an imaginary part from this symbol. Returns itself if its already an imag part, or None if its a real part.
     pub fn imag(self) -> Option<Self> {
         match self.realization() {
             Realization::Primary => {
-                let handle = SYMBOLS.insert(SymbolInfo {
+                let id = SYMBOLS.insert(Meta {
                     name: format!("Im{{{}}}", self.name()).leak(),
                     desc: format!("{} (imag part)", self.desc()).leak(),
                     unit: self.unit(),
@@ -84,7 +125,7 @@ impl Symbol {
                     realization: Realization::Imag(self),
                 });
 
-                Some(Symbol(handle))
+                Some(Symbol(id))
             }
             Realization::Real(_symbol) => None,
             Realization::Imag(_symbol) => Some(self),
@@ -95,7 +136,7 @@ impl Symbol {
     pub fn real(self) -> Option<Self> {
         match self.realization() {
             Realization::Primary => {
-                let handle = SYMBOLS.insert(SymbolInfo {
+                let id = SYMBOLS.insert(Meta {
                     name: format!("Re{{{}}}", self.name()).leak(),
                     desc: format!("{} (real part)", self.desc()).leak(),
                     unit: self.unit(),
@@ -104,7 +145,7 @@ impl Symbol {
                     realization: Realization::Real(self),
                 });
 
-                Some(Symbol(handle))
+                Some(Symbol(id))
             }
             Realization::Real(_symbol) => Some(self),
             Realization::Imag(_symbol) => None,
@@ -113,7 +154,7 @@ impl Symbol {
 
     /// If this symbol is a realization of another symbol, return that, otherwise None.
     pub fn as_primary(self) -> Option<Self> {
-        match SYMBOLS.get(self.0).expect("invalid symbol handle").realization {
+        match SYMBOLS.con_get(self.0).expect("invalid symbol id").realization {
             Realization::Primary => None,
             Realization::Real(symbol) | Realization::Imag(symbol) => {
                 Some(symbol)
@@ -121,65 +162,37 @@ impl Symbol {
         }
     }
 
-    pub fn realization(self) -> Realization {
-        SYMBOLS.get(self.0).expect("invalid symbol handle").realization
-    }
+    /* -------------------------------------------------------------------------- */
 
-    pub fn set_domain(self, domain: Domain) -> Self {
-        SYMBOLS.modify(self.0, |mut i| i.domain = domain);
-        self
+    pub fn realization(self) -> Realization {
+        SYMBOLS.con_get(self.0).expect("invalid symbol id").realization
     }
 
     pub fn name(&self) -> &str {
-        SYMBOLS.get(self.0).expect("invalid symbol handle").name
+        SYMBOLS.con_get(self.0).expect("invalid symbol id").name
     }
 
     pub fn unit(&self) -> Unit {
-        SYMBOLS.get(self.0).expect("invalid symbol handle").unit.clone()
-    }
-
-    pub fn set_unit(self, unit: Unit) -> Self {
-        SYMBOLS.modify(self.0, |mut i| i.unit = unit);
-        self
+        SYMBOLS.con_get(self.0).expect("invalid symbol id").unit.clone()
     }
 
     pub fn shape(&self) -> Shape {
-        SYMBOLS.get(self.0).expect("invalid symbol handle").shape.clone()
-    }
-
-    pub fn set_shape(self, shape: Shape) -> Self {
-        SYMBOLS.modify(self.0, |mut i| i.shape = shape);
-        self
+        SYMBOLS.con_get(self.0).expect("invalid symbol id").shape.clone()
     }
 
     pub fn desc(&self) -> &str {
-        SYMBOLS.get(self.0).expect("invalid symbol handle").desc
-    }
-
-    pub fn set_desc(self, desc: String) -> Self {
-        SYMBOLS.modify(self.0, |mut i| i.desc = desc.leak());
-        self
+        SYMBOLS.con_get(self.0).expect("invalid symbol id").desc
     }
 
     pub fn domain(&self) -> Domain {
-        SYMBOLS.get(self.0).expect("invalid symbol handle").domain
+        SYMBOLS.con_get(self.0).expect("invalid symbol id").domain
     }
 }
+
+/* -------------------------------------------------------------------------- */
 
 impl Display for Symbol {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
-    }
-}
-
-impl Ord for Symbol {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.name().cmp(other.name()).then_with(|| self.0.0.cmp(&other.0.0))
-    }
-}
-
-impl PartialOrd for Symbol {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
     }
 }

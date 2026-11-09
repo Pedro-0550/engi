@@ -8,15 +8,15 @@
 #![feature(never_type)]
 #![feature(const_convert)]
 #![feature(option_zip)]
+#![feature(mapped_lock_guards)]
+#![feature(const_default)]
 #![warn(unused_crate_dependencies)]
-
 pub use tabled;
 
 // pub mod math;
 pub mod core {
     pub mod consed;
-    pub mod index;
-    pub mod interned;
+    pub mod indexed;
     pub mod util;
     pub mod value;
 }
@@ -27,3 +27,15 @@ pub mod model;
 pub mod simplify;
 pub mod symbol;
 pub mod units;
+
+pub mod prelude {
+    pub use num::pow::Pow;
+
+    pub use crate::{
+        model::{
+            Interface, InterfaceArrayExt, Model, ModelBuilder, System,
+            Variable, VariableBuilder,
+        },
+        units::{Quantity, defs::*, ops::*},
+    };
+}

@@ -66,6 +66,7 @@ pub fn algebraic() -> Vec<Rule> {
         rule!({ x + 0 } -> { x }),
 
         rule!({ x + x } <-> { 2 * x }),
+        rule!({ (y * x) + x } -> { (y + 1) * x}),
         rule!({ x - x } -> { 0 }),
         rule!({ -(-x) } <-> { x }),
 

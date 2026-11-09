@@ -10,13 +10,15 @@ use kinded::Kinded;
 use num::complex::Complex64;
 
 use crate::{
-    core::{consed::Consed, index::Size, util::impl_as_variant, value::Value},
+    core::{
+        consed::Consed, indexed::Size, util::impl_as_variant, value::Value,
+    },
     expr::{Operand, shape::Shape},
     id,
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
     simplify::pattern::Wildcard,
     symbol::{Symbol, constants::Constant},
-    units::{Quantity, Unit::Unitless},
+    units::{Quantity, defs::UNITLESS},
 };
 
 macro_rules! unary {
@@ -181,22 +183,22 @@ pub struct Dag<O: Hash + Eq, OKey, LKey, MKey> {
 
 id!(
     /// An unique index for a [`Leaf`], valid only within the same [`Dag`]
-    LeafId
+    pub LeafId
 );
 
 id!(
     /// An unique index for an [`Operation`], valid only within the same [`Dag`]
-    OperationId
+    pub OperationId
 );
 
 id!(
     /// An unique index for a [`Matrix`], valid only within the same [`Dag`]
-    MatrixId
+    pub MatrixId
 );
 
 id!(
     /// An unique index for a [`Condition`], valid only within the same [`Dag`]
-    ConditionId
+    pub ConditionId
 );
 
 /* -------------------------------------------------------------------------- */
@@ -543,25 +545,25 @@ impl Leaf {
 
 impl From<f64> for Leaf {
     fn from(value: f64) -> Self {
-        Leaf::Quantity(value * Unitless)
+        Leaf::Quantity(value * UNITLESS)
     }
 }
 
 impl From<i64> for Leaf {
     fn from(value: i64) -> Self {
-        Leaf::Quantity(value * Unitless)
+        Leaf::Quantity(value * UNITLESS)
     }
 }
 
 impl From<Complex64> for Leaf {
     fn from(value: Complex64) -> Self {
-        Leaf::Quantity(value * Unitless)
+        Leaf::Quantity(value * UNITLESS)
     }
 }
 
 impl From<Value> for Leaf {
     fn from(value: Value) -> Self {
-        Leaf::Quantity(value * Unitless)
+        Leaf::Quantity(value * UNITLESS)
     }
 }
 

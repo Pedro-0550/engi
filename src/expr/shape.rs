@@ -2,7 +2,7 @@ use std::num::NonZero;
 
 use super::dag::Leaf;
 use crate::{
-    core::index::Size,
+    core::indexed::Size,
     expr::{
         Expr, FoldedOperand, Operand,
         dag::{Matrix, Operation},

@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use crate::units::{Quantity, Unit, si::*};
+use crate::units::{Quantity, Unit, defs::*};
 
 macro_rules! constants {
     (
@@ -39,10 +39,10 @@ macro_rules! constants {
 
 constants! {
     /// Archimedes's constant
-    π = 3.1415926535897932384 * Unit::Unitless,
+    π = 3.1415926535897932384 * UNITLESS,
 
     /// Euler's number
-    e = 2.7182818284590452353 * Unit::Unitless,
+    e = 2.7182818284590452353 * UNITLESS,
 
     /// Speed of light in a vacuum
     ///

@@ -4,15 +4,18 @@ use std::fmt::Debug;
 
 use ahash::AHashMap;
 use itertools::Itertools;
-use levenberg_marquardt::{LeastSquaresProblem, LevenbergMarquardt};
-use nalgebra::{DMatrix, DVector, Dyn, Matrix, Owned, Vector};
-use num::Complex;
+use levenberg_marquardt::{
+    LeastSquaresProblem, LevenbergMarquardt,
+    TerminationReason::{self, NoImprovementPossible},
+};
+use nalgebra::{DMatrix, DVector, Dyn, Matrix, Normed, Owned, Vector, dvector};
+use num::{Complex, Zero};
 use rayon::iter::{
     IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
 
 use crate::{
-    core::value::Value,
+    core::value::{EQ_REL_TOL, Value},
     expr::{Expr, domain::Realized, jit::CompiledExpr},
     model::{Solver, Variable},
     symbol::{Realization, Symbol},
@@ -24,7 +27,7 @@ pub struct LmSolver;
 pub struct LmProblem {
     residuals: Vec<CompiledExpr>,
     jacobian: Vec<Vec<CompiledExpr>>,
-    x: Vec<f64>,
+    x: DVector<f64>,
     symbols: Vec<Symbol>,
 }
 
@@ -48,6 +51,11 @@ impl Solver for LmSolver {
         // constraints: Vec<Constraint>,
         guesses: &AHashMap<Variable, Value>,
     ) -> Result<Vec<(Variable, Value)>, Self::Error> {
+        println!("Solving:");
+        for r in &residuals {
+            println!("{}", r)
+        }
+
         let realized_residuals = residuals
             .into_iter()
             .flat_map(|resid| resid.realize().unpack())
@@ -66,6 +74,7 @@ impl Solver for LmSolver {
                 let scale = guesses
                     .get(&Variable(primary))
                     .and_then(|x| x.as_scalar().copied())
+                    .filter(|x| !x.is_zero())
                     .unwrap_or(Complex::ONE);
 
                 (
@@ -103,15 +112,35 @@ impl Solver for LmSolver {
             .collect();
 
         let problem = LmProblem {
-            x: vec![1.0; residuals.len()],
+            x: DVector::from_element(symbols.len(), 1.0),
             jacobian,
             residuals,
             symbols: symbols.clone(),
         };
-        let (p, _) = LevenbergMarquardt::new()
-            .with_ftol(1e-18)
-            .with_xtol(1e-18)
+        let (p, report) = LevenbergMarquardt::new()
+            .with_ftol(1e-13)
+            .with_xtol(1e-20)
+            .with_patience(1000000)
+            .with_scale_diag(true)
             .minimize(problem);
+
+        let residual_norm =
+            (p.evaluate().component_mul(&DVector::from_iterator(
+                symbols.len(),
+                symbols.iter().map(|s| {
+                    let primary = s.as_primary().unwrap();
+                    guesses
+                        .get(&Variable(primary))
+                        .and_then(|x| x.as_scalar().copied())
+                        .filter(|x| !x.is_zero())
+                        .unwrap_or(Complex::ONE)
+                        .re
+                }),
+            )))
+            .norm();
+
+        assert!(report.termination.was_successful());
+        assert!(report.objective_function.abs() < 1e-10);
 
         Ok(p.x
             .into_iter()
@@ -138,7 +167,27 @@ impl Solver for LmSolver {
     }
 }
 
-// float hack
+impl LmProblem {
+    fn evaluate(&self) -> DVector<f64> {
+        DVector::from_iterator(
+            self.residuals.len(),
+            self.residuals.iter().map(|r| {
+                r.eval_realized(
+                    &self
+                        .symbols
+                        .iter()
+                        .copied()
+                        .zip(self.x.iter().copied())
+                        .collect(),
+                )
+                .as_scalar_real()
+                .unwrap()
+                .into()
+            }),
+        )
+    }
+}
+
 impl LeastSquaresProblem<f64, Dyn, Dyn> for LmProblem {
     type ResidualStorage = Owned<f64, Dyn>;
     type ParameterStorage = Owned<f64, Dyn>;
@@ -155,22 +204,11 @@ impl LeastSquaresProblem<f64, Dyn, Dyn> for LmProblem {
     }
 
     fn residuals(&self) -> Option<DVector<f64>> {
-        Some(DVector::from_iterator(
-            self.residuals.len(),
-            self.residuals.iter().map(|r| {
-                r.eval_realized(
-                    &self
-                        .symbols
-                        .iter()
-                        .copied()
-                        .zip(self.x.iter().copied())
-                        .collect(),
-                )
-                .as_scalar_real()
-                .unwrap()
-                .into()
-            }),
-        ))
+        let f = self.evaluate();
+        println!("x -> {}", self.params());
+        println!("f(x) -> {f}");
+
+        Some(f)
     }
 
     fn jacobian(&self) -> Option<DMatrix<f64>> {

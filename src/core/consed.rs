@@ -1,18 +1,20 @@
 use std::{
     hash::Hash,
     ops::{Deref, DerefMut},
+    sync::atomic::{Atomic, Ordering},
 };
 
 use ahash::AHashMap;
+use dashmap::{DashMap, mapref::one::Ref};
 
-use crate::core::index::Indexed;
+use crate::core::indexed::Indexed;
 
 pub enum Insertion<Key, Idx> {
     Existed(Key),
     Added(Idx),
 }
 
-/// Hash-consing Vec<T>
+/// Append-only hash-consing Vec<T>
 #[derive(PartialEq, Eq, Clone)]
 pub struct Consed<T: Hash + Eq, Key, Idx = Key> {
     cons: AHashMap<T, Key>,
@@ -61,8 +63,6 @@ where
         }
     }
 
-    pub fn replace_with(&mut self, _val: T, _at: Idx, _key: Key) {}
-
     pub fn key(&self, v: &T) -> Option<&Key> {
         self.cons.get(v)
     }
@@ -101,6 +101,100 @@ where
     T: Hash + Eq,
 {
     type Target = Indexed<Vec<T>, Idx>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.values
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
+/// Append-only hash-consing concurrent Vec<T>
+pub struct ConcurrentConsed<T: Hash + Eq, Key, Idx = Key> {
+    cons: DashMap<T, Key>,
+    values: Indexed<boxcar::Vec<T>, Idx>,
+    next: Atomic<usize>,
+}
+
+impl<T, Key> ConcurrentConsed<T, Key, Key>
+where
+    T: Hash + Eq + Clone,
+    Key: From<usize> + Copy,
+{
+    pub fn insert(&self, val: T) -> Key {
+        if let Some(existing) = self.cons.get(&val) {
+            *existing
+        } else {
+            let idx = self.values.con_push(val.clone());
+            self.next.fetch_add(1, Ordering::SeqCst);
+
+            self.cons.insert(val, idx);
+
+            idx
+        }
+    }
+}
+
+impl<T, Key, Idx> ConcurrentConsed<T, Key, Idx>
+where
+    T: Hash + Eq + Clone,
+    Idx: From<usize>,
+    Key: Copy,
+{
+    pub fn contains(&self, val: &T) -> bool {
+        self.cons.contains_key(val)
+    }
+
+    pub fn insert_with(&mut self, val: T, key: Key) -> Insertion<Key, Idx> {
+        if let Some(existing) = self.cons.get(&val) {
+            Insertion::Existed(*existing)
+        } else {
+            let idx = self.next.fetch_add(1, Ordering::SeqCst);
+            self.values.con_push(val.clone());
+            self.cons.insert(val, key);
+
+            Insertion::Added(idx.into())
+        }
+    }
+
+    pub fn key(&self, v: &T) -> Option<Ref<'_, T, Key>> {
+        self.cons.get(v)
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (Idx, &T)>
+    where
+        T: 'static, {
+        self.values.con_iter()
+    }
+}
+
+impl<T, Key, Idx> Default for ConcurrentConsed<T, Key, Idx>
+where
+    T: Hash + Eq,
+{
+    fn default() -> Self {
+        Self {
+            cons: DashMap::new(),
+            values: boxcar::Vec::new().into(),
+            next: Atomic::default(),
+        }
+    }
+}
+
+impl<T, Key, Idx> DerefMut for ConcurrentConsed<T, Key, Idx>
+where
+    T: Hash + Eq,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.values
+    }
+}
+
+impl<T, Key, Idx> Deref for ConcurrentConsed<T, Key, Idx>
+where
+    T: Hash + Eq,
+{
+    type Target = Indexed<boxcar::Vec<T>, Idx>;
 
     fn deref(&self) -> &Self::Target {
         &self.values

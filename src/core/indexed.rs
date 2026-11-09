@@ -11,7 +11,7 @@ pub type Size = u16;
 
 #[macro_export]
 macro_rules! id {
-    ($(#[$meta:meta])* $n:ident, $t:ty) => {
+    ($(#[$meta:meta])* $vis:vis $n:ident, $t:ty) => {
         #[derive(
             Copy,
             Clone,
@@ -21,12 +21,13 @@ macro_rules! id {
             Ord,
             PartialOrd,
             Default,
+            Debug,
             derive_more::Into,
             derive_more::From,
         )]
         #[repr(transparent)]
         $(#[$meta])*
-        pub struct $n($t);
+        $vis struct $n($t);
 
         const impl From<usize> for $n {
             fn from(v: usize) -> $n {
@@ -40,8 +41,8 @@ macro_rules! id {
             }
         }
     };
-    ($(#[$meta:meta])* $n:ident) => {
-        id!($(#[$meta])* $n, crate::core::index::Size);
+    ($(#[$meta:meta])* $vis:vis $n:ident) => {
+        id!($(#[$meta])* $vis $n, crate::core::indexed::Size);
     };
 }
 
@@ -102,6 +103,25 @@ where
 
     pub fn next(&self) -> I {
         I::from(self.len())
+    }
+}
+
+impl<U, I> Indexed<boxcar::Vec<U>, I>
+where
+    I: From<usize>,
+{
+    pub fn con_push(&self, val: U) -> I {
+        I::from(self.collection.push(val))
+    }
+
+    pub fn con_iter(&self) -> impl Iterator<Item = (I, &U)> {
+        self.collection.iter().map(|(i, v)| (I::from(i), v))
+    }
+
+    pub fn con_get(&self, idx: I) -> Option<&U>
+    where
+        I: Into<usize>, {
+        self.collection.get(idx.into())
     }
 }
 

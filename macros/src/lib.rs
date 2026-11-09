@@ -113,7 +113,7 @@ pub fn model(input: TokenStream) -> TokenStream {
                     var.desc.unwrap_or(LitStr::new("", Span::call_site()));
                 let unit = var.unit.unwrap_or(
                     Expr::parse
-                        .parse(quote! {engi::units::Unit::Unitless}.into())
+                        .parse(quote! {engi::units::defs::UNITLESS}.into())
                         .unwrap(),
                 );
 
@@ -190,16 +190,18 @@ pub fn model(input: TokenStream) -> TokenStream {
 
             quote! {
                 #field_ident: engi::model::Variable::new(
-                    engi::symbol::Symbol::new(
-                        &format!(
+                    engi::symbol::Symbol::builder()
+                    .name(
+                        format!(
                             "{}.{}",
                             name,
                             stringify!(#field_ident)
-                        )
+                        ).leak()
                     )
-                    .set_unit(#unit)
-                    .set_shape(#shape)
-                    .set_desc(#desc.to_owned())
+                    .unit(#unit)
+                    .shape(#shape)
+                    .desc(#desc)
+                    .build()
                 )
             }
         })
@@ -416,7 +418,7 @@ impl Default for ConnectAttr {
         Self {
             desc: LitStr::new("", Span::call_site()),
             unit: Expr::parse
-                .parse(quote! {engi::units::Unit::Unitless}.into())
+                .parse(quote! {engi::units::defs::UNITLESS}.into())
                 .unwrap(),
 
             shape: Expr::parse
@@ -496,10 +498,19 @@ pub fn interface(input: TokenStream) -> TokenStream {
         let field_ident = field.ident.clone().unwrap();
         quote! {
             #field_ident: engi::model::Connector::new(engi::model::Variable::new(
-                engi::symbol::Symbol::new(&format!("{}.{}", name, stringify!(#field_ident)))
-                    .set_unit(#unit)
-                    .set_shape(#shape)
-                    .set_desc(#desc.to_owned())
+                engi::symbol::Symbol::builder()
+                .name(
+                    format!(
+                        "{}.{}",
+                        name,
+                        stringify!(#field_ident)
+                    )
+                    .leak()
+                )
+                .unit(#unit)
+                .shape(#shape)
+                .desc(#desc)
+                .build()
             ), #condition)
         }
     });

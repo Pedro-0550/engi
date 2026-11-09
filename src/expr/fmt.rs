@@ -20,7 +20,7 @@ use crate::{
         Symbol,
         constants::{Constant, e},
     },
-    units::{Quantity, Unit::Unitless},
+    units::{Quantity, defs::UNITLESS},
 };
 
 /// Determines whether two operands can be joined in a multiplication
@@ -59,7 +59,7 @@ impl Expr {
                     Joinable
                 }
                 Leaf::Quantity(quantity) => {
-                    if quantity.unit() == Unitless {
+                    if quantity.unit() == UNITLESS {
                         Lhs
                     } else {
                         DisjointParens

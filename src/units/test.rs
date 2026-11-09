@@ -1,8 +1,5 @@
 use super::*;
-use crate::units::{
-    non_si::eV,
-    si::{Hz, J, m, s},
-};
+use crate::units::defs::{B, Hz, J, K, eV, m, oC, s};
 
 /* -------------------------------- FUNCTIONS ------------------------------- */
 
@@ -21,10 +18,12 @@ pub fn equivalence() {
 
 #[test]
 pub fn normalization() {
-    assert_eq!((10.0 * eV / J).normalize(), 1.602176634e-18)
+    assert_eq!((10.0 * eV / J).normalize(), 1.602176634e-18);
+    assert_eq!((100.0 * oC).normalize(), 373.15 * K);
+    assert_eq!((3 * B).normalize(), 1000);
 }
 
 #[test]
 pub fn analysis() {
-    assert_eq!((eV / J).dimension().unwrap(), DIMENSIONLESS);
+    assert_eq!((eV / J).dimension().unwrap(), Dimension::DIMENSIONLESS);
 }

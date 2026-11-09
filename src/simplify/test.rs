@@ -16,6 +16,6 @@ fn simple() {
     symbols!(x);
     assert_eq!(
         (sin(x).pow(2) + cos(x).pow(2) + 2 * x + 3 * x).simplified(),
-        1 + x * 5
+        1 + 5 * x
     );
 }

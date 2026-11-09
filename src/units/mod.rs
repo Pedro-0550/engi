@@ -1,35 +1,43 @@
 use std::{
     fmt::{Display, Write},
     hash::Hash,
+    sync::{LazyLock, MappedRwLockReadGuard, RwLock, RwLockReadGuard},
 };
 
+use cranelift::codegen::gimli::write::UnitId;
 use itertools::Itertools;
+use num::{One, Rational, Signed, ToPrimitive, Zero, rational::Ratio};
 use ordered_float::{OrderedFloat, Pow};
 use thiserror::Error;
 
 use crate::{
     core::{
-        interned::{Handle, Interned},
+        consed::{ConcurrentConsed, Consed},
         util::to_superscript,
         value::Value,
     },
     expr::Expr,
-    units::isq::DIMENSIONLESS,
+    id,
+    units::defs::{DEFAULT_UNITS, UNITLESS},
 };
 
-pub mod isq;
-pub mod non_si;
+pub mod defs;
 pub mod ops;
-pub mod si;
 
 #[cfg(test)]
 mod test;
 
 /* -------------------------------- CONSTANTS ------------------------------- */
 
-type Composition = Vec<(Unit, i8)>;
+static DAG: LazyLock<ConcurrentConsed<Node, NodeId>> = LazyLock::new(|| {
+    let mut c = ConcurrentConsed::<Node, NodeId>::default();
+    for (i, node) in DEFAULT_UNITS.into_iter().enumerate() {
+        assert_eq!(c.insert(node).0 as usize, i);
+    }
+    c
+});
 
-static COMPOSITIONS: Interned<Composition> = Interned::new();
+id! { pub NodeId }
 
 /* ---------------------------------- ENUMS --------------------------------- */
 
@@ -58,19 +66,63 @@ pub trait Dimensioned {
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
+type Exponent = Ratio<i8>;
+
 #[derive(Clone, Debug, Hash, Default)]
 pub struct Quantity(Value, Unit);
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Hash)]
 #[allow(non_snake_case)]
 pub struct Dimension {
-    T: i8, // time
-    L: i8, // length
-    M: i8, // mass
-    I: i8, // electric current
-    θ: i8, // thermodynamic temperature
-    J: i8, // luminous intensity
-    N: i8, // amount of substance
+    T: Ratio<i8>, // time
+    L: Ratio<i8>, // length
+    M: Ratio<i8>, // mass
+    I: Ratio<i8>, // electric current
+    θ: Ratio<i8>, // thermodynamic temperature
+    J: Ratio<i8>, // luminous intensity
+    N: Ratio<i8>, // amount of substance
+}
+
+#[derive(PartialEq, Clone, Debug, Hash, Eq, Default)]
+#[allow(non_snake_case)]
+enum Node {
+    Base {
+        symbol: &'static str,
+        dimension: Dimension,
+    },
+    Derived {
+        symbol: &'static str,
+        base: &'static [(NodeId, i8)],
+    },
+    Composed {
+        terms: Vec<(NodeId, Exponent)>,
+    },
+    /// Linear units are defined by a linear transformation on its base unit:
+    /// `linaer = scale * base`
+    Linear {
+        symbol: &'static str,
+        base: NodeId,
+        scale: OrderedFloat<f64>,
+    },
+    /// Affine units are defined by an affine transformation on its base unit:
+    /// `affine = (scale * base) + offset`
+    Affine {
+        symbol: &'static str,
+        base: NodeId,
+        offset: OrderedFloat<f64>,
+        scale: OrderedFloat<f64>,
+    },
+    /// Logarithmic units are defined by a log operation on its reference unit:
+    /// `logarithmic = log(base, ref)`
+    /// such that `ref = base^logarithmic`
+    // Function syntax for setting refernces: dB(V), dB(mW)
+    Logarithmic {
+        symbol: &'static str,
+        reference: NodeId,
+        base: OrderedFloat<f64>,
+    },
+    #[default]
+    Unitless,
 }
 
 /// This type is a *representation* of a unit.
@@ -90,46 +142,67 @@ pub struct Dimension {
 ///
 /// Order is preserved during compositions, and different orders of the same compositions are not Eq,
 /// but order is ignored during checking, and only the equivalence is taken into account.
-#[derive(PartialEq, Clone, Copy, Debug, Hash, Eq, Default)]
-#[allow(non_snake_case)]
-pub enum Unit {
-    Base {
-        symbol: &'static str,
-        dimension: Dimension,
-    },
-    Derived {
-        symbol: &'static str,
-        base: &'static [(Unit, i8)],
-    },
-    Composed(Handle<Composition>),
-    Linear {
-        symbol: &'static str,
-        base: &'static Unit,
-        scale: OrderedFloat<f64>,
-    },
-    // Affine {
-    //     symbol: &'static str,
-    //     base: &'static Unit,
-    //     offset: OrderedFloat<f64>,
-    // },
-    // // Function syntax for setting refernces: dB(V), dB(mW)
-    // Logarithmic {
-    //     symbol: &'static str,
-    //     reference: (OrderedFloat<f64>, &'static Unit),
-    //     base: OrderedFloat<f64>,
-    // },
-    #[default]
-    Unitless,
-}
+pub type Unit = NodeId;
+
+// Unitless's index must be 0 so that the default is Unitless
+const _: () = assert!(UNITLESS.0 == 0);
 
 /* ---------------------------------- IMPLS --------------------------------- */
+
+const impl Default for Dimension {
+    fn default() -> Self {
+        Self {
+            T: Ratio::ZERO,
+            L: Ratio::ZERO,
+            M: Ratio::ZERO,
+            I: Ratio::ZERO,
+            θ: Ratio::ZERO,
+            J: Ratio::ZERO,
+            N: Ratio::ZERO,
+        }
+    }
+}
+
+impl Dimension {
+    pub const DIMENSIONLESS: Dimension = Dimension::default();
+
+    // SI base dimensions
+
+    pub const TIME: Dimension =
+        Dimension { T: Ratio::ONE, ..Default::default() };
+
+    pub const LENGTH: Dimension =
+        Dimension { L: Ratio::ONE, ..Default::default() };
+
+    pub const MASS: Dimension =
+        Dimension { M: Ratio::ONE, ..Default::default() };
+
+    pub const ELECTRIC_CURRENT: Dimension =
+        Dimension { I: Ratio::ONE, ..Default::default() };
+
+    pub const TEMPERATURE: Dimension =
+        Dimension { θ: Ratio::ONE, ..Default::default() };
+
+    pub const LUMINOUS_INTENSITY: Dimension =
+        Dimension { J: Ratio::ONE, ..Default::default() };
+
+    pub const AMOUNT_OF_SUBSTANCE: Dimension =
+        Dimension { N: Ratio::ONE, ..Default::default() };
+}
+
+impl NodeId {
+    fn fetch(&self) -> &Node {
+        DAG.con_get(*self).unwrap()
+        // RwLockReadGuard::map(DAG.read().unwrap(), |x| x.get(*self).unwrap())
+    }
+}
 
 impl Quantity {
     pub const fn new(value: Value, unit: Unit) -> Self {
         Self(value, unit)
     }
 
-    pub const ZERO: Self = Self(Value::ZERO, Unit::Unitless);
+    pub const ZERO: Self = Self(Value::ZERO, UNITLESS);
 
     pub fn realize(&self) -> [Quantity; 2] {
         let [re, im] = self.0.realize();
@@ -141,6 +214,8 @@ impl Quantity {
     /// If this quantity is given in a scaled unit such as eV, it will convert to Joule and scale its value appropriately.
     /// This will be done recursively until a non-scaled unit is reached.
     /// If this quantity is given in a composition containing scaled units, all scaled units will be reduced to non-scaled form.
+    /// If this quantity is logarithmic, it will be converted to the linear form.
+    /// For affine quantities, their scaling and offset will be applied.
     ///
     /// If it does not contain any scale, self is returned instead.
     ///
@@ -150,22 +225,33 @@ impl Quantity {
         let Quantity(mut current_val, mut current_unit) = self;
 
         loop {
-            let normalized = match current_unit {
-                Unit::Linear { base, scale, .. } => {
+            let normalized = match *current_unit.fetch() {
+                Node::Linear { base, scale, .. } => {
                     current_val *= scale.0;
-                    *base
+                    base
                 }
-                Unit::Composed(id) => {
-                    let mut composition = COMPOSITIONS.get_cloned(id).unwrap();
-
-                    for (unit, exp) in composition.iter_mut() {
-                        if let Unit::Linear { base, scale, .. } = *unit {
-                            *unit = *base;
-                            current_val *= scale.powi(*exp as i32);
+                Node::Composed { ref terms } => {
+                    let mut terms = terms.clone();
+                    for (node, exp) in &mut terms {
+                        if let Node::Linear { base, scale, .. } =
+                            *node.clone().fetch()
+                        {
+                            *node = base;
+                            current_val *= scale.pow(exp.to_f64().unwrap()).0;
                         }
                     }
 
-                    Unit::new_composition(composition)
+                    Unit::new_composition(terms)
+                }
+                Node::Logarithmic { reference, base, .. } => {
+                    current_val = base.0.pow(current_val);
+
+                    reference
+                }
+                Node::Affine { base, offset, scale, .. } => {
+                    current_val *= scale.0;
+                    current_val += offset.0;
+                    base
                 }
                 _ => current_unit,
             };
@@ -193,7 +279,7 @@ impl Quantity {
     }
 }
 
-fn fold_composition(composition: &mut Composition) {
+fn fold_composition(composition: &mut Vec<(Unit, Exponent)>) {
     let mut i = 0;
 
     while i < composition.len() {
@@ -211,7 +297,7 @@ fn fold_composition(composition: &mut Composition) {
             }
         }
 
-        if composition[i].1 == 0 {
+        if composition[i].1.is_zero() {
             composition.remove(i);
         } else {
             i += 1;
@@ -237,75 +323,84 @@ impl Unit {
     /// For example, `s^-1 * m`, `m * Hz` and `km hr^-1` are equivalent at the dimensional level, but not in the representational level.
     /// In contrast, `s^-1 * m` and `m * s^-1` are equivalent in both worlds.
     pub fn repr_eq(self, rhs: Unit) -> bool {
-        match (self, rhs) {
-            (Unit::Composed(self_id), Unit::Composed(rhs_id)) => {
-                let self_comp = COMPOSITIONS.get_cloned(self_id).unwrap();
-                let rhs_comp = COMPOSITIONS.get_cloned(rhs_id).unwrap();
+        self.fetch().repr_eq(&rhs.fetch())
+    }
 
-                self_comp.iter().all(|x| rhs_comp.contains(x))
+    /// Returns true if this unit is atomic, that is, represented by a single base unit or derived unit, and an optional multiplier.
+    /// False if its composed, including exponentiation of a single unit.
+    fn is_atomic(&self) -> bool {
+        self.fetch().is_atomic()
+    }
+
+    fn new_composition(mut comp: Vec<(NodeId, Ratio<i8>)>) -> NodeId {
+        fold_composition(&mut comp);
+
+        if comp.is_empty() {
+            return UNITLESS;
+        } else if comp.len() == 1
+            && let Some((unit, exp)) = comp.first()
+            && unit.is_atomic()
+            && *&exp.is_one()
+        {
+            return *unit;
+        }
+
+        DAG.insert(Node::Composed { terms: comp })
+    }
+}
+
+impl Node {
+    pub fn repr_eq(&self, rhs: &Node) -> bool {
+        match (self, rhs) {
+            (Node::Composed { terms: lhs }, Node::Composed { terms: rhs }) => {
+                lhs.iter().all(|x| rhs.contains(x))
             }
             (..) => self == rhs,
         }
     }
 
-    /// Returns true if this unit is atomic, that is, represented by a single base unit or derived unit, and an optional multiplier.
-    /// False if its composed, including exponentiation of a single unit.
-    /// TODO: recursively check scaled unit's atomicity
     fn is_atomic(&self) -> bool {
         match self {
-            Self::Base { .. } | Self::Derived { .. } => true,
+            Node::Base { .. }
+            | Node::Derived { .. }
+            | Node::Affine { .. }
+            | Node::Logarithmic { .. } => true,
 
-            Self::Linear { base, .. } => base.is_atomic(),
+            Node::Linear { base, .. } => base.is_atomic(),
 
-            Self::Unitless | Self::Composed(_) => false,
+            Node::Unitless | Node::Composed { .. } => false,
         }
-    }
-
-    fn new_composition(mut comp: Composition) -> Self {
-        fold_composition(&mut comp);
-
-        if comp.is_empty() {
-            return Unit::Unitless;
-        } else if comp.len() == 1
-            && let Some((unit, exp)) = comp.first()
-            && unit.is_atomic()
-            && *exp == 1
-        {
-            return *unit;
-        }
-
-        if let Some(existing) = COMPOSITIONS.handle_of(&comp) {
-            return Unit::Composed(existing);
-        }
-
-        let id = COMPOSITIONS.insert(comp);
-
-        Unit::Composed(id)
     }
 }
 
 impl Dimensioned for Unit {
     fn dimension(&self) -> Result<Dimension, DimensionalError> {
-        let mut current_dim = DIMENSIONLESS;
+        let mut current_dim = Dimension::DIMENSIONLESS;
 
-        match self {
-            Unit::Base { dimension, .. } => {
+        match &*self.fetch() {
+            Node::Base { dimension, .. } => {
                 current_dim *= *dimension;
             }
-            Unit::Derived { base, .. } => {
+            Node::Derived { base, .. } => {
                 for (unit, exp) in *base {
+                    current_dim *= unit.dimension()?.pow(Ratio::new(*exp, 1));
+                }
+            }
+            Node::Affine { base, .. } => {
+                current_dim *= base.dimension()?;
+            }
+            Node::Logarithmic { reference, .. } => {
+                current_dim *= reference.dimension()?;
+            }
+            Node::Linear { base, .. } => {
+                current_dim *= base.dimension()?;
+            }
+            Node::Composed { terms } => {
+                for (unit, exp) in terms {
                     current_dim *= unit.dimension()?.pow(*exp);
                 }
             }
-            Unit::Linear { base, .. } => {
-                current_dim *= base.dimension()?;
-            }
-            Unit::Composed(id) => {
-                for (unit, exp) in COMPOSITIONS.get_cloned(*id).unwrap() {
-                    current_dim *= unit.dimension()?.pow(exp);
-                }
-            }
-            Unit::Unitless => (),
+            Node::Unitless => (),
         }
 
         Ok(current_dim)
@@ -437,24 +532,66 @@ impl Dimensioned for Expr {
 
 impl Display for Unit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.fetch().fmt(f)
+    }
+}
+
+impl Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Unit::Base { symbol, .. }
-            | Unit::Derived { symbol, .. }
-            | Unit::Linear { symbol, .. } => f.write_str(symbol),
-            Unit::Unitless => Ok(()),
-            Unit::Composed(id) => {
-                let comp = COMPOSITIONS.get_cloned(*id).unwrap();
+            Node::Base { symbol, .. }
+            | Node::Derived { symbol, .. }
+            | Node::Linear { symbol, .. }
+            | Node::Affine { symbol, .. } => f.write_str(symbol),
+            Node::Unitless => Ok(()),
+            Node::Logarithmic { symbol, reference, .. } => {
+                f.write_str(symbol)?;
+
+                if *reference != UNITLESS {
+                    f.write_char('(')?;
+                    reference.fetch().fmt(f)?;
+                    f.write_char(')')?;
+                }
+
+                Ok(())
+            }
+            Node::Composed { terms } => {
+                fn fmt_term(
+                    f: &mut std::fmt::Formatter<'_>,
+                    unit: NodeId,
+                    exp: Exponent,
+                ) -> std::fmt::Result {
+                    match (exp.numer(), exp.denom()) {
+                        (1, denom @ 2..=4) => {
+                            match denom {
+                                2 => write!(f, "√")?,
+                                3 => write!(f, "∛")?,
+                                4 => write!(f, "∜")?,
+                                _ => unreachable!(),
+                            }
+                            unit.fetch().fmt(f)?;
+                        }
+                        (numer, denom) => {
+                            unit.fetch().fmt(f)?;
+
+                            if *denom == 1 {
+                                f.write_str(&to_superscript(*numer as i64))?;
+                            } else if denom != numer {
+                                write!(f, "^{:.3}", exp.to_f64().unwrap())?;
+                            }
+                        }
+                    }
+
+                    Ok(())
+                }
+
                 let (num, denom): (Vec<_>, Vec<_>) =
-                    comp.iter().partition(|(_, exp)| *exp > 0);
+                    terms.iter().partition(|(_, exp)| *exp > Ratio::ZERO);
 
                 match (num.len(), denom.len()) {
                     (1.., ..) => {
                         for (i, (unit, exp)) in num.iter().enumerate() {
-                            unit.fmt(f)?;
-
-                            if *exp != 1 {
-                                f.write_str(&to_superscript(*exp as i64))?;
-                            }
+                            fmt_term(f, *unit, *exp)?;
 
                             if i < num.len() - 1 {
                                 f.write_str("·")?;
@@ -474,11 +611,7 @@ impl Display for Unit {
                         }
 
                         for (i, (unit, exp)) in denom.iter().enumerate() {
-                            unit.fmt(f)?;
-
-                            if *exp != -1 {
-                                f.write_str(&to_superscript(exp.abs() as i64))?;
-                            }
+                            fmt_term(f, *unit, *exp)?;
 
                             if i < denom.len() - 1 {
                                 f.write_str("·")?;
@@ -491,12 +624,10 @@ impl Display for Unit {
                     }
                     (0, 1..) => {
                         for (i, (unit, exp)) in denom.iter().enumerate() {
-                            unit.fmt(f)?;
-
-                            f.write_str(&to_superscript(*exp as i64))?;
+                            fmt_term(f, *unit, *exp)?;
 
                             if i < num.len() - 1 {
-                                f.write_str(" * ")?;
+                                f.write_str("·")?;
                             }
                         }
                     }
@@ -513,7 +644,7 @@ impl Display for Quantity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)?;
 
-        if self.1 != Unit::Unitless {
+        if self.1 != UNITLESS {
             f.write_char(' ')?;
             self.1.fmt(f)?;
         }
