@@ -3,6 +3,8 @@ use std::{
     ops::{Index, IndexMut},
 };
 
+use soapy::{Soa, Soapy};
+
 #[cfg(feature = "large_exprs")]
 pub type Size = usize;
 

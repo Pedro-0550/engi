@@ -10,6 +10,8 @@
 #![feature(option_zip)]
 #![feature(mapped_lock_guards)]
 #![feature(const_default)]
+#![feature(unboxed_closures)]
+#![feature(fn_traits)]
 #![feature(macro_metavar_expr_concat)]
 #![warn(unused_crate_dependencies)]
 

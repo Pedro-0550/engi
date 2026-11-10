@@ -12,7 +12,7 @@ use nalgebra::DMatrix;
 // use faer::{Mat, Scale, linalg::solvers::DenseSolveCore};
 // use float_eq::{FloatEq, float_eq};
 use num::{
-    Complex, Float,
+    Complex, Float, Zero,
     complex::{Complex64, ComplexFloat, c64},
 };
 use ordered_float::{OrderedFloat, Pow};
@@ -182,15 +182,11 @@ impl Value {
 
     pub fn is_zero(&self) -> bool {
         match self {
-            Value::Matrix(mat) => mat.row_iter().all(|r| {
-                r.iter().all(|el| {
-                    el.re.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL)
-                        && el.im.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL)
-                })
-            }),
+            Value::Matrix(mat) => mat
+                .row_iter()
+                .all(|r| r.iter().all(|el| el.re.is_zero() && el.im.is_zero())),
             Value::Scalar(complex) => {
-                complex.re.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL)
-                    && complex.im.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL)
+                complex.re.is_zero() && complex.im.is_zero()
             }
         }
     }
@@ -299,18 +295,17 @@ impl Value {
 
 impl ComplexExt for Complex64 {
     fn is_integer(&self) -> bool {
-        self.im.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL)
+        self.im.is_zero()
             && self.re.is_finite()
             && self.re.relative_eq(&self.re.round(), f64::EPSILON, EQ_REL_TOL)
     }
 
     fn is_real(&self) -> bool {
-        self.im.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL)
+        self.im.is_zero()
     }
 
     fn is_imag(&self) -> bool {
-        self.im.relative_ne(&0.0, f64::EPSILON, EQ_REL_TOL)
-            && self.re.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL)
+        self.im.relative_ne(&0.0, f64::EPSILON, EQ_REL_TOL) && self.re.is_zero()
     }
 
     fn as_integer(&self) -> Option<i64> {

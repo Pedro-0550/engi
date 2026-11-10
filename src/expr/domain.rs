@@ -4,6 +4,7 @@ use std::{
 };
 
 use approx::RelativeEq;
+use num::Zero as _;
 use ordered_float::Pow;
 
 use super::dag::Leaf;
@@ -278,7 +279,7 @@ impl Interval {
                 Universe::Real
             };
 
-        if val.relative_eq(&0.0, f64::EPSILON, EQ_REL_TOL) {
+        if val.is_zero() {
             Interval::ZERO
         } else if val > 0.0 {
             Interval {

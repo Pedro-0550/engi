@@ -285,6 +285,15 @@ fn fold_composition(composition: &mut Vec<(Unit, Exponent)>) {
     }
 }
 
+impl<F> From<F> for Unit
+where
+    F: Fn(Unit) -> Unit,
+{
+    fn from(f: F) -> Self {
+        f(UNITLESS)
+    }
+}
+
 impl Unit {
     /// Checks if two unit's *dimensions* are equivalent.
     /// For example, `s^-1 * m` and `m * Hz` are equivalent at the dimensional level, but not in the representational level.

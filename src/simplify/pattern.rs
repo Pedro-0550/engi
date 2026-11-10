@@ -111,20 +111,20 @@ impl Structure {
 }
 
 impl<'a> ConditionContext<'a> {
-    pub fn class(&self, wildcard: Wildcard) -> Option<&'a EquivalencyClass> {
+    pub fn class(&self, wildcard: Wildcard) -> Option<ClassId> {
         let reg = self.allocations[wildcard]?;
         let class_id = self.registers[reg];
 
         let root_id = self.graph.find(class_id);
-        Some(&self.graph.classes[root_id])
+        Some(root_id)
     }
 
     pub fn domain(&self, wildcard: Wildcard) -> Domain {
-        self.class(wildcard).unwrap().analysis.domain
+        self.graph.classes.analysis()[self.class(wildcard).unwrap()].domain
     }
 
     pub fn shape(&self, wildcard: Wildcard) -> Shape {
-        self.class(wildcard).unwrap().analysis.shape
+        self.graph.classes.analysis()[self.class(wildcard).unwrap()].shape
     }
 }
 
@@ -314,8 +314,8 @@ impl Machine {
             match &program.code[pc] {
                 Instruction::Bind { structure, target, out: bind_out } => {
                     let target_id = registers[*target];
-                    let target_class = &graph.classes[graph.find(target_id)];
-                    let operands = &target_class.operands_by_kind
+                    let operands = &graph.classes.operands_by_kind()
+                        [graph.find(target_id)]
                         [structure.kind().id() as usize];
 
                     for op in operands {

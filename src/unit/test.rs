@@ -1,5 +1,5 @@
 use super::*;
-use crate::unit::defs::{B, Hz, J, K, eV, m, oC, s};
+use crate::unit::defs::{B, Hz, J, K, Np, W, dB, eV, m, mNp, mW, oC, s};
 
 /* -------------------------------- FUNCTIONS ------------------------------- */
 
@@ -21,6 +21,11 @@ pub fn normalization() {
     assert_eq!((10.0 * eV / J).normalize(), 1.602176634e-18);
     assert_eq!((100.0 * oC).normalize(), 373.15 * K);
     assert_eq!((3 * B).normalize(), 1000);
+
+    assert_eq!((-20 * dB(J)).normalize(), 0.01 * J);
+    assert_eq!((30 * dB(mW)).normalize(), 1 * W);
+    assert_eq!((-20 * dB).normalize(), 0.01);
+    assert_eq!((5 * Np).normalize(), 148.4131591025766);
 }
 
 #[test]

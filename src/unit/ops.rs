@@ -1,4 +1,4 @@
-use std::ops::{Div, DivAssign, Mul, MulAssign};
+use std::ops::{Div, DivAssign, Index, Mul, MulAssign};
 
 use num::{complex::Complex64, pow::Pow, rational::Ratio};
 
@@ -167,6 +167,39 @@ impl Pow<Ratio<i8>> for Unit {
             }
             _ if self.is_atomic() => Unit::new_composition(vec![(self, exp)]),
             _ => unreachable!(),
+        }
+    }
+}
+
+impl FnOnce<(Unit,)> for Unit {
+    type Output = Unit;
+
+    extern "rust-call" fn call_once(
+        self,
+        (reference,): (Unit,),
+    ) -> Self::Output {
+        fn set_ref(unit: Unit, reference: Unit) -> Unit {
+            let Unit::Logarithmic { symbol, base, .. } = unit else {
+                unreachable!()
+            };
+
+            Unit::Logarithmic {
+                symbol,
+                reference: Box::leak(Box::new(reference)),
+                base,
+            }
+        }
+
+        match self {
+            Unit::Linear { symbol, base, scale } => Unit::Linear {
+                symbol,
+                base: Box::leak(Box::new(set_ref(*base, reference))),
+                scale,
+            },
+            Unit::Logarithmic { .. } => set_ref(self, reference),
+            _ => panic!(
+                "The unit calling syntax is only for settings log reference"
+            ),
         }
     }
 }

@@ -230,5 +230,6 @@ pub const Np: Unit = Unit::Logarithmic {
 /* -------------------------------------------------------------------------- */
 
 prefixes!(
-    s, m, A, K, mol, Hz, N, Pa, J, W, C, V, Ω, S, F, Wb, T, H, eV, rad, sr
+    s, m, A, K, mol, Hz, N, Pa, J, W, C, V, Ω, S, F, Wb, T, H, eV, rad, sr, B,
+    Np
 );

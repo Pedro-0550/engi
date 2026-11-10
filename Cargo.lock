@@ -648,6 +648,7 @@ dependencies = [
  "quote",
  "rayon",
  "simba",
+ "soapy",
  "syn 3.0.9",
  "tabled",
  "thiserror",
@@ -1551,6 +1552,26 @@ name = "smallvec"
 version = "1.16.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
+
+[[package]]
+name = "soapy"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b59342d71876932b476a029581ccb3b334a19f03f34f30539a2d6988e9a81707"
+dependencies = [
+ "soapy-derive",
+]
+
+[[package]]
+name = "soapy-derive"
+version = "0.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "42bdd4789df629ff67a32b8bb441c7acaa67c77fd8e7a278de074f4d57c81b41"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "stable_deref_trait"
