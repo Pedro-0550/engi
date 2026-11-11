@@ -765,29 +765,48 @@ impl Expr {
                             let two = ctx.qty(2);
                             let euler = ctx.constant(e);
 
-                            let ln_r = ctx.div(
-                                ctx.ln(ctx.add(
-                                    ctx.pow(*b_re, two),
-                                    ctx.pow(*b_im, two),
-                                )),
-                                two,
-                            );
+                            if *b_re == euler && *b_im == ctx.zero() {
+                                let e_re = ctx.pow(euler, *b_re);
 
-                            let θ = ctx.atan2(*b_re, *b_im);
+                                (
+                                    ctx.mul(e_re, ctx.cos(*b_im)),
+                                    ctx.mul(e_re, ctx.sin(*b_im)),
+                                )
+                            } else if *exp_im == ctx.zero()
+                                && *exp_re == ctx.one()
+                            {
+                                (
+                                    ctx.sub(*b_re, *b_im),
+                                    ctx.add(
+                                        ctx.pow(*b_re, two),
+                                        ctx.pow(*b_im, two),
+                                    ),
+                                )
+                            } else {
+                                let ln_r = ctx.div(
+                                    ctx.ln(ctx.add(
+                                        ctx.pow(*b_re, two),
+                                        ctx.pow(*b_im, two),
+                                    )),
+                                    two,
+                                );
 
-                            let a = ctx.sub(
-                                ctx.mul(*exp_re, ln_r),
-                                ctx.mul(*exp_im, θ),
-                            );
-                            let b = ctx.add(
-                                ctx.mul(*exp_im, ln_r),
-                                ctx.mul(*exp_re, θ),
-                            );
+                                let θ = ctx.atan2(*b_re, *b_im);
 
-                            (
-                                ctx.mul(ctx.pow(euler, a), ctx.cos(b)),
-                                ctx.mul(ctx.pow(euler, a), ctx.sin(b)),
-                            )
+                                let a = ctx.sub(
+                                    ctx.mul(*exp_re, ln_r),
+                                    ctx.mul(*exp_im, θ),
+                                );
+                                let b = ctx.add(
+                                    ctx.mul(*exp_im, ln_r),
+                                    ctx.mul(*exp_re, θ),
+                                );
+
+                                (
+                                    ctx.mul(ctx.pow(euler, a), ctx.cos(b)),
+                                    ctx.mul(ctx.pow(euler, a), ctx.sin(b)),
+                                )
+                            }
                         }
                         Operation::Log {
                             base: (base_re, base_im),

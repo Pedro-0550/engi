@@ -336,7 +336,7 @@ impl EquivalencyGraph {
     }
 
     pub fn rewrite(&mut self, rules: &[Rule]) {
-        /// Ratio between a rule'ss matched and merged classes.
+        /// Ratio between a rule's matched and merged classes.
         /// If its larger than this value in any iteration it will be banned.
         const MATCH_MERGE_RATIO: usize = 2;
         /// Minimum number of matches a rule needs to have to qualify for scheduling
@@ -344,8 +344,9 @@ impl EquivalencyGraph {
 
         const BASE_BAN: usize = 10;
 
-        const CLASS_LIMIT: usize = 5000;
+        const CLASS_LIMIT: usize = 1000;
         const MATCH_LIMIT: usize = 100;
+        const ITER_LIMIT: usize = 100;
 
         struct RuleState<'p> {
             program: Program,
@@ -384,6 +385,7 @@ impl EquivalencyGraph {
                 merged: 0,
             })
             .collect_vec();
+        let mut i = 0;
 
         loop {
             let mut grouped_matches = Vec::new();
@@ -536,6 +538,12 @@ impl EquivalencyGraph {
                 //     }
                 //     continue;
                 // }
+                break;
+            }
+
+            i += 1;
+
+            if i >= ITER_LIMIT {
                 break;
             }
 

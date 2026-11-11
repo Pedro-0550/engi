@@ -8,7 +8,7 @@ use num::{complex::Complex64, pow::Pow};
 use crate::{
     core::{util::impl_op_permutations, value::Value},
     expr::{
-        BuiltOperand, EditContext, Expr, Operand,
+        BuiltOperand, EditContext, Expr, FetchedOperand, Operand,
         dag::{Leaf, Operation},
     },
     model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
@@ -171,6 +171,17 @@ impl EditContext<'_> {
 
         let result = expr.push(operand);
 
+        self.expr.set(Some(expr));
+        result
+    }
+
+    pub fn map<R>(
+        &self,
+        op: Operand,
+        mut f: impl FnMut(FetchedOperand) -> R,
+    ) -> R {
+        let expr = self.expr.take().expect("Edit context used recursively");
+        let result = f(expr.fetch(op));
         self.expr.set(Some(expr));
         result
     }

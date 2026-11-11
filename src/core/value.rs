@@ -30,7 +30,7 @@ use crate::{
 };
 
 pub const EQ_REL_TOL: f64 = 1e-12;
-// pub const ZERO_ABS_TOL: f64 = 1e-24;
+pub const ZERO_ABS_TOL: f64 = 1e-30;
 
 // TODO: fixed numbers
 /* --------------------------------- TRAITS --------------------------------- */
@@ -120,13 +120,9 @@ macro_rules! impl_scalar_func {
             match self {
                 Value::Scalar(complex) => {
                     let result = complex.$name();
-                    // assert!(
-                    //     !result.is_nan(),
-                    //     "Trying to apply {} to {} resulted in NaN",
-                    //     stringify!($name),
-                    //     self
-                    // );
-                    result.into()
+
+                    Value::from(result)
+                        .check_nan(stringify!($name), &format!("{self}"))
                 }
                 _ => todo!(),
             }
@@ -182,11 +178,14 @@ impl Value {
 
     pub fn is_zero(&self) -> bool {
         match self {
-            Value::Matrix(mat) => mat
-                .row_iter()
-                .all(|r| r.iter().all(|el| el.re.is_zero() && el.im.is_zero())),
+            Value::Matrix(mat) => mat.row_iter().all(|r| {
+                r.iter().all(|el| {
+                    el.re.abs() < ZERO_ABS_TOL && el.im.abs() < ZERO_ABS_TOL
+                })
+            }),
             Value::Scalar(complex) => {
-                complex.re.is_zero() && complex.im.is_zero()
+                complex.re.abs() < ZERO_ABS_TOL
+                    && complex.im.abs() < ZERO_ABS_TOL
             }
         }
     }
@@ -234,49 +233,54 @@ impl Value {
     }
 
     pub fn atan2(&self, other: &Self) -> Self {
-        let x = self
-            .as_scalar_real()
-            .expect("atan2(x, y) is only defined for real scalars");
-        let y = other
-            .as_scalar_real()
-            .expect("atan2(x, y) is only defined for real scalars");
+        let Some(x) = self.as_scalar_real() else {
+            panic!("atan2(x, y) is only defined for real scalars, x = {self}");
+        };
 
-        y.atan2(x).into()
+        let Some(y) = other.as_scalar_real() else {
+            panic!("atan2(x, y) is only defined for real scalars, y = {other}");
+        };
+
+        Value::from(y.atan2(x))
+            .check_nan("atan2", &format!("x = {self}, y = {other}"))
     }
 
     pub fn conj(&self) -> Self {
         let z = self.as_scalar().expect("conj(z) is only defined for scalars");
 
-        z.conj().into()
+        Value::from(z.conj()).check_nan("ln", &self.to_string())
     }
 
     pub fn arg(&self) -> Self {
         let z = self.as_scalar().expect("arg(z) is only defined for scalars");
 
-        z.arg().into()
+        Value::from(z.arg()).check_nan("ln", &self.to_string())
     }
 
     pub fn norm(&self) -> Self {
         match self {
-            Value::Matrix(mat) => mat.norm().into(),
+            Value::Matrix(mat) => Value::from(mat.norm()),
             Value::Scalar(complex) => complex.norm().into(),
         }
+        .check_nan("ln", &self.to_string())
     }
 
     pub fn ln(&self) -> Self {
         match self {
             Value::Matrix(_mat) => todo!(),
-            Value::Scalar(complex) => complex.ln().into(),
+            Value::Scalar(complex) => Self::from(complex.ln()),
         }
+        .check_nan("ln", &self.to_string())
     }
 
     pub fn sign(&self) -> Self {
         match self {
             Value::Matrix(_mat) => todo!(),
             Value::Scalar(c) => {
-                Complex::new(c.re.signum(), c.im.signum()).into()
+                Value::from(Complex::new(c.re.signum(), c.im.signum()))
             }
         }
+        .check_nan("ln", &self.to_string())
     }
 
     impl_scalar_func!(cos);
@@ -291,21 +295,40 @@ impl Value {
     impl_scalar_func!(acosh);
     impl_scalar_func!(asinh);
     impl_scalar_func!(atanh);
+
+    pub fn is_nan(&self) -> bool {
+        match self {
+            Value::Scalar(c) => c.re.is_nan() || c.im.is_nan(),
+            Value::Matrix(m) => {
+                m.iter().any(|c| c.re.is_nan() || c.im.is_nan())
+            }
+        }
+    }
+
+    #[track_caller]
+    fn check_nan(self, op: &str, operands: &str) -> Self {
+        assert!(
+            !self.is_nan(),
+            "Operation `{op}` produced NaN: {operands} = {self}"
+        );
+
+        self
+    }
 }
 
 impl ComplexExt for Complex64 {
     fn is_integer(&self) -> bool {
-        self.im.is_zero()
+        self.im.abs() < ZERO_ABS_TOL
             && self.re.is_finite()
             && self.re.relative_eq(&self.re.round(), f64::EPSILON, EQ_REL_TOL)
     }
 
     fn is_real(&self) -> bool {
-        self.im.is_zero()
+        self.im.abs() < ZERO_ABS_TOL
     }
 
     fn is_imag(&self) -> bool {
-        self.im.relative_ne(&0.0, f64::EPSILON, EQ_REL_TOL) && self.re.is_zero()
+        self.im.abs() > ZERO_ABS_TOL && self.re.abs() < ZERO_ABS_TOL
     }
 
     fn as_integer(&self) -> Option<i64> {

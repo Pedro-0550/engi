@@ -67,15 +67,22 @@ impl Solver for LmSolver {
         symbols.sort();
         symbols.dedup();
 
+        fn scale_of(
+            guesses: &AHashMap<Variable, Value>,
+            primary: Symbol,
+        ) -> Complex<f64> {
+            guesses
+                .get(&Variable(primary))
+                .and_then(|x| x.as_scalar().copied())
+                .filter(|x| !x.is_zero())
+                .unwrap_or(Complex::ONE) // use this in BOTH the scale and unscale steps
+        }
+
         let scale_bindings = symbols
             .iter()
             .map(|s| {
                 let primary = s.as_primary().unwrap();
-                let scale = guesses
-                    .get(&Variable(primary))
-                    .and_then(|x| x.as_scalar().copied())
-                    .filter(|x| !x.is_zero())
-                    .unwrap_or(Complex::ONE);
+                let scale = scale_of(guesses, primary);
 
                 (
                     *s,
@@ -118,37 +125,39 @@ impl Solver for LmSolver {
             symbols: symbols.clone(),
         };
         let (p, report) = LevenbergMarquardt::new()
-            .with_ftol(1e-13)
-            .with_xtol(1e-20)
-            .with_patience(1000000)
+            .with_ftol(1e-15)
+            .with_xtol(1e-14)
+            .with_gtol(1e-5)
+            .with_patience(10000)
             .with_scale_diag(true)
             .minimize(problem);
 
-        assert!(report.termination.was_successful());
-        assert!(report.objective_function.abs() < 1e-10);
+        assert!(
+            report.termination.was_successful(),
+            "{:?}",
+            &report.termination
+        );
+        assert!(
+            report.objective_function.abs() < 1e-12,
+            "{:.3e}",
+            report.objective_function.abs()
+        );
 
-        Ok(p.x
-            .into_iter()
-            .enumerate()
-            .map(|(i, v)| {
-                let sym = symbols[i];
-                let primary = sym.as_primary().unwrap();
-                let scale = guesses
-                    .get(&Variable(primary))
-                    .and_then(|x| x.as_scalar().copied())
-                    .unwrap_or(Complex::ONE);
-
-                match sym.realization() {
-                    Realization::Real(pri) => {
-                        (Variable(pri), (scale.re * v).into())
-                    }
-                    Realization::Imag(pri) => {
-                        (Variable(pri), (scale.im * v).into())
-                    }
-                    Realization::Primary => unreachable!(),
+        let mut out: AHashMap<Variable, Complex<f64>> = AHashMap::new();
+        for (i, v) in p.x.iter().enumerate() {
+            let sym = symbols[i];
+            let scale = scale_of(guesses, sym.as_primary().unwrap());
+            match sym.realization() {
+                Realization::Real(pri) => {
+                    out.entry(Variable(pri)).or_default().re = scale.re * v
                 }
-            })
-            .collect_vec())
+                Realization::Imag(pri) => {
+                    out.entry(Variable(pri)).or_default().im = scale.im * v
+                }
+                Realization::Primary => unreachable!(),
+            }
+        }
+        Ok(out.into_iter().map(|(k, c)| (k, c.into())).collect())
     }
 }
 

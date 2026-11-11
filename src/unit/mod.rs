@@ -27,8 +27,13 @@ pub mod ops;
 #[cfg(test)]
 mod test;
 
+// TODO: design decision, should logarithmic units be treated like just views
+// into linear data so if you say x * y and x and y are given in dB its actually +,
+// or as normal where if you have x * y and x and y are log it just multiplies and gives dB^2?
+//
+// imo the first option since unit-specific logic is already required for operators with affine units
+// so that the offset cancels out leaving only the scale
 /* -------------------------------- CONSTANTS ------------------------------- */
-
 type Composition = Vec<(Unit, Ratio<i8>)>;
 static COMPOSITIONS: LazyLock<ConcurrentConsed<Composition, CompositionId>> =
     LazyLock::new(|| ConcurrentConsed::default());

@@ -19,7 +19,6 @@ macro_rules! id {
             Clone,
             Hash,
             Eq,
-            PartialEq,
             Ord,
             PartialOrd,
             Default,
@@ -31,13 +30,22 @@ macro_rules! id {
         $(#[$meta])*
         $vis struct $n($t);
 
+        impl PartialEq for $n {
+            #[inline(always)]
+            fn eq(&self, other: &$n) -> bool {
+                self.0 == other.0
+            }
+        }
+
         const impl From<usize> for $n {
+            #[inline(always)]
             fn from(v: usize) -> $n {
                 $n(v as $t)
             }
         }
 
         const impl Into<usize> for $n {
+            #[inline(always)]
             fn into(self) -> usize {
                 self.0 as usize
             }
