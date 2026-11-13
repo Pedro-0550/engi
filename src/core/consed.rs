@@ -122,15 +122,14 @@ where
     Key: From<usize> + Copy,
 {
     pub fn insert(&self, val: T) -> Key {
-        if let Some(existing) = self.cons.get(&val) {
-            *existing
-        } else {
-            let idx = self.values.con_push(val.clone());
-            self.next.fetch_add(1, Ordering::SeqCst);
-
-            self.cons.insert(val, idx);
-
-            idx
+        match self.cons.entry(val) {
+            dashmap::mapref::entry::Entry::Occupied(entry) => *entry.get(),
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                let idx = self.values.con_push(entry.key().clone());
+                self.next.fetch_add(1, Ordering::SeqCst);
+                entry.insert(idx);
+                idx
+            }
         }
     }
 }
@@ -145,17 +144,17 @@ where
         self.cons.contains_key(val)
     }
 
-    pub fn insert_with(&mut self, val: T, key: Key) -> Insertion<Key, Idx> {
-        if let Some(existing) = self.cons.get(&val) {
-            Insertion::Existed(*existing)
-        } else {
-            let idx = self.next.fetch_add(1, Ordering::SeqCst);
-            self.values.con_push(val.clone());
-            self.cons.insert(val, key);
+    // pub fn insert_with(&mut self, val: T, key: Key) -> Insertion<Key, Idx> {
+    //     if let Some(existing) = self.cons.get(&val) {
+    //         Insertion::Existed(*existing)
+    //     } else {
+    //         let idx = self.next.fetch_add(1, Ordering::SeqCst);
+    //         self.values.con_push(val.clone());
+    //         self.cons.insert(val, key);
 
-            Insertion::Added(idx.into())
-        }
-    }
+    //         Insertion::Added(idx.into())
+    //     }
+    // }
 
     pub fn key(&self, v: &T) -> Option<Ref<'_, T, Key>> {
         self.cons.get(v)

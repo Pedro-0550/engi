@@ -1,4 +1,5 @@
 use std::{
+    f64::consts::LN_10,
     fmt::{Display, Write},
     hash::Hash,
     sync::{LazyLock, MappedRwLockReadGuard, RwLock, RwLockReadGuard},
@@ -101,7 +102,7 @@ pub struct Dimension {
 ///
 /// Order is preserved during compositions, and different orders of the same compositions are not Eq,
 /// but order is ignored during checking, and only the equivalence is taken into account.
-#[derive(PartialEq, Clone, Copy, Debug, Hash, Eq, Default)]
+#[derive(PartialEq, Clone, Copy, Hash, Eq, Default)]
 pub enum Unit {
     Base {
         symbol: &'static str,
@@ -249,6 +250,99 @@ impl Quantity {
         }
 
         Quantity(current_val, current_unit)
+    }
+
+    /// Converts this quantity to the nearest SI prefix of its unit
+    pub fn prefixalize(&self) -> Self {
+        if self.value().is_zero() {
+            return self.clone();
+        }
+
+        let mag = self
+            .value()
+            .as_scalar_real()
+            .expect("Prefixalize can only be used on real scalars")
+            .abs()
+            .log10();
+        let rounded_mag = (mag as i32).div_floor(3) * 3;
+
+        let scale = 10.0f64.pow(rounded_mag);
+
+        fn prefixalize_inner(unit: Unit, rounded_mag: i32) -> Option<Unit> {
+            let scale = 10.0f64.pow(rounded_mag);
+            if rounded_mag == 0 {
+                return Some(unit);
+            }
+
+            let prefix = match rounded_mag {
+                -30 => "q",
+                -27 => "r",
+                -24 => "y",
+                -21 => "z",
+                -18 => "a",
+                -15 => "f",
+                -12 => "p",
+                -9 => "n",
+                -6 => "µ",
+                -3 => "m",
+                0 => "",
+                3 => "k",
+                6 => "M",
+                9 => "G",
+                12 => "T",
+                15 => "P",
+                18 => "E",
+                21 => "Z",
+                24 => "Y",
+                27 => "R",
+                30 => "Q",
+                _ => return None,
+            };
+
+            match unit {
+                Unit::Base { symbol, dimension } => Some(Unit::Linear {
+                    symbol: format!("{}{}", prefix, symbol).leak(),
+                    base: Box::leak(Box::new(unit)),
+                    scale: OrderedFloat(scale),
+                }),
+                Unit::Derived { symbol, base } => Some(Unit::Linear {
+                    symbol: format!("{}{}", prefix, symbol).leak(),
+                    base: Box::leak(Box::new(unit)),
+                    scale: OrderedFloat(scale),
+                }),
+                Unit::Composed(composition_id) => {
+                    let mut comp =
+                        COMPOSITIONS.con_get(composition_id).unwrap().clone();
+
+                    if *comp[0].1.denom() != 1 {
+                        todo!()
+                    }
+
+                    comp[0].0 = prefixalize_inner(
+                        comp[0].0,
+                        rounded_mag * *comp[0].1.numer() as i32,
+                    )?;
+
+                    Some(Unit::Composed(COMPOSITIONS.insert(comp)))
+                }
+                Unit::Linear { symbol, base, scale: prev } => {
+                    Some(Unit::Linear {
+                        symbol: format!("{}{}", prefix, symbol).leak(),
+                        // TODO: as obvious, this is terrible. We want refcounted units probably
+                        base: Box::leak(Box::new(unit)),
+                        scale: OrderedFloat(scale * prev.0),
+                    })
+                }
+                Unit::Affine { symbol, base, offset, scale } => return None,
+                Unit::Logarithmic { symbol, reference, base } => return None,
+                Unit::Unitless => return None,
+            }
+        }
+
+        let unit = prefixalize_inner(self.unit(), rounded_mag).unwrap();
+        let value = self.0.clone() / scale;
+
+        Quantity(value, unit)
     }
 
     pub fn value(&self) -> &Value {
@@ -513,6 +607,47 @@ impl Dimensioned for Expr {
         // }
         // }
         todo!()
+    }
+}
+
+impl std::fmt::Debug for Unit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Base { symbol, dimension } => f
+                .debug_struct("Base")
+                .field("symbol", symbol)
+                .field("dimension", dimension)
+                .finish(),
+            Self::Derived { symbol, base } => f
+                .debug_struct("Derived")
+                .field("symbol", symbol)
+                .field("base", base)
+                .finish(),
+            Self::Composed(id) => f
+                .debug_tuple("Composed")
+                .field(COMPOSITIONS.con_get(*id).unwrap())
+                .finish(),
+            Self::Linear { symbol, base, scale } => f
+                .debug_struct("Linear")
+                .field("symbol", symbol)
+                .field("base", base)
+                .field("scale", scale)
+                .finish(),
+            Self::Affine { symbol, base, offset, scale } => f
+                .debug_struct("Affine")
+                .field("symbol", symbol)
+                .field("base", base)
+                .field("offset", offset)
+                .field("scale", scale)
+                .finish(),
+            Self::Logarithmic { symbol, reference, base } => f
+                .debug_struct("Logarithmic")
+                .field("symbol", symbol)
+                .field("reference", reference)
+                .field("base", base)
+                .finish(),
+            Self::Unitless => write!(f, "Unitless"),
+        }
     }
 }
 

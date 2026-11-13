@@ -271,7 +271,7 @@ impl EditContext<'_> {
         self.log(base_e, arg)
     }
 
-    pub fn atan2(&self, x: Operand, y: Operand) -> Operand {
+    pub fn atan2(&self, y: Operand, x: Operand) -> Operand {
         self.push(Operand::Operation(Operation::Atan2 { x, y }))
     }
 

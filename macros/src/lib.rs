@@ -343,9 +343,12 @@ pub fn model(input: TokenStream) -> TokenStream {
 
             fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>) {
                 use engi::model::{ModelSolution, InterfaceSolution};
+                let prefixalized: Vec<engi::unit::Quantity> = vec![
+                    #(self.#variable_idents.prefixalize(),)*
+                ];
 
                 let vars = vec![
-                    #([stringify!(#variable_idents).to_owned(), self.#variable_idents.value().to_string(), self.#variable_idents.unit().to_string()],)*
+                    #([stringify!(#variable_idents).to_owned(), format!("{:.3}", prefixalized[#variable_idxs].value()), prefixalized[#variable_idxs].unit().to_string()],)*
                 ];
 
                 into.push((self.name.clone(), vars));
@@ -547,8 +550,12 @@ pub fn interface(input: TokenStream) -> TokenStream {
             }
 
             fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>, name: String) {
+                let prefixalized = vec![
+                    #(self.#connector_idents.prefixalize(),)*
+                ];
+
                 let conns = vec![
-                    #([stringify!(#connector_idents).to_owned(), self.#connector_idents.value().to_string(), self.#connector_idents.unit().to_string()],)*
+                    #([stringify!(#connector_idents).to_owned(), format!("{:.3}", prefixalized[#connector_idxs].value()), prefixalized[#connector_idxs].unit().to_string()],)*
                 ];
 
                 into.push((name, conns));

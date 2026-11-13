@@ -179,9 +179,9 @@ impl FoldedOperand<'_, Shape, ()> {
                         Shape::SCALAR
                     }
                 }
-                Operation::Atan2 { x: a, y: b } => {
+                Operation::Atan2 { x, y } => {
                     assert!(
-                        a.is_scalar() && b.is_scalar(),
+                        y.is_scalar() && x.is_scalar(),
                         "Atan arguments must be scalar"
                     );
                     Shape::SCALAR

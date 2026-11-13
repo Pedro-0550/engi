@@ -251,7 +251,7 @@ impl Realized {
 
                         bcx.ins().fdiv(a, b)
                     }
-                    Operation::Atan2 { x: a, y: b } => funcs.atan2(bcx, *a, *b),
+                    Operation::Atan2 { x, y } => funcs.atan2(bcx, *y, *x),
                     Operation::Transpose(_) => todo!(),
                     Operation::Det(_) => todo!(),
                     Operation::Rank(_) => todo!(),

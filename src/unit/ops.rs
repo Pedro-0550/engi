@@ -265,13 +265,13 @@ impl Quantity {
         (self.0.ln() / base.0.ln()) * UNITLESS
     }
 
-    pub fn atan2(&self, y: &Quantity) -> Quantity {
+    pub fn atan2(&self, x: &Quantity) -> Quantity {
         assert!(
-            self.1 == y.1 || self.0.is_zero() || y.0.is_zero(),
-            "atan2(x, y)'s arguments must have the same unit: x = {self}, y = {y}"
+            self.1 == x.1 || self.0.is_zero() || x.0.is_zero(),
+            "atan2(y, x)'s arguments must have the same unit: y = {self}, x = {x}"
         );
 
-        self.0.atan2(&y.0) * rad
+        self.0.atan2(&x.0) * rad
     }
 
     pub fn max(&self, b: &Quantity) -> Quantity {

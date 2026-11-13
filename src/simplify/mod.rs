@@ -272,6 +272,8 @@ impl EquivalencyGraph {
         match op {
             Operand::Leaf(id) => match &self.dag.leaves[id] {
                 Leaf::Quantity(quantity) => Some(quantity.clone()),
+                // make this an option
+                Leaf::Constant(c) => Some(c.quantity()),
                 _ => None,
             },
             Operand::Operation(id) => Some(
@@ -303,7 +305,7 @@ impl EquivalencyGraph {
                     Operation::Max([a, b]) => a?.max(&b?),
                     Operation::Pow { base, exp } => base?.pow(exp?),
                     Operation::Log { base, arg } => arg?.log(base?),
-                    Operation::Atan2 { x, y } => x?.atan2(&y?),
+                    Operation::Atan2 { x, y } => y?.atan2(&x?),
                     Operation::Sin(u) => u?.sin(),
                     Operation::Cos(u) => u?.cos(),
                     Operation::Tan(u) => u?.tan(),

@@ -660,7 +660,7 @@ impl_unary_fn!(
     "Norm of the given number, or Frobenius norm for matrices"
 );
 
-pub fn atan2(x: impl Into<Expr>, y: impl Into<Expr>) -> Expr {
+pub fn atan2(y: impl Into<Expr>, x: impl Into<Expr>) -> Expr {
     let mut expr = x.into();
     let y = y.into();
 

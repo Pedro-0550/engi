@@ -159,7 +159,7 @@ impl Relations for StaticBjt {
 
             c.i = i_s * (exp(v_be / v_t) - exp(v_bc / v_t) - (exp(v_bc / v_t) - 1) / β_r);
             b.i = i_s * ((exp(v_be / v_t) - 1) / β_f + (exp(v_bc / v_t) - 1) / β_r);
-            e.i + b.i + c.i = 0;
+            e.i = b.i + c.i;
         }
     }
 }
@@ -254,8 +254,8 @@ fn modeling() {
     r_b.port.n.connect(&q1.b);
     r_b.z.guess(500 * kΩ);
 
-    r_b.port.i.guess(60 * uA);
-    q1.b.i.guess(60 * uA);
+    r_b.port.i.guess(60 * µA);
+    q1.b.i.guess(60 * µA);
 
     [&v_c.out.n, &v_b.out.n, &q1.e].connect(&gnd.pin);
 
@@ -266,24 +266,66 @@ fn modeling() {
 
     r_c.z.bind(10 * kΩ);
     r_c.port.n.v.bind(6 * V);
-    q1.v_be.guess(0.6 * V);
+    q1.v_be.guess(0.5 * V);
+    q1.v_bc.guess(-5.3 * V);
     q1.v_t.guess(24 * mV);
     q1.β_f.bind(500);
     q1.β_r.bind(5);
     q1.i_s.bind(10 * fA);
 
-    // bjt_thermal.t_a.bind(25.0 * DEG_C);
     q1_jth.rθ_jc.bind(10 * K / W);
     q1_jth.rθ_ca.bind(20 * K / W);
-    q1_jth.t_a.bind(300 * K);
-    q1_jth.t_c.guess(300 * K);
-    q1.thermal.t.guess(300 * K);
+    q1_jth.t_a.bind(21 * oC);
+    q1_jth.t_c.guess(21 * oC);
+    q1.thermal.t.guess(21 * oC);
     q1.thermal.p.guess(1 * mW);
 
     let solution = system.solve(LmSolver);
-    println!("{}", solution.get(q1).table());
-    println!("{}", solution.get(q1_jth).table());
+    println!(
+        "{}",
+        side_by_side(
+            &[
+                solution.get(q1).table().to_string(),
+                solution.get(q1_jth).table().to_string(),
+                solution.get(r_b).table().to_string(),
+                solution.get(r_c).table().to_string()
+            ],
+            1
+        )
+    );
+}
 
-    println!("{}", solution.get(r_b).table());
-    println!("{}", solution.get(r_c).table());
+fn side_by_side(tables: &[String], gap: usize) -> String {
+    let lines: Vec<Vec<&str>> =
+        tables.iter().map(|table| table.lines().collect()).collect();
+
+    let widths: Vec<usize> = lines
+        .iter()
+        .map(|table| {
+            table.iter().map(|line| line.chars().count()).max().unwrap_or(0)
+        })
+        .collect();
+
+    let height = lines.iter().map(Vec::len).max().unwrap_or(0);
+    let separator = " ".repeat(gap);
+
+    (0..height)
+        .map(|i| {
+            lines
+                .iter()
+                .zip(&widths)
+                .map(|(table, width)| {
+                    let line = table.get(i).copied().unwrap_or("");
+                    format!(
+                        "{line}{}",
+                        " ".repeat(width - line.chars().count())
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(&separator)
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }

@@ -13,6 +13,7 @@
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(macro_metavar_expr_concat)]
+#![feature(int_roundings)]
 #![warn(unused_crate_dependencies)]
 
 pub use tabled;

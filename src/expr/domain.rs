@@ -618,7 +618,7 @@ impl FoldedOperand<'_, Domain, ()> {
                     let two = Interval::singleton(2.0);
                     let euler = Interval::singleton(std::f64::consts::E);
                     let ln_r = (base.re.pow(two) + base.im.pow(two)).ln() / two;
-                    let θ = base.re.atan2(&base.im);
+                    let θ = base.im.atan2(&base.re);
                     let a = exp.re * ln_r - exp.im * θ;
                     let b = exp.im * ln_r + exp.re * θ;
 
@@ -630,7 +630,7 @@ impl FoldedOperand<'_, Domain, ()> {
                     let ln_z = |x: Domain| {
                         Domain::new(
                             (x.re.pow(two) + x.im.pow(two)).ln() / two,
-                            x.re.atan2(&x.im),
+                            x.im.atan2(&x.re),
                         )
                     };
 
@@ -765,23 +765,26 @@ impl Expr {
                             let two = ctx.qty(2);
                             let euler = ctx.constant(e);
 
-                            if *b_re == euler && *b_im == ctx.zero() {
+                            if *exp_re == euler && *exp_im == ctx.zero() {
                                 let e_re = ctx.pow(euler, *b_re);
 
                                 (
                                     ctx.mul(e_re, ctx.cos(*b_im)),
                                     ctx.mul(e_re, ctx.sin(*b_im)),
                                 )
-                            } else if *exp_im == ctx.zero()
-                                && *exp_re == ctx.one()
-                            {
-                                (
-                                    ctx.sub(*b_re, *b_im),
-                                    ctx.add(
-                                        ctx.pow(*b_re, two),
-                                        ctx.pow(*b_im, two),
-                                    ),
-                                )
+                                // adding this makes the test not converge. Because yes?
+                                // } else if *exp_im == ctx.zero()
+                                //     && *exp_re == ctx.neg_one()
+                                // {
+                                //     let mod_squared = ctx.add(
+                                //         ctx.pow(*b_re, two),
+                                //         ctx.pow(*b_im, two),
+                                //     );
+
+                                //     (
+                                //         ctx.div(*b_re, mod_squared),
+                                //         ctx.div(ctx.neg(*b_im), mod_squared),
+                                //     )
                             } else {
                                 let ln_r = ctx.div(
                                     ctx.ln(ctx.add(
@@ -791,7 +794,7 @@ impl Expr {
                                     two,
                                 );
 
-                                let θ = ctx.atan2(*b_re, *b_im);
+                                let θ = ctx.atan2(*b_im, *b_re);
 
                                 let a = ctx.sub(
                                     ctx.mul(*exp_re, ln_r),
@@ -817,7 +820,7 @@ impl Expr {
                             let ln_z = |re: Operand, im: Operand| {
                                 let r2 =
                                     ctx.add(ctx.pow(re, two), ctx.pow(im, two));
-                                (ctx.div(ctx.ln(r2), two), ctx.atan2(re, im))
+                                (ctx.div(ctx.ln(r2), two), ctx.atan2(im, re))
                             };
 
                             let (p, q) = ln_z(*arg_re, *arg_im);

@@ -233,16 +233,16 @@ impl Value {
     }
 
     pub fn atan2(&self, other: &Self) -> Self {
-        let Some(x) = self.as_scalar_real() else {
-            panic!("atan2(x, y) is only defined for real scalars, x = {self}");
+        let Some(x) = other.as_scalar_real() else {
+            panic!("atan2(y, x) is only defined for real scalars, x = {self}");
         };
 
-        let Some(y) = other.as_scalar_real() else {
-            panic!("atan2(x, y) is only defined for real scalars, y = {other}");
+        let Some(y) = self.as_scalar_real() else {
+            panic!("atan2(y, x) is only defined for real scalars, y = {other}");
         };
 
         Value::from(y.atan2(x))
-            .check_nan("atan2", &format!("x = {self}, y = {other}"))
+            .check_nan("atan2", &format!("y = {self}, x = {other}"))
     }
 
     pub fn conj(&self) -> Self {

@@ -51,11 +51,6 @@ impl Solver for LmSolver {
         // constraints: Vec<Constraint>,
         guesses: &AHashMap<Variable, Value>,
     ) -> Result<Vec<(Variable, Value)>, Self::Error> {
-        println!("Solving:");
-        for r in &residuals {
-            println!("{}", r)
-        }
-
         let realized_residuals = residuals
             .into_iter()
             .flat_map(|resid| resid.realize().unpack())
@@ -113,7 +108,8 @@ impl Solver for LmSolver {
             })
             .collect();
 
-        let residuals: Vec<_> = residuals
+        let compiled_residuals: Vec<_> = residuals
+            .clone()
             .into_par_iter()
             .map(|r| Realized::from_real(r).compile())
             .collect();
@@ -121,7 +117,7 @@ impl Solver for LmSolver {
         let problem = LmProblem {
             x: DVector::from_element(symbols.len(), 1.0),
             jacobian,
-            residuals,
+            residuals: compiled_residuals,
             symbols: symbols.clone(),
         };
         let (p, report) = LevenbergMarquardt::new()
@@ -137,8 +133,9 @@ impl Solver for LmSolver {
             "{:?}",
             &report.termination
         );
+
         assert!(
-            report.objective_function.abs() < 1e-12,
+            report.objective_function.abs() < 1e-14,
             "{:.3e}",
             report.objective_function.abs()
         );
@@ -199,8 +196,8 @@ impl LeastSquaresProblem<f64, Dyn, Dyn> for LmProblem {
 
     fn residuals(&self) -> Option<DVector<f64>> {
         let f = self.evaluate();
-        println!("x -> {}", self.params());
-        println!("f(x) -> {f}");
+        // println!("x -> {}", self.params());
+        // println!("f(x) -> {f}");
 
         Some(f)
     }

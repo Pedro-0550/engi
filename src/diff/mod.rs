@@ -1,4 +1,3 @@
-
 use num::Zero;
 
 use crate::{
@@ -225,7 +224,7 @@ impl Expr {
                             let b = dx.import(self, *b);
                             let ctx = dx.edit();
                             ctx.div(
-                                ctx.sub(ctx.mul(b, *da), ctx.mul(a, *db)),
+                                ctx.sub(ctx.mul(a, *db), ctx.mul(b, *da)),
                                 ctx.add(
                                     ctx.pow(a, ctx.qty(2)),
                                     ctx.pow(b, ctx.qty(2)),
