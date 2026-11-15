@@ -17,7 +17,7 @@ use rayon::iter::{
 use crate::{
     core::value::{EQ_REL_TOL, Value},
     expr::{Expr, domain::Realized, jit::CompiledExpr},
-    model::{Solver, Variable},
+    model::{Variable, solve::Solver},
     symbol::{Realization, Symbol},
 };
 
@@ -70,7 +70,7 @@ impl Solver for LmSolver {
                 .get(&Variable(primary))
                 .and_then(|x| x.as_scalar().copied())
                 .filter(|x| !x.is_zero())
-                .unwrap_or(Complex::ONE) // use this in BOTH the scale and unscale steps
+                .unwrap_or(Complex::ONE)
         }
 
         let scale_bindings = symbols

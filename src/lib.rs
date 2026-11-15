@@ -14,6 +14,8 @@
 #![feature(fn_traits)]
 #![feature(macro_metavar_expr_concat)]
 #![feature(int_roundings)]
+#![feature(generic_const_exprs)]
+#![feature(temporary_niche_types)]
 #![warn(unused_crate_dependencies)]
 
 pub use tabled;
@@ -32,6 +34,7 @@ pub mod model;
 pub mod simplify;
 pub mod symbol;
 pub mod unit;
+pub use engi_macros as macros;
 
 pub mod prelude {
     pub use num::pow::Pow;

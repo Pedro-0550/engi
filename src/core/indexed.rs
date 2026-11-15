@@ -3,8 +3,6 @@ use std::{
     ops::{Index, IndexMut},
 };
 
-use soapy::{Soa, Soapy};
-
 #[cfg(feature = "large_exprs")]
 pub type Size = usize;
 
@@ -56,7 +54,7 @@ macro_rules! id {
     };
 }
 
-/* --------------------------------- STRUCTS -------------------------------- */
+/* -------------------------------------------------------------------------- */
 
 #[repr(transparent)]
 #[derive(Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -64,8 +62,6 @@ pub struct Indexed<T, I> {
     collection: T,
     _phantom: PhantomData<I>,
 }
-
-/* ---------------------------------- IMPLS --------------------------------- */
 
 impl<T, I> Indexed<T, I> {
     pub fn iter<U>(&self) -> impl Iterator<Item = (I, &U)>

@@ -331,6 +331,7 @@ impl EquivalencyGraph {
                     Operation::Conditional { cond: _, pass: _, fail: _ } => {
                         return None;
                     }
+                    Operation::Index { tensor, at } => todo!(),
                 },
             ),
             Operand::Matrix(_) => todo!(),
@@ -1045,6 +1046,7 @@ impl FetchedOperand<'_> {
                 Operation::Rank(_) => todo!(),
                 Operation::Trace(_) => todo!(),
                 Operation::Conditional { .. } => todo!(),
+                Operation::Index { tensor, at } => 1,
             },
             Operand::Matrix(_) => todo!(),
             Operand::Wildcard(_) => unreachable!(),

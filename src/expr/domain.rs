@@ -18,6 +18,21 @@ use crate::{
     symbol::constants::e,
 };
 
+/* -------------------------------------------------------------------------- */
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
+pub enum Universe {
+    Integer,
+    Real,
+}
+
+pub enum Numeric {
+    Real,
+    Imag,
+    Complex,
+}
+
+/* -------------------------------------------------------------------------- */
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub enum Endpoint {
     Neg,
@@ -36,24 +51,6 @@ pub struct Interval {
     from: Edge,
     to: Edge,
     over: Universe,
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
-pub enum Universe {
-    Integer,
-    Real,
-}
-
-pub enum Numeric {
-    Real,
-    Imag,
-    Complex,
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
-pub struct Domain {
-    pub re: Interval,
-    pub im: Interval,
 }
 
 impl Interval {
@@ -122,24 +119,7 @@ impl Interval {
         to: Edge::Closed(Zero),
         over: Universe::Integer,
     };
-}
 
-pub struct Realized {
-    pub re: Expr,
-    pub im: Expr,
-}
-
-impl Realized {
-    pub fn unpack(self) -> [Expr; 2] {
-        [self.re, self.im]
-    }
-
-    pub fn from_real(re: Expr) -> Self {
-        Self { re, im: Expr::from(0) }
-    }
-}
-
-impl Interval {
     pub fn has_zero(&self) -> bool {
         match (self.from, self.to) {
             (_, Edge::Open(Endpoint::Zero)) => false,
@@ -177,6 +157,31 @@ impl Interval {
     pub fn is_integer(&self) -> bool {
         if self.is_zero() { true } else { self.over == Universe::Integer }
     }
+}
+
+/* -------------------------------------------------------------------------- */
+
+pub struct Realized {
+    pub re: Expr,
+    pub im: Expr,
+}
+
+impl Realized {
+    pub fn unpack(self) -> [Expr; 2] {
+        [self.re, self.im]
+    }
+
+    pub fn from_real(re: Expr) -> Self {
+        Self { re, im: Expr::from(0) }
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
+pub struct Domain {
+    pub re: Interval,
+    pub im: Interval,
 }
 
 impl Domain {
@@ -652,6 +657,7 @@ impl FoldedOperand<'_, Domain, ()> {
                 Operation::Conditional { pass, fail, .. } => {
                     Domain::new(pass.re.union(fail.re), pass.im.union(fail.im))
                 }
+                Operation::Index { tensor, .. } => **tensor,
             },
             Operand::Wildcard(never) => *never,
         }
@@ -867,6 +873,9 @@ impl Expr {
                         Operation::Det(_) => todo!(),
                         Operation::Rank(_) => todo!(),
                         Operation::Trace(_) => todo!(),
+                        Operation::Index { tensor: (re, im), at } => {
+                            (ctx.index(*re, at), ctx.index(*im, at))
+                        }
                         Operation::Conditional {
                             cond: _,
                             pass: _,

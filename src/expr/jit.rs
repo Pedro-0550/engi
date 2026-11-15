@@ -1,5 +1,3 @@
-/* --------------------------------- STRUCTS -------------------------------- */
-
 use std::mem;
 
 use ahash::AHashMap;
@@ -32,6 +30,8 @@ use crate::{
     },
 };
 
+/* -------------------------------------------------------------------------- */
+
 pub struct CompiledExpr {
     func: unsafe extern "C" fn(*const f64, *mut f64),
     args: Vec<Symbol>,
@@ -41,81 +41,7 @@ pub struct CompiledExpr {
     module: JITModule,
 }
 
-/* ---------------------------------- IMPLS --------------------------------- */
-
-macro_rules! impl_math_fns {
-    ($($unary:ident),*; $($binary:ident),*) => {
-        struct MathFns {
-            $($unary: FuncRef,)*
-            $($binary: FuncRef,)*
-        }
-            $(unsafe extern "C" fn $unary(x: f64) -> f64 {
-                x.$unary()
-            })*
-            $(unsafe extern "C" fn $binary(a: f64, b: f64) -> f64 {
-                a.$binary(b)
-            })*
-
-
-        impl MathFns{
-            $(
-                fn $unary(&self, bcx: &mut FunctionBuilder<'_>, val: Value) -> Value {
-                    let call = bcx.ins().call(self.$unary, &[val]);
-                    bcx.inst_results(call)[0]
-                }
-            )*
-
-            $(
-                fn $binary(&self, bcx: &mut FunctionBuilder<'_>, a: Value, b: Value) -> Value {
-                    let call = bcx.ins().call(self.$binary, &[a, b]);
-                    bcx.inst_results(call)[0]
-                }
-            )*
-
-
-            fn add_symbols(builder: &mut JITBuilder) {
-                $(builder.symbol(concat!("engi_", stringify!($unary)), $unary as *const u8);)*
-                $(builder.symbol(concat!("engi_", stringify!($binary)), $binary as *const u8);)*
-            }
-
-            fn new(module: &mut JITModule, bcx: &mut FunctionBuilder<'_>) -> Self {
-                let default_call_conv = module.target_config().default_call_conv;
-
-                let mut unary_sig = module.make_signature();
-                unary_sig.call_conv = default_call_conv;
-                unary_sig.params.push(AbiParam::new(F64));
-                unary_sig.returns.push(AbiParam::new(F64));
-
-                let mut binary_sig = module.make_signature();
-                binary_sig.call_conv = default_call_conv;
-                binary_sig.params.push(AbiParam::new(F64));
-                binary_sig.params.push(AbiParam::new(F64));
-                binary_sig.returns.push(AbiParam::new(F64));
-
-                Self {
-                    $(
-                    $unary: {
-                        let $unary = module
-                            .declare_function(concat!("engi_", stringify!($unary)), Linkage::Import, &unary_sig)
-                            .unwrap();
-                        module.declare_func_in_func($unary, bcx.func)
-                    },
-                    )*
-                    $(
-                    $binary: {
-                        let $binary = module
-                            .declare_function(concat!("engi_", stringify!($binary)), Linkage::Import, &binary_sig)
-                            .unwrap();
-                        module.declare_func_in_func($binary, bcx.func)
-                    },
-                    )*
-                }
-            }
-        }
-    };
-}
-
-impl_math_fns!(sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh, exp, ln, sqrt, abs, signum; powf, atan2);
+/* -------------------------------------------------------------------------- */
 
 impl Realized {
     pub fn compile(self) -> CompiledExpr {
@@ -126,7 +52,7 @@ impl Realized {
         flag_builder.set("enable_verifier", "true").unwrap();
 
         let isa_builder = cranelift::native::builder().unwrap_or_else(|msg| {
-            panic!("host machine is not supported: {msg}");
+            panic!("Host machine does not support JIT: {msg}");
         });
 
         let isa =
@@ -259,6 +185,7 @@ impl Realized {
                     Operation::Conditional { cond: _, pass: _, fail: _ } => {
                         todo!()
                     }
+                    Operation::Index { tensor, at } => todo!(),
                 },
             }, |_bcx, _, _c| todo!())
         }
@@ -334,3 +261,79 @@ impl CompiledExpr {
         Complex64::new(output[0], output[1]).into()
     }
 }
+
+/* -------------------------------------------------------------------------- */
+
+macro_rules! impl_math_fns {
+    ($($unary:ident),*; $($binary:ident),*) => {
+        struct MathFns {
+            $($unary: FuncRef,)*
+            $($binary: FuncRef,)*
+        }
+            $(unsafe extern "C" fn $unary(x: f64) -> f64 {
+                x.$unary()
+            })*
+            $(unsafe extern "C" fn $binary(a: f64, b: f64) -> f64 {
+                a.$binary(b)
+            })*
+
+
+        impl MathFns{
+            $(
+                fn $unary(&self, bcx: &mut FunctionBuilder<'_>, val: Value) -> Value {
+                    let call = bcx.ins().call(self.$unary, &[val]);
+                    bcx.inst_results(call)[0]
+                }
+            )*
+
+            $(
+                fn $binary(&self, bcx: &mut FunctionBuilder<'_>, a: Value, b: Value) -> Value {
+                    let call = bcx.ins().call(self.$binary, &[a, b]);
+                    bcx.inst_results(call)[0]
+                }
+            )*
+
+
+            fn add_symbols(builder: &mut JITBuilder) {
+                $(builder.symbol(concat!("engi_", stringify!($unary)), $unary as *const u8);)*
+                $(builder.symbol(concat!("engi_", stringify!($binary)), $binary as *const u8);)*
+            }
+
+            fn new(module: &mut JITModule, bcx: &mut FunctionBuilder<'_>) -> Self {
+                let default_call_conv = module.target_config().default_call_conv;
+
+                let mut unary_sig = module.make_signature();
+                unary_sig.call_conv = default_call_conv;
+                unary_sig.params.push(AbiParam::new(F64));
+                unary_sig.returns.push(AbiParam::new(F64));
+
+                let mut binary_sig = module.make_signature();
+                binary_sig.call_conv = default_call_conv;
+                binary_sig.params.push(AbiParam::new(F64));
+                binary_sig.params.push(AbiParam::new(F64));
+                binary_sig.returns.push(AbiParam::new(F64));
+
+                Self {
+                    $(
+                    $unary: {
+                        let $unary = module
+                            .declare_function(concat!("engi_", stringify!($unary)), Linkage::Import, &unary_sig)
+                            .unwrap();
+                        module.declare_func_in_func($unary, bcx.func)
+                    },
+                    )*
+                    $(
+                    $binary: {
+                        let $binary = module
+                            .declare_function(concat!("engi_", stringify!($binary)), Linkage::Import, &binary_sig)
+                            .unwrap();
+                        module.declare_func_in_func($binary, bcx.func)
+                    },
+                    )*
+                }
+            }
+        }
+    };
+}
+
+impl_math_fns!(sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh, exp, ln, sqrt, abs, signum; powf, atan2);

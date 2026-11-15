@@ -1,12 +1,12 @@
 use std::{
     hash::Hash,
-    ops::{Add, Div, Mul, Neg, Sub},
+    ops::{Add, Div, Index, Mul, Neg, Sub},
 };
 
 use num::{complex::Complex64, pow::Pow};
 
 use crate::{
-    core::{util::impl_op_permutations, value::Value},
+    core::{indexed::Size, util::impl_op_permutations, value::Value},
     expr::{
         BuiltOperand, EditContext, Expr, FetchedOperand, Operand,
         dag::{Leaf, Operation},
@@ -140,6 +140,38 @@ impl Neg for &Symbol {
     }
 }
 
+impl Neg for Variable {
+    type Output = Expr;
+
+    fn neg(self) -> Self::Output {
+        -1 * self
+    }
+}
+
+impl Neg for &Variable {
+    type Output = Expr;
+
+    fn neg(self) -> Self::Output {
+        -1 * self
+    }
+}
+
+impl Neg for Connector {
+    type Output = Expr;
+
+    fn neg(self) -> Self::Output {
+        -1 * self
+    }
+}
+
+impl Neg for &Connector {
+    type Output = Expr;
+
+    fn neg(self) -> Self::Output {
+        -1 * self
+    }
+}
+
 impl<W: Copy + Eq + Hash> From<&Expr<W>> for Expr<W> {
     fn from(value: &Expr<W>) -> Self {
         value.clone()
@@ -219,6 +251,10 @@ impl EditContext<'_> {
 
     pub fn neg_one(&self) -> Operand {
         self.qty(-1)
+    }
+
+    pub fn index(&self, tensor: Operand, at: Size) -> Operand {
+        self.push(Operand::Operation(Operation::Index { tensor, at }))
     }
 
     pub fn add(&self, a: Operand, b: Operand) -> Operand {

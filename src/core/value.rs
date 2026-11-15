@@ -29,11 +29,12 @@ use crate::{
     },
 };
 
+/* -------------------------------------------------------------------------- */
+
 pub const EQ_REL_TOL: f64 = 1e-12;
 pub const ZERO_ABS_TOL: f64 = 1e-30;
 
-// TODO: fixed numbers
-/* --------------------------------- TRAITS --------------------------------- */
+/* -------------------------------------------------------------------------- */
 
 pub trait ComplexExt
 where
@@ -49,15 +50,14 @@ where
     fn eq_approx(&self, other: impl Into<Complex64>) -> bool;
 }
 
-/* ---------------------------------- ENUMS --------------------------------- */
+/* -------------------------------------------------------------------------- */
 
 #[derive(Clone, Debug, IsVariant)]
 pub enum Value {
     Matrix(Arc<DMatrix<Complex64>>),
     Scalar(Complex64),
+    // Tuple(Arc<[Value]>),
 }
-
-/* ---------------------------------- IMPLS --------------------------------- */
 
 impl_as_variant!(Value, [Matrix => Arc<DMatrix<Complex64>>, Scalar => Complex64]);
 
@@ -315,6 +315,8 @@ impl Value {
         self
     }
 }
+
+/* -------------------------------------------------------------------------- */
 
 impl ComplexExt for Complex64 {
     fn is_integer(&self) -> bool {

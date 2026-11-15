@@ -124,6 +124,7 @@ impl Expr {
                     }
                 }
                 Operation::Transpose(_) => Rhs,
+                Operation::Index { tensor, at } => Disjoint,
             },
             Operand::Wildcard(_) => Joinable,
         }
@@ -310,6 +311,10 @@ impl Display for Expr {
                     Operation::Rank(_) => todo!(),
                     Operation::Trace(_) => todo!(),
                     Operation::Conditional { cond, pass, fail } => todo!(),
+                    Operation::Index { tensor, at } => {
+                        fmt_inner(expr, *tensor, f);
+                        write!(f, "[{at}]")
+                    }
                 },
                 Operand::Wildcard(_) => unreachable!(),
             }

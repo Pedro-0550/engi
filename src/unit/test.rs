@@ -1,6 +1,6 @@
 use super::*;
 use crate::unit::defs::{
-    B, Hz, J, K, Np, V, W, dB, eV, m, mNp, mV, mW, oC, s, µV,
+    B, Hz, J, K, Np, V, W, dB, eV, m, mNp, mV, mW, oC, s, μV,
 };
 
 /* -------------------------------- FUNCTIONS ------------------------------- */
@@ -33,7 +33,7 @@ pub fn normalization() {
 #[test]
 pub fn prefixalization() {
     assert_eq!((5e-3 * V).prefixalize(), 5 * mV);
-    assert_eq!((5e-6 * V / s).prefixalize(), 5 * µV / s);
+    assert_eq!((5e-6 * V / s).prefixalize(), 5 * μV / s);
 }
 
 #[test]

@@ -15,7 +15,7 @@ use crate::{
     },
     expr::{Operand, shape::Shape},
     id,
-    model::{Connector, ConnectorBuilder, Variable, VariableBuilder},
+    model::{Connector, ConnectorBuilder, Model, Variable, VariableBuilder},
     simplify::pattern::Wildcard,
     symbol::{Symbol, constants::Constant},
     unit::{Quantity, defs::UNITLESS},
@@ -45,6 +45,7 @@ macro_rules! unary {
             | Operation::Det($n)
             | Operation::Rank($n)
             | Operation::Trace($n)
+            | Operation::Index { tensor: $n, .. }
     };
 }
 
@@ -115,6 +116,7 @@ pub enum Operation<O, C> {
     Det(O),
     Rank(O),
     Trace(O),
+    Index { tensor: O, at: Size },
 
     // Piecewise
     Conditional { cond: C, pass: O, fail: O },
@@ -359,6 +361,9 @@ impl<O, C> Operation<O, C> {
             Operation::Det(a) => Operation::Det(o(s, a)),
             Operation::Rank(a) => Operation::Rank(o(s, a)),
             Operation::Trace(a) => Operation::Trace(o(s, a)),
+            Operation::Index { tensor, at } => {
+                Operation::Index { tensor: o(s, tensor), at: *at }
+            }
             Operation::Conditional { cond, pass, fail } => {
                 Operation::Conditional {
                     cond: c(s, cond),

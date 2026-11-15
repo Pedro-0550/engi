@@ -30,7 +30,7 @@ rayon = "*"
 petgraph = "0.8.3"
 boxcar = "0.2"
 dashmap = "6.2"
-soapy = "0.2"
+# soapy = "0.2"
 
 # convenience macros
 bon = "3.10"
@@ -48,7 +48,7 @@ derive_more = { version = "2", features = [
     "mul_assign",
 
 ] }
-pastey = "0.2"
+# pastey = "0.2"
 engi-macros = { path = "./macros" }
 
 # fmt
@@ -57,7 +57,6 @@ tabled = "0.22"
 
 [dev-dependencies]
 criterion = "0.8"
-dashu-float = "0.6.2"
 
 [build-dependencies]
 syn = { version = "3.0", features = ["full"] }

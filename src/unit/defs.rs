@@ -19,7 +19,7 @@ macro_rules! prefixes {
             pub const ${concat(f, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(f, $name)}), base: &$name, scale: OrderedFloat(1e-15) };
             pub const ${concat(p, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(p, $name)}), base: &$name, scale: OrderedFloat(1e-12) };
             pub const ${concat(n, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(n, $name)}), base: &$name, scale: OrderedFloat(1e-9) };
-            pub const ${concat(µ, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(µ, $name)}), base: &$name, scale: OrderedFloat(1e-6) };
+            pub const ${concat(μ, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(μ, $name)}), base: &$name, scale: OrderedFloat(1e-6) };
             pub const ${concat(m, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(m, $name)}), base: &$name, scale: OrderedFloat(1e-3) };
             pub const ${concat(c, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(c, $name)}), base: &$name, scale: OrderedFloat(1e-2) };
             pub const ${concat(d, $name)}: Unit = Unit::Linear { symbol: stringify!(${concat(d, $name)}), base: &$name, scale: OrderedFloat(1e-1) };
@@ -156,7 +156,7 @@ pub const cal: Unit =
     Unit::Linear { symbol: "cal", base: &J, scale: OrderedFloat(4.184) };
 
 /// Metric ton
-pub const t: Unit =
+pub const ton: Unit =
     Unit::Linear { symbol: "t", base: &kg, scale: OrderedFloat(1000.0) };
 
 /// Atomic mass unit

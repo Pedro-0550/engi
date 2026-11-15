@@ -14,6 +14,8 @@ pub enum Insertion<Key, Idx> {
     Added(Idx),
 }
 
+/* -------------------------------------------------------------------------- */
+
 /// Append-only hash-consing Vec<T>
 #[derive(PartialEq, Eq, Clone)]
 pub struct Consed<T: Hash + Eq, Key, Idx = Key> {

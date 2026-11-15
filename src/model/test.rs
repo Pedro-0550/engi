@@ -7,7 +7,7 @@ use crate::{
         Condition, Connector, InterfaceArrayExt, InterfaceBuilder, Model,
         ModelSolution, Relations, System, Variable,
         eq::{Constraint, Equation},
-        lm::LmSolver,
+        solve::lm::LmSolver,
     },
     symbol::constants::{kB, q},
     unit::defs::*,
@@ -254,8 +254,8 @@ fn modeling() {
     r_b.port.n.connect(&q1.b);
     r_b.z.guess(500 * kΩ);
 
-    r_b.port.i.guess(60 * µA);
-    q1.b.i.guess(60 * µA);
+    r_b.port.i.guess(60 * μA);
+    q1.b.i.guess(60 * μA);
 
     [&v_c.out.n, &v_b.out.n, &q1.e].connect(&gnd.pin);
 

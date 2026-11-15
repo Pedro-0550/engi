@@ -239,8 +239,19 @@ pub fn model(input: TokenStream) -> TokenStream {
 
     let solution_ident = format_ident!("{}Solution", ident);
     let builder_ident = format_ident!("{}Builder", ident);
+    let template_ident = format_ident!("{}Template", ident);
 
     quote! {
+        #[derive(Default, Clone)]
+        #vis struct #template_ident {
+            #(#variable_vis #variable_idents: Option<engi::unit::Quantity>,)*
+            #(#submodel_vis #submodel_idents: Option<<#submodel_tys as engi::model::Model>::Template>,)*
+        }
+
+        impl engi::model::ModelTemplate for #template_ident {}
+
+        /* -------------------------------------------------------------------------- */
+
         #vis struct #builder_ident<'s> {
             path: engi::model::ModelPath,
             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Builder<'s>,)*
@@ -253,6 +264,19 @@ pub fn model(input: TokenStream) -> TokenStream {
 
             fn path(&self) -> &engi::model::ModelPath {
                 &self.path
+            }
+
+            fn bind(&self, template: &#template_ident) {
+                use engi::model::ModelBuilder;
+
+                #(if let Some(ref _s) = template.#submodel_idents {
+                    self.#submodel_idents.bind(_s);
+                })*
+
+                #(if let Some(ref _v) = template.#variable_idents {
+                    self.#variable_idents.bind(_v.clone());
+                })*
+
             }
         }
 
@@ -363,6 +387,7 @@ pub fn model(input: TokenStream) -> TokenStream {
         impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
             type Solution = #solution_ident;
             type Builder<'s> = #builder_ident<'s>;
+            type Template = #template_ident;
 
             fn new(name: &str) -> Self {
                 Self {

@@ -42,6 +42,10 @@ impl Shape {
         Self { rows: rows.try_into().unwrap(), cols: cols.try_into().unwrap() }
     }
 
+    pub fn vec(rows: Size) -> Self {
+        Self { rows: rows.try_into().unwrap(), ..Self::SCALAR }
+    }
+
     pub fn is_scalar(&self) -> bool {
         self.rows.get() == 1 && self.cols.get() == 1
     }
@@ -196,6 +200,13 @@ impl FoldedOperand<'_, Shape, ()> {
                         "Both branches of a conditional must be of the same shape"
                     );
                     *pass
+                }
+                Operation::Index { tensor, at } => {
+                    if tensor.is_vec() {
+                        Shape::SCALAR
+                    } else {
+                        Shape::vec(tensor.rows.get())
+                    }
                 }
             },
             Operand::Matrix(mat) => mat.shape(),

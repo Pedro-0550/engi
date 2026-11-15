@@ -1,10 +1,11 @@
-// /* --------------------------------- MODULES -------------------------------- */
 pub mod dag;
 pub mod domain;
 pub mod fmt;
 pub mod jit;
 pub mod ops;
 pub mod shape;
+
+/* -------------------------------------------------------------------------- */
 
 use std::{
     cell::Cell,
@@ -26,6 +27,8 @@ use crate::{
     simplify::{EquivalencyGraph, rules},
     symbol::{Symbol, constants::e},
 };
+
+/* -------------------------------------------------------------------------- */
 
 /// A mathematical expression based on a directed acryllic graph
 ///

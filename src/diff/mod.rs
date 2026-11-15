@@ -9,18 +9,10 @@ use crate::{
     symbol::Symbol,
 };
 
-/* --------------------------------- MODULES -------------------------------- */
+/* -------------------------------------------------------------------------- */
 
 #[cfg(test)]
 mod test;
-
-/* --------------------------------- TRAITS --------------------------------- */
-
-// enum Derivative {
-//     Conventional { dz: Expr },
-//     Wirtinger { dz: Expr, dz_conj: Expr },
-// }
-/* ---------------------------------- IMPLS --------------------------------- */
 
 impl Expr {
     /// Takes the partial derivative of this expression, with respect to the given symbol
@@ -51,6 +43,7 @@ impl Expr {
                             let ctx = dx.edit();
                             ctx.add(*da, *db)
                         }
+                        Operation::Index { tensor: (_, d_tensor), at } => dx.edit().index(*d_tensor, at),
                         Operation::Mul([(a, da), (b, db)]) => {
                             let a = dx.import(self, *a);
                             let b = dx.import(self, *b);
