@@ -32,6 +32,7 @@ use crate::{
             AssembledInterfaceSolution, AssembledModelSolution,
             InterfaceSolution, ModelSolution,
         },
+        state::StatefulView,
     },
     symbol::{Symbol, constants::q},
     unit::Quantity,
@@ -142,6 +143,7 @@ pub trait Model {
     type Template: ModelTemplate;
     type Solution: ModelSolution;
     type Builder<'s>: ModelBuilder;
+    type StatefulView<S: States>: StatefulView<S>;
 
     fn new(name: &str) -> Self;
     fn builder<'s>(path: ModelPath, system: &'s System) -> Self::Builder<'s>;

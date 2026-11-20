@@ -60,7 +60,7 @@ criterion = "0.8"
 
 [build-dependencies]
 syn = { version = "3.0", features = ["full"] }
-quote = "1.0"
+quote = "0.5"
 proc-macro2 = "1.0"
 itertools = "0.15"
 
