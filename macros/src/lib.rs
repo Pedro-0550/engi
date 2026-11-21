@@ -15,6 +15,7 @@ use syn::{
     parse_macro_input,
     punctuated::Punctuated,
 };
+use template_quote::quote;
 
 /* -------------------------------------------------------------------------- */
 // mod interface;
@@ -26,380 +27,381 @@ mod model;
 // //     unit:
 // // }
 
-// #[proc_macro_derive(Model, attributes(var, model, interface))]
-// pub fn model(input: TokenStream) -> TokenStream {
-//     // Parse the input tokens into a syntax tree
-//     let DeriveInput { vis, ident, generics, data, .. } =
-//         parse_macro_input!(input as DeriveInput);
+#[proc_macro_derive(Model, attributes(var, model, interface))]
+pub fn model(input: TokenStream) -> TokenStream {
+    //     // Parse the input tokens into a syntax tree
+    //     let DeriveInput { vis, ident, generics, data, .. } =
+    //         parse_macro_input!(input as DeriveInput);
 
-//     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-//     let Data::Struct(DataStruct { fields, .. }) = data else {
-//         panic!("#[derive(Model)] only supports structs");
-//     };
+    //     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    //     let Data::Struct(DataStruct { fields, .. }) = data else {
+    //         panic!("#[derive(Model)] only supports structs");
+    //     };
 
-//     let (mut vars, mut submodels, mut interfaces) =
-//         (Vec::new(), Vec::new(), Vec::new());
+    //     let (mut vars, mut submodels, mut interfaces) =
+    //         (Vec::new(), Vec::new(), Vec::new());
 
-//     let mut has_name = false;
+    //     let mut has_name = false;
 
-//     for field in &fields {
-//         let mut attrs = HashMap::new();
-//         if field.ident.as_ref().unwrap().to_string() == "name" {
-//             if field.ty.to_token_stream().to_string().ends_with("String") {
-//                 has_name = true;
-//                 continue;
-//             } else {
-//                 panic!("`name` field must be String")
-//             }
-//         }
+    //     for field in &fields {
+    //         let mut attrs = HashMap::new();
+    //         if field.ident.as_ref().unwrap().to_string() == "name" {
+    //             if field.ty.to_token_stream().to_string().ends_with("String") {
+    //                 has_name = true;
+    //                 continue;
+    //             } else {
+    //                 panic!("`name` field must be String")
+    //             }
+    //         }
 
-//         for ident in ["var", "interface", "model"] {
-//             let Ok(attr) = field
-//                 .attrs
-//                 .iter()
-//                 .filter(|x| x.path().is_ident(ident))
-//                 .at_most_one()
-//             else {
-//                 let message = syn::LitStr::new(
-//                     &format!(
-//                         "A field cannot have more than one #[{ident}] attr"
-//                     ),
-//                     Span::call_site(),
-//                 );
-//                 return quote! {compile_error!(#message);}.into();
-//             };
+    //         for ident in ["var", "interface", "model"] {
+    //             let Ok(attr) = field
+    //                 .attrs
+    //                 .iter()
+    //                 .filter(|x| x.path().is_ident(ident))
+    //                 .at_most_one()
+    //             else {
+    //                 let message = syn::LitStr::new(
+    //                     &format!(
+    //                         "A field cannot have more than one #[{ident}] attr"
+    //                     ),
+    //                     Span::call_site(),
+    //                 );
+    //                 return quote! {compile_error!(#message);}.into();
+    //             };
 
-//             if let Some(attr) = attr {
-//                 attrs.insert(ident, attr);
-//             }
-//         }
+    //             if let Some(attr) = attr {
+    //                 attrs.insert(ident, attr);
+    //             }
+    //         }
 
-//         if attrs.len() > 1 {
-//             return quote! {compile_error!("#[var], #[interface], and #[model] are mutually exclusive.");}.into();
-//         }
+    //         if attrs.len() > 1 {
+    //             return quote! {compile_error!("#[var], #[interface], and #[model] are mutually exclusive.");}.into();
+    //         }
 
-//         match attrs.into_iter().next() {
-//             Some(("var", var_attr)) => {
-//                 let var = match VariableAttr::parse(var_attr) {
-//                     Ok(var) => var,
-//                     Err(e) => return e.into_compile_error().into(),
-//                 };
+    //         match attrs.into_iter().next() {
+    //             Some(("var", var_attr)) => {
+    //                 let var = match VariableAttr::parse(var_attr) {
+    //                     Ok(var) => var,
+    //                     Err(e) => return e.into_compile_error().into(),
+    //                 };
 
-//                 let desc =
-//                     var.desc.unwrap_or(LitStr::new("", Span::call_site()));
-//                 let unit = var.unit.unwrap_or(
-//                     Expr::parse
-//                         .parse(quote! {engi::unit::defs::UNITLESS}.into())
-//                         .unwrap(),
-//                 );
+    //                 let desc =
+    //                     var.desc.unwrap_or(LitStr::new("", Span::call_site()));
+    //                 let unit = var.unit.unwrap_or(
+    //                     Expr::parse
+    //                         .parse(quote! {engi::unit::defs::UNITLESS}.into())
+    //                         .unwrap(),
+    //                 );
 
-//                 let shape = var.shape.unwrap_or(
-//                     Expr::parse
-//                         .parse(quote! {engi::expr::shape::Shape::SCALAR}.into())
-//                         .unwrap(),
-//                 );
+    //                 let shape = var.shape.unwrap_or(
+    //                     Expr::parse
+    //                         .parse(quote! {engi::expr::shape::Shape::SCALAR}.into())
+    //                         .unwrap(),
+    //                 );
 
-//                 vars.push((field, desc, unit, shape));
-//             }
-//             Some(("interface", interface_attr)) => {
-//                 interfaces.push(field);
-//             }
-//             Some(("model", model_attr)) => {
-//                 submodels.push(field);
-//             }
-//             _ => (),
-//         }
-//     }
+    //                 vars.push((field, desc, unit, shape));
+    //             }
+    //             Some(("interface", interface_attr)) => {
+    //                 interfaces.push(field);
+    //             }
+    //             Some(("model", model_attr)) => {
+    //                 submodels.push(field);
+    //             }
+    //             _ => (),
+    //         }
+    //     }
 
-//     if !has_name {
-//         panic!("Model struct must have a `name: String` field")
-//     }
+    //     if !has_name {
+    //         panic!("Model struct must have a `name: String` field")
+    //     }
 
-//     /* -------------------------------------------------------------------------- */
-//     let mut variable_idents = Vec::new();
-//     let mut variable_idxs = Vec::new();
-//     let mut variable_vis = Vec::new();
+    //     /* -------------------------------------------------------------------------- */
+    //     let mut variable_idents = Vec::new();
+    //     let mut variable_idxs = Vec::new();
+    //     let mut variable_vis = Vec::new();
 
-//     for (i, (var, ..)) in vars.iter().enumerate() {
-//         variable_idents.push(var.ident.clone().unwrap());
-//         variable_vis.push(var.vis.clone());
-//         variable_idxs.push(i);
-//     }
+    //     for (i, (var, ..)) in vars.iter().enumerate() {
+    //         variable_idents.push(var.ident.clone().unwrap());
+    //         variable_vis.push(var.vis.clone());
+    //         variable_idxs.push(i);
+    //     }
 
-//     /* -------------------------------------------------------------------------- */
-//     let mut submodel_idents = Vec::new();
-//     let mut submodel_idxs = Vec::new();
-//     let mut submodel_vis = Vec::new();
-//     let mut submodel_tys = Vec::new();
+    //     /* -------------------------------------------------------------------------- */
+    //     let mut submodel_idents = Vec::new();
+    //     let mut submodel_idxs = Vec::new();
+    //     let mut submodel_vis = Vec::new();
+    //     let mut submodel_tys = Vec::new();
 
-//     for (i, submodel) in submodels.iter().enumerate() {
-//         submodel_idents.push(submodel.ident.clone().unwrap());
-//         submodel_vis.push(submodel.vis.clone());
-//         submodel_tys.push(submodel.ty.clone());
+    //     for (i, submodel) in submodels.iter().enumerate() {
+    //         submodel_idents.push(submodel.ident.clone().unwrap());
+    //         submodel_vis.push(submodel.vis.clone());
+    //         submodel_tys.push(submodel.ty.clone());
 
-//         submodel_idxs.push(i);
-//     }
+    //         submodel_idxs.push(i);
+    //     }
 
-//     /* -------------------------------------------------------------------------- */
-//     let mut interface_idents = Vec::new();
-//     let mut interface_idxs = Vec::new();
-//     let mut interface_vis = Vec::new();
-//     let mut interface_tys = Vec::new();
+    //     /* -------------------------------------------------------------------------- */
+    //     let mut interface_idents = Vec::new();
+    //     let mut interface_idxs = Vec::new();
+    //     let mut interface_vis = Vec::new();
+    //     let mut interface_tys = Vec::new();
 
-//     for (i, interface) in interfaces.iter().enumerate() {
-//         interface_idents.push(interface.ident.clone().unwrap());
-//         interface_vis.push(interface.vis.clone());
-//         interface_tys.push(interface.ty.clone());
+    //     for (i, interface) in interfaces.iter().enumerate() {
+    //         interface_idents.push(interface.ident.clone().unwrap());
+    //         interface_vis.push(interface.vis.clone());
+    //         interface_tys.push(interface.ty.clone());
 
-//         interface_idxs.push(i);
-//     }
+    //         interface_idxs.push(i);
+    //     }
 
-//     /* -------------------------------------------------------------------------- */
-//     let constructor = vars
-//         .iter()
-//         .map(|(field, desc, unit, shape)| {
-//             let field_ident = field.ident.clone().unwrap();
+    //     /* -------------------------------------------------------------------------- */
+    //     let constructor = vars
+    //         .iter()
+    //         .map(|(field, desc, unit, shape)| {
+    //             let field_ident = field.ident.clone().unwrap();
 
-//             quote! {
-//                 #field_ident: engi::model::Variable::new(
-//                     engi::symbol::Symbol::builder()
-//                     .name(
-//                         format!(
-//                             "{}.{}",
-//                             name,
-//                             stringify!(#field_ident)
-//                         ).leak()
-//                     )
-//                     .unit(#unit)
-//                     .shape(#shape)
-//                     .desc(#desc)
-//                     .build()
-//                 )
-//             }
-//         })
-//         .chain(interfaces.iter().map(|field| {
-//             let field_ident = field.ident.clone().unwrap();
-//             let field_ty = field.ty.clone();
+    //             quote! {
+    //                 #field_ident: engi::model::Variable::new(
+    //                     engi::symbol::Symbol::builder()
+    //                     .name(
+    //                         format!(
+    //                             "{}.{}",
+    //                             name,
+    //                             stringify!(#field_ident)
+    //                         ).leak()
+    //                     )
+    //                     .unit(#unit)
+    //                     .shape(#shape)
+    //                     .desc(#desc)
+    //                     .build()
+    //                 )
+    //             }
+    //         })
+    //         .chain(interfaces.iter().map(|field| {
+    //             let field_ident = field.ident.clone().unwrap();
+    //             let field_ty = field.ty.clone();
 
-//             quote! {
-//                 #field_ident:
-//                     <#field_ty as engi::model::Interface>::new(
-//                         &format!(
-//                             "{}.{}",
-//                             name,
-//                             stringify!(#field_ident)
-//                         )
-//                     )
-//             }
-//         }))
-//         .chain(submodels.iter().map(|field| {
-//             let field_ident = field.ident.clone().unwrap();
-//             let field_ty = field.ty.clone();
+    //             quote! {
+    //                 #field_ident:
+    //                     <#field_ty as engi::model::Interface>::new(
+    //                         &format!(
+    //                             "{}.{}",
+    //                             name,
+    //                             stringify!(#field_ident)
+    //                         )
+    //                     )
+    //             }
+    //         }))
+    //         .chain(submodels.iter().map(|field| {
+    //             let field_ident = field.ident.clone().unwrap();
+    //             let field_ty = field.ty.clone();
 
-//             quote! {
-//                 #field_ident:
-//                     <#field_ty as engi::model::Model>::new(
-//                         &format!(
-//                             "{}.{}",
-//                             name,
-//                             stringify!(#field_ident)
-//                         )
-//                     )
-//             }
-//         }))
-//         .collect::<Vec<_>>();
+    //             quote! {
+    //                 #field_ident:
+    //                     <#field_ty as engi::model::Model>::new(
+    //                         &format!(
+    //                             "{}.{}",
+    //                             name,
+    //                             stringify!(#field_ident)
+    //                         )
+    //                     )
+    //             }
+    //         }))
+    //         .collect::<Vec<_>>();
 
-//     let solution_ident = format_ident!("{}Solution", ident);
-//     let builder_ident = format_ident!("{}Builder", ident);
-//     let template_ident = format_ident!("{}Template", ident);
+    //     let solution_ident = format_ident!("{}Solution", ident);
+    //     let builder_ident = format_ident!("{}Builder", ident);
+    //     let template_ident = format_ident!("{}Template", ident);
 
-//     quote! {
-//         #[derive(Default, Clone)]
-//         #vis struct #template_ident {
-//             #(#variable_vis #variable_idents: Option<engi::unit::Quantity>,)*
-//             #(#submodel_vis #submodel_idents: Option<<#submodel_tys as engi::model::Model>::Template>,)*
-//         }
+    //     quote! {
+    //         #[derive(Default, Clone)]
+    //         #vis struct #template_ident {
+    //             #(#variable_vis #variable_idents: Option<engi::unit::Quantity>,)*
+    //             #(#submodel_vis #submodel_idents: Option<<#submodel_tys as engi::model::Model>::Template>,)*
+    //         }
 
-//         impl engi::model::ModelTemplate for #template_ident {}
+    //         impl engi::model::ModelTemplate for #template_ident {}
 
-//         /* -------------------------------------------------------------------------- */
-//         #vis struct #builder_ident<'s> {
-//             path: engi::model::ModelPath,
-//             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Builder<'s>,)*
-//             #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Builder<'s>,)*
-//             #(#variable_vis #variable_idents: engi::model::VariableBuilder<'s>,)*
-//         }
+    //         /* -------------------------------------------------------------------------- */
+    //         #vis struct #builder_ident<'s> {
+    //             path: engi::model::ModelPath,
+    //             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Builder<'s>,)*
+    //             #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Builder<'s>,)*
+    //             #(#variable_vis #variable_idents: engi::model::VariableBuilder<'s>,)*
+    //         }
 
-//         impl<'s> engi::model::ModelBuilder for #builder_ident<'s> {
-//             type Builds = #ident;
+    //         impl<'s> engi::model::ModelBuilder for #builder_ident<'s> {
+    //             type Builds = #ident;
 
-//             fn path(&self) -> &engi::model::ModelPath {
-//                 &self.path
-//             }
+    //             fn path(&self) -> &engi::model::ModelPath {
+    //                 &self.path
+    //             }
 
-//             fn bind(&self, template: &#template_ident) {
-//                 use engi::model::ModelBuilder;
+    //             fn bind(&self, template: &#template_ident) {
+    //                 use engi::model::ModelBuilder;
 
-//                 #(if let Some(ref _s) = template.#submodel_idents {
-//                     self.#submodel_idents.bind(_s);
-//                 })*
+    //                 #(if let Some(ref _s) = template.#submodel_idents {
+    //                     self.#submodel_idents.bind(_s);
+    //                 })*
 
-//                 #(if let Some(ref _v) = template.#variable_idents {
-//                     self.#variable_idents.bind(_v.clone());
-//                 })*
+    //                 #(if let Some(ref _v) = template.#variable_idents {
+    //                     self.#variable_idents.bind(_v.clone());
+    //                 })*
 
-//             }
-//         }
+    //             }
+    //         }
 
-//         /* -------------------------------------------------------------------------- */
-//         #vis struct #solution_ident {
-//             name: String,
-//             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Solution,)*
-//             #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Solution,)*
-//             #(#variable_vis #variable_idents: engi::unit::Quantity,)*
-//         }
+    //         /* -------------------------------------------------------------------------- */
+    //         #vis struct #solution_ident {
+    //             name: String,
+    //             #(#submodel_vis #submodel_idents: <#submodel_tys as engi::model::Model>::Solution,)*
+    //             #(#interface_vis #interface_idents: <#interface_tys as engi::model::Interface>::Solution,)*
+    //             #(#variable_vis #variable_idents: engi::unit::Quantity,)*
+    //         }
 
-//         impl engi::model::ModelSolution for #solution_ident {
-//             fn disassemble(assembled: engi::model::AssembledModelSolution) -> Self {
-//                 use engi::model::*;
-//                 let mut submodel_iter = assembled.submodels.into_iter();
-//                 let mut interface_iter = assembled.interfaces.into_iter();
-//                 let mut variable_iter = assembled.variables.into_iter();
+    //         impl engi::model::ModelSolution for #solution_ident {
+    //             fn disassemble(assembled: engi::model::AssembledModelSolution) -> Self {
+    //                 use engi::model::*;
+    //                 let mut submodel_iter = assembled.submodels.into_iter();
+    //                 let mut interface_iter = assembled.interfaces.into_iter();
+    //                 let mut variable_iter = assembled.variables.into_iter();
 
-//                 Self {
-//                     name: assembled.name,
-//                     #(#submodel_idents: <#submodel_tys as Model>::Solution::disassemble(submodel_iter.next().unwrap()),)*
-//                     #(#interface_idents: <#interface_tys as Interface>::Solution::disassemble(interface_iter.next().unwrap()),)*
-//                     #(#variable_idents: variable_iter.next().unwrap(),)*
-//                 }
-//             }
+    //                 Self {
+    //                     name: assembled.name,
+    //                     #(#submodel_idents: <#submodel_tys as Model>::Solution::disassemble(submodel_iter.next().unwrap()),)*
+    //                     #(#interface_idents: <#interface_tys as Interface>::Solution::disassemble(interface_iter.next().unwrap()),)*
+    //                     #(#variable_idents: variable_iter.next().unwrap(),)*
+    //                 }
+    //             }
 
-//             fn table(&self) -> engi::tabled::Table {
-//                 use engi::tabled::settings::{
-//                     Alignment, Modify, Highlight, Style, Theme,
-//                     object::Rows,
-//                 };
-//                 use engi::tabled::grid::config::HorizontalLine;
+    //             fn table(&self) -> engi::tabled::Table {
+    //                 use engi::tabled::settings::{
+    //                     Alignment, Modify, Highlight, Style, Theme,
+    //                     object::Rows,
+    //                 };
+    //                 use engi::tabled::grid::config::HorizontalLine;
 
-//                 let mut builder = engi::tabled::builder::Builder::new();
-//                 let mut sections = Vec::new();
-//                 let mut header_rows = Vec::new();
+    //                 let mut builder = engi::tabled::builder::Builder::new();
+    //                 let mut sections = Vec::new();
+    //                 let mut header_rows = Vec::new();
 
-//                 self.collect_sections(&mut sections);
-//                 builder.push_record(["Variable", "Value", "Unit"]);
+    //                 self.collect_sections(&mut sections);
+    //                 builder.push_record(["Variable", "Value", "Unit"]);
 
-//                 let mut row_idx = 1;
+    //                 let mut row_idx = 1;
 
-//                 for (name, rows) in sections {
-//                     header_rows.push(row_idx);
+    //                 for (name, rows) in sections {
+    //                     header_rows.push(row_idx);
 
-//                     builder.push_record([name.clone(), name.clone(), name]);
-//                     row_idx += 1;
+    //                     builder.push_record([name.clone(), name.clone(), name]);
+    //                     row_idx += 1;
 
-//                     for row in rows {
-//                         builder.push_record(row);
-//                         row_idx += 1;
-//                     }
-//                 }
+    //                     for row in rows {
+    //                         builder.push_record(row);
+    //                         row_idx += 1;
+    //                     }
+    //                 }
 
-//                 let mut table = builder.build();
+    //                 let mut table = builder.build();
 
-//                 table.with(engi::tabled::settings::Merge::horizontal());
+    //                 table.with(engi::tabled::settings::Merge::horizontal());
 
-//                 for &row in &header_rows {
-//                     table.with(
-//                         Modify::new(Rows::one(row))
-//                             .with(Alignment::center()),
-//                     );
-//                     table.with(
-//                             Highlight::new(Rows::one(row))
-//                         );
+    //                 for &row in &header_rows {
+    //                     table.with(
+    //                         Modify::new(Rows::one(row))
+    //                             .with(Alignment::center()),
+    //                     );
+    //                     table.with(
+    //                             Highlight::new(Rows::one(row))
+    //                         );
 
-//                 }
+    //                 }
 
-//                 let mut theme = Theme::from_style(Style::rounded());
+    //                 let mut theme = Theme::from_style(Style::rounded());
 
-//                 for &row in &header_rows {
-//                     theme.insert_horizontal_line(
-//                         row,
-//                         HorizontalLine::full('─', '┼', '├', '┤'),
-//                     );
-//                     theme.insert_horizontal_line(
-//                         row + 1,
-//                         HorizontalLine::full('─', '┼', '├', '┤'),
-//                     );
-//                 }
+    //                 for &row in &header_rows {
+    //                     theme.insert_horizontal_line(
+    //                         row,
+    //                         HorizontalLine::full('─', '┼', '├', '┤'),
+    //                     );
+    //                     theme.insert_horizontal_line(
+    //                         row + 1,
+    //                         HorizontalLine::full('─', '┼', '├', '┤'),
+    //                     );
+    //                 }
 
-//                 table.with(theme);
+    //                 table.with(theme);
 
-//                 table
-//             }
+    //                 table
+    //             }
 
-//             fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>) {
-//                 use engi::model::{ModelSolution, InterfaceSolution};
-//                 let prefixalized: Vec<engi::unit::Quantity> = vec![
-//                     #(self.#variable_idents.prefixalize(),)*
-//                 ];
+    //             fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>) {
+    //                 use engi::model::{ModelSolution, InterfaceSolution};
+    //                 let prefixalized: Vec<engi::unit::Quantity> = vec![
+    //                     #(self.#variable_idents.prefixalize(),)*
+    //                 ];
 
-//                 let vars = vec![
-//                     #([stringify!(#variable_idents).to_owned(), format!("{:.3}", prefixalized[#variable_idxs].value()), prefixalized[#variable_idxs].unit().to_string()],)*
-//                 ];
+    //                 let vars = vec![
+    //                     #([stringify!(#variable_idents).to_owned(), format!("{:.3}", prefixalized[#variable_idxs].value()), prefixalized[#variable_idxs].unit().to_string()],)*
+    //                 ];
 
-//                 into.push((self.name.clone(), vars));
+    //                 into.push((self.name.clone(), vars));
 
-//                 #(self.#submodel_idents.collect_sections(into);)*
-//                 #(self.#interface_idents.collect_sections(into, format!("{}.{}", self.name, stringify!(#interface_idents)));)*
-//             }
-//         }
+    //                 #(self.#submodel_idents.collect_sections(into);)*
+    //                 #(self.#interface_idents.collect_sections(into, format!("{}.{}", self.name, stringify!(#interface_idents)));)*
+    //             }
+    //         }
 
-//         /* -------------------------------------------------------------------------- */
-//         impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
-//             type Solution = #solution_ident;
-//             type Builder<'s> = #builder_ident<'s>;
-//             type Template = #template_ident;
+    //         /* -------------------------------------------------------------------------- */
+    //         impl #impl_generics engi::model::Model for #ident #ty_generics #where_clause {
+    //             type Solution = #solution_ident;
+    //             type Builder<'s> = #builder_ident<'s>;
+    //             type Template = #template_ident;
 
-//             fn new(name: &str) -> Self {
-//                 Self {
-//                     name: name.to_owned(),
-//                     #(#constructor,)*
-//                 }
-//             }
+    //             fn new(name: &str) -> Self {
+    //                 Self {
+    //                     name: name.to_owned(),
+    //                     #(#constructor,)*
+    //                 }
+    //             }
 
-//             fn builder<'s>(path: engi::model::ModelPath, system: &'s engi::model::System) -> Self::Builder<'s> {
-//                 use engi::model::*;
+    //             fn builder<'s>(path: engi::model::ModelPath, system: &'s engi::model::System) -> Self::Builder<'s> {
+    //                 use engi::model::*;
 
-//                 #builder_ident {
-//                     path: path.clone(),
-//                     #(#variable_idents: VariableBuilder::new(
-//                         VariableId::new(path.clone(), #variable_idxs),
-//                         system
-//                     ),)*
-//                     #(#interface_idents: <#interface_tys as Interface>::builder(
-//                         InterfaceId::new(path.clone(), #interface_idxs),
-//                         system
-//                     ),)*
-//                     #(#submodel_idents: <#submodel_tys as Model>::builder(
-//                         path.with(&[#submodel_idxs]),
-//                         system
-//                     ),)*
-//                 }
-//             }
+    //                 #builder_ident {
+    //                     path: path.clone(),
+    //                     #(#variable_idents: VariableBuilder::new(
+    //                         VariableId::new(path.clone(), #variable_idxs),
+    //                         system
+    //                     ),)*
+    //                     #(#interface_idents: <#interface_tys as Interface>::builder(
+    //                         InterfaceId::new(path.clone(), #interface_idxs),
+    //                         system
+    //                     ),)*
+    //                     #(#submodel_idents: <#submodel_tys as Model>::builder(
+    //                         path.with(&[#submodel_idxs]),
+    //                         system
+    //                     ),)*
+    //                 }
+    //             }
 
-//             fn assemble(self) -> engi::model::AssembledModel {
-//                 use engi::model::{Interface, Model};
+    //             fn assemble(self) -> engi::model::AssembledModel {
+    //                 use engi::model::{Interface, Model};
 
-//                 engi::model::AssembledModel {
-//                     equations: self.equations(),
-//                     constraints: self.constraints(),
-//                     variables: vec![#(self.#variable_idents,)*],
-//                     interfaces: vec![#(self.#interface_idents.assemble(),)*],
-//                     submodels: vec![#(self.#submodel_idents.assemble(),)*],
-//                     name: self.name,
-//                 }
-//             }
-//         }
-//     }.into()
-// }
+    //                 engi::model::AssembledModel {
+    //                     equations: self.equations(),
+    //                     constraints: self.constraints(),
+    //                     variables: vec![#(self.#variable_idents,)*],
+    //                     interfaces: vec![#(self.#interface_idents.assemble(),)*],
+    //                     submodels: vec![#(self.#submodel_idents.assemble(),)*],
+    //                     name: self.name,
+    //                 }
+    //             }
+    //         }
+    //     }.into()
+    quote!().into()
+}
 
 // /* -------------------------------------------------------------------------- */
 // struct ConnectAttr {
@@ -451,140 +453,141 @@ mod model;
 //     }
 // }
 
-// #[proc_macro_derive(Interface, attributes(connect))]
-// pub fn interface(input: TokenStream) -> TokenStream {
-//     // Parse the input tokens into a syntax tree
-//     let DeriveInput { vis, ident, generics, data, .. } =
-//         parse_macro_input!(input as DeriveInput);
+#[proc_macro_derive(Interface, attributes(connect))]
+pub fn interface(input: TokenStream) -> TokenStream {
+    //     // Parse the input tokens into a syntax tree
+    //     let DeriveInput { vis, ident, generics, data, .. } =
+    //         parse_macro_input!(input as DeriveInput);
 
-//     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    //     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
-//     let Data::Struct(DataStruct { fields, .. }) = data else {
-//         panic!("#[derive(Interface)] only supports structs");
-//     };
+    //     let Data::Struct(DataStruct { fields, .. }) = data else {
+    //         panic!("#[derive(Interface)] only supports structs");
+    //     };
 
-//     let fields = fields.iter().map(|f| {
-//         let attr = f
-//             .attrs
-//             .iter()
-//             .filter(|a| a.path().is_ident("connect"))
-//             .at_most_one()
-//             .map_err(|_| "()")
-//             .expect("A field cannot have more than one #[connect] attr");
+    //     let fields = fields.iter().map(|f| {
+    //         let attr = f
+    //             .attrs
+    //             .iter()
+    //             .filter(|a| a.path().is_ident("connect"))
+    //             .at_most_one()
+    //             .map_err(|_| "()")
+    //             .expect("A field cannot have more than one #[connect] attr");
 
-//         let attr = attr
-//             .map(ConnectAttr::parse)
-//             .map(|r| r.unwrap())
-//             .unwrap_or_default();
+    //         let attr = attr
+    //             .map(ConnectAttr::parse)
+    //             .map(|r| r.unwrap())
+    //             .unwrap_or_default();
 
-//         (f, attr)
-//     });
+    //         (f, attr)
+    //     });
 
-//     let connector_idents =
-//         fields.clone().map(|(field, _)| field.ident.clone()).collect_vec();
-//     let connector_vis =
-//         fields.clone().map(|(field, _)| field.vis.clone()).collect_vec();
-//     let connector_idxs =
-//         fields.clone().enumerate().map(|(i, _)| i).collect_vec();
-//     let builder_ident = format_ident!("{}Builder", ident);
-//     let solution_ident = format_ident!("{}Solution", ident);
+    //     let connector_idents =
+    //         fields.clone().map(|(field, _)| field.ident.clone()).collect_vec();
+    //     let connector_vis =
+    //         fields.clone().map(|(field, _)| field.vis.clone()).collect_vec();
+    //     let connector_idxs =
+    //         fields.clone().enumerate().map(|(i, _)| i).collect_vec();
+    //     let builder_ident = format_ident!("{}Builder", ident);
+    //     let solution_ident = format_ident!("{}Solution", ident);
 
-//     let constructor_fields = fields.clone().map(|(field, attr)| {
-//         let ConnectAttr { condition, unit, desc, shape } = attr;
-//         let field_ident = field.ident.clone().unwrap();
-//         quote! {
-//             #field_ident: engi::model::Connector::new(engi::model::Variable::new(
-//                 engi::symbol::Symbol::builder()
-//                 .name(
-//                     format!(
-//                         "{}.{}",
-//                         name,
-//                         stringify!(#field_ident)
-//                     )
-//                     .leak()
-//                 )
-//                 .unit(#unit)
-//                 .shape(#shape)
-//                 .desc(#desc)
-//                 .build()
-//             ), #condition)
-//         }
-//     });
+    //     let constructor_fields = fields.clone().map(|(field, attr)| {
+    //         let ConnectAttr { condition, unit, desc, shape } = attr;
+    //         let field_ident = field.ident.clone().unwrap();
+    //         quote! {
+    //             #field_ident: engi::model::Connector::new(engi::model::Variable::new(
+    //                 engi::symbol::Symbol::builder()
+    //                 .name(
+    //                     format!(
+    //                         "{}.{}",
+    //                         name,
+    //                         stringify!(#field_ident)
+    //                     )
+    //                     .leak()
+    //                 )
+    //                 .unit(#unit)
+    //                 .shape(#shape)
+    //                 .desc(#desc)
+    //                 .build()
+    //             ), #condition)
+    //         }
+    //     });
 
-//     quote! {
-//         #vis struct #builder_ident<'s> {
-//             system: &'s engi::model::System,
-//             id: engi::model::InterfaceId,
-//             #(#connector_vis #connector_idents: engi::model::ConnectorBuilder<'s>,)*
-//         }
+    //     quote! {
+    //         #vis struct #builder_ident<'s> {
+    //             system: &'s engi::model::System,
+    //             id: engi::model::InterfaceId,
+    //             #(#connector_vis #connector_idents: engi::model::ConnectorBuilder<'s>,)*
+    //         }
 
-//         impl<'s> engi::model::InterfaceBuilder for #builder_ident<'s> {
-//             fn id(&self) -> &engi::model::InterfaceId {
-//                 &self.id
-//             }
+    //         impl<'s> engi::model::InterfaceBuilder for #builder_ident<'s> {
+    //             fn id(&self) -> &engi::model::InterfaceId {
+    //                 &self.id
+    //             }
 
-//             fn system(&self) -> &engi::model::System {
-//                 self.system
-//             }
-//         }
+    //             fn system(&self) -> &engi::model::System {
+    //                 self.system
+    //             }
+    //         }
 
-//         /* -------------------------------------------------------------------------- */
-//         #vis struct #solution_ident {
-//             #(#connector_vis #connector_idents: engi::unit::Quantity,)*
-//         }
+    //         /* -------------------------------------------------------------------------- */
+    //         #vis struct #solution_ident {
+    //             #(#connector_vis #connector_idents: engi::unit::Quantity,)*
+    //         }
 
-//         impl engi::model::InterfaceSolution for #solution_ident {
-//             fn disassemble(assembled: engi::model::AssembledInterfaceSolution) -> Self {
-//                 let mut iter = assembled.connectors.into_iter();
-//                 Self {
-//                     #(#connector_idents: iter.next().unwrap(),)*
-//                 }
-//             }
+    //         impl engi::model::InterfaceSolution for #solution_ident {
+    //             fn disassemble(assembled: engi::model::AssembledInterfaceSolution) -> Self {
+    //                 let mut iter = assembled.connectors.into_iter();
+    //                 Self {
+    //                     #(#connector_idents: iter.next().unwrap(),)*
+    //                 }
+    //             }
 
-//             fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>, name: String) {
-//                 let prefixalized = vec![
-//                     #(self.#connector_idents.prefixalize(),)*
-//                 ];
+    //             fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>, name: String) {
+    //                 let prefixalized = vec![
+    //                     #(self.#connector_idents.prefixalize(),)*
+    //                 ];
 
-//                 let conns = vec![
-//                     #([stringify!(#connector_idents).to_owned(), format!("{:.3}", prefixalized[#connector_idxs].value()), prefixalized[#connector_idxs].unit().to_string()],)*
-//                 ];
+    //                 let conns = vec![
+    //                     #([stringify!(#connector_idents).to_owned(), format!("{:.3}", prefixalized[#connector_idxs].value()), prefixalized[#connector_idxs].unit().to_string()],)*
+    //                 ];
 
-//                 into.push((name, conns));
-//             }
-//         }
+    //                 into.push((name, conns));
+    //             }
+    //         }
 
-//         /* -------------------------------------------------------------------------- */
-//         impl #impl_generics engi::model::Interface for #ident #ty_generics #where_clause {
-//             type Solution = #solution_ident;
-//             type Builder<'s> = #builder_ident<'s>;
+    //         /* -------------------------------------------------------------------------- */
+    //         impl #impl_generics engi::model::Interface for #ident #ty_generics #where_clause {
+    //             type Solution = #solution_ident;
+    //             type Builder<'s> = #builder_ident<'s>;
 
-//             fn new(name: &str) -> Self {
-//                 Self {
-//                     #(#constructor_fields,)*
-//                 }
-//             }
+    //             fn new(name: &str) -> Self {
+    //                 Self {
+    //                     #(#constructor_fields,)*
+    //                 }
+    //             }
 
-//             fn builder<'s>(id: engi::model::InterfaceId, system: &'s engi::model::System) -> Self::Builder<'s> {
-//                 use engi::model::*;
-//                 #builder_ident {
-//                     #(#connector_idents: ConnectorBuilder::new(
-//                         ConnectorId::new(id.clone(), #connector_idxs),
-//                         system
-//                     ),)*
-//                     id, system,
-//                 }
-//             }
+    //             fn builder<'s>(id: engi::model::InterfaceId, system: &'s engi::model::System) -> Self::Builder<'s> {
+    //                 use engi::model::*;
+    //                 #builder_ident {
+    //                     #(#connector_idents: ConnectorBuilder::new(
+    //                         ConnectorId::new(id.clone(), #connector_idxs),
+    //                         system
+    //                     ),)*
+    //                     id, system,
+    //                 }
+    //             }
 
-//             fn assemble(self) -> engi::model::AssembledInterface {
-//                 engi::model::AssembledInterface {
-//                     connectors: vec![#(self.#connector_idents,)*]
-//                 }
-//             }
-//         }
-//     }
-//     .into()
-// }
+    //             fn assemble(self) -> engi::model::AssembledInterface {
+    //                 engi::model::AssembledInterface {
+    //                     connectors: vec![#(self.#connector_idents,)*]
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     .into()
+    quote!().into()
+}
 
 // /* -------------------------------------------------------------------------- */
 // enum Constraint {
@@ -679,56 +682,58 @@ mod model;
 //     }
 // }
 
-// #[proc_macro]
-// pub fn relations(input: TokenStream) -> TokenStream {
-//     let punc = Punctuated::<Equation, Token![;]>::parse_terminated
-//         .parse(input)
-//         .unwrap();
+#[proc_macro]
+pub fn relations(input: TokenStream) -> TokenStream {
+    //     let punc = Punctuated::<Equation, Token![;]>::parse_terminated
+    //         .parse(input)
+    //         .unwrap();
 
-//     let terms =
-//         punc.iter().map(|Equation { lhs, constraint, rhs }| match constraint {
-//             Constraint::Eq => quote! {
-//                 engi::model::eq::Equation::new(#lhs, #rhs)
-//             },
-//             Constraint::Gt => quote! {
-//                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Greater)
-//             },
-//             Constraint::Ge => quote! {
-//                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::GreaterOrEq)
-//             },
-//             Constraint::Lt => quote! {
-//                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Less)
-//             },
-//             Constraint::Le => quote! {
-//                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::LessOrEq)
-//             },
-//         });
+    //     let terms =
+    //         punc.iter().map(|Equation { lhs, constraint, rhs }| match constraint {
+    //             Constraint::Eq => quote! {
+    //                 engi::model::eq::Equation::new(#lhs, #rhs)
+    //             },
+    //             Constraint::Gt => quote! {
+    //                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Greater)
+    //             },
+    //             Constraint::Ge => quote! {
+    //                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::GreaterOrEq)
+    //             },
+    //             Constraint::Lt => quote! {
+    //                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Less)
+    //             },
+    //             Constraint::Le => quote! {
+    //                 engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::LessOrEq)
+    //             },
+    //         });
 
-//     quote! {vec![#(#terms),*]}.into()
-// }
+    //     quote! {vec![#(#terms),*]}.into()
+    quote!().into()
+}
 
-// #[proc_macro]
-// pub fn relation(input: TokenStream) -> TokenStream {
-//     let Equation { lhs, constraint, rhs } =
-//         Equation::parse.parse(input).unwrap();
+#[proc_macro]
+pub fn relation(input: TokenStream) -> TokenStream {
+    //     let Equation { lhs, constraint, rhs } =
+    //         Equation::parse.parse(input).unwrap();
 
-//     let expr = match constraint {
-//         Constraint::Eq => quote! {
-//             engi::model::eq::Equation::new(#lhs, #rhs)
-//         },
-//         Constraint::Gt => quote! {
-//             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Greater)
-//         },
-//         Constraint::Ge => quote! {
-//             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::GreaterOrEq)
-//         },
-//         Constraint::Lt => quote! {
-//             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Less)
-//         },
-//         Constraint::Le => quote! {
-//             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::LessOrEq)
-//         },
-//     };
+    //     let expr = match constraint {
+    //         Constraint::Eq => quote! {
+    //             engi::model::eq::Equation::new(#lhs, #rhs)
+    //         },
+    //         Constraint::Gt => quote! {
+    //             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Greater)
+    //         },
+    //         Constraint::Ge => quote! {
+    //             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::GreaterOrEq)
+    //         },
+    //         Constraint::Lt => quote! {
+    //             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Less)
+    //         },
+    //         Constraint::Le => quote! {
+    //             engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::LessOrEq)
+    //         },
+    //     };
 
-//     quote! { #expr }.into()
-// }
+    //     quote! { #expr }.into()
+    quote!().into()
+}

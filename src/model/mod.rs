@@ -32,7 +32,7 @@ use crate::{
             AssembledInterfaceSolution, AssembledModelSolution,
             InterfaceSolution, ModelSolution,
         },
-        state::StatefulView,
+        state::{StatefulView, States},
     },
     symbol::{Symbol, constants::q},
     unit::Quantity,
@@ -159,6 +159,13 @@ pub struct AssembledModel {
     pub variables: Vec<Variable>,
     pub interfaces: Vec<AssembledInterface>,
     pub submodels: Vec<AssembledModel>,
+}
+
+#[derive(Default)]
+pub struct ModelCursor {
+    submodel: usize,
+    variable: usize,
+    interface: usize,
 }
 
 #[derive(Clone, Hash, Debug, PartialEq, PartialOrd, Eq)]
