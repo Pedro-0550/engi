@@ -2,17 +2,21 @@ use core::slice;
 use std::{
     array::{self, IntoIter},
     marker::PhantomData,
-    mem,
+    mem::{self, transmute},
     ops::{Deref, Index},
 };
 
 use crate::{
     core::indexed::Size,
     expr::Expr,
-    model::{AssembledModel, Model, Variable, VariableBuilder},
+    model::{
+        AssembledModel, Connector, ConnectorBuilder, Interface, Model,
+        Variable, VariableBuilder,
+    },
     unit::Quantity,
 };
 
+#[derive(Clone)]
 pub struct Stateful<T, S>
 where
     T: Stateable,
@@ -23,11 +27,9 @@ where
     _p: PhantomData<S>,
 }
 
-pub trait States
-where
-    Self: Sized, {
+pub trait States: Sized + Copy + 'static {
     const COUNT: usize;
-    const VARIANTS: [Self];
+    const VARIANTS: &'static [Self];
     const NAMES: [&'static str];
 
     fn index(&self) -> Size;
@@ -59,20 +61,35 @@ where
     S: States,
     [T; S::COUNT]: Sized,
 {
-    fn new(states: [T; S::COUNT]) -> Self {
-        Self { states, view: T::View::new(&states[..]), _p: PhantomData }
+    pub fn new(states: [T; S::COUNT]) -> Self {
+        Self {
+            view: T::View::new(unsafe {
+                /* SAFETY: we know T::View::Of == T, but we just can't prove it */
+                transmute(&states[..])
+            }),
+            states,
+            _p: PhantomData,
+        }
     }
 
-    fn all(state: T) -> Self
+    pub fn all(state: T) -> Self
     where
         T: Clone, {
         let states = array::repeat(state);
-        Self { states, view: T::View::new(&states[..]), _p: PhantomData }
+        Self {
+            view: T::View::new(unsafe { transmute(&states[..]) }),
+            states,
+            _p: PhantomData,
+        }
     }
 
-    fn from_fn(mut f: impl FnMut(S) -> T) -> Self {
+    pub fn from_fn(mut f: impl FnMut(S) -> T) -> Self {
         let states = array::from_fn(|i| f(S::VARIANTS[i]));
-        Self { states, view: T::View::new(&states[..]), _p: PhantomData }
+        Self {
+            view: T::View::new(unsafe { transmute(&states[..]) }),
+            states,
+            _p: PhantomData,
+        }
     }
 }
 
@@ -86,6 +103,17 @@ where
 
     fn index(&self, s: S) -> &Self::Output {
         &self.states[s.index() as usize]
+    }
+}
+
+impl<T, S> Default for Stateful<T, S>
+where
+    T: Stateable + Default,
+    S: States,
+    [T; S::COUNT]: Sized,
+{
+    fn default() -> Self {
+        Self::from_fn(|_| T::default())
     }
 }
 
@@ -117,6 +145,19 @@ where
     }
 }
 
+impl<'s, S, T> Deref for Stateful<T, S>
+where
+    S: States,
+    T: Stateable,
+    [T; S::COUNT]: Sized,
+{
+    type Target = T::View<S>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.view
+    }
+}
+
 /* -------------------------------------------------------------------------- */
 
 impl<'s, S> Stateful<VariableBuilder<'s>, S>
@@ -142,25 +183,30 @@ where
 
 impl Stateable for VariableBuilder<'_> {}
 
-/* -------------------------------------------------------------------------- */
-
-impl Stateable for Variable {}
-
-/* -------------------------------------------------------------------------- */
-
-impl<'s, S, T> Deref for Stateful<T, S>
+impl<'s, S> Stateful<ConnectorBuilder<'s>, S>
 where
     S: States,
-    T: Stateable,
-    [T; S::COUNT]: Sized,
+    [ConnectorBuilder<'s>; S::COUNT]: Sized,
 {
-    type Target = T::View<S>;
+    fn bind(&self, expr: impl Into<Expr>) {
+        let expr = expr.into();
+        for state in &self.states {
+            state.bind(expr.clone())
+        }
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.view
+    fn guess(&self, qty: impl Into<Quantity>) {
+        let qty = qty.into();
+
+        for state in &self.states {
+            state.guess(qty.clone())
+        }
     }
 }
 
-impl<M: Model> Stateable for M {
-    type View<S: States> = M::StatefulView<S>;
-}
+impl Stateable for ConnectorBuilder<'_> {}
+
+/* -------------------------------------------------------------------------- */
+
+impl Stateable for Variable {}
+impl Stateable for Connector {}

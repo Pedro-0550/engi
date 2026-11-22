@@ -26,11 +26,11 @@ pub trait Solver {
 
 pub trait InterfaceSolution {
     fn disassemble(assembled: AssembledInterfaceSolution) -> Self;
-    fn collect_sections(
-        &self,
-        into: &mut Vec<(String, Vec<[String; 3]>)>,
-        name: String,
-    );
+    // fn collect_sections(
+    //     &self,
+    //     into: &mut Vec<(String, Vec<[String; 3]>)>,
+    //     name: String,
+    // );
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -50,8 +50,8 @@ pub struct AssembledModelSolution {
 
 pub trait ModelSolution {
     fn disassemble(assembled: AssembledModelSolution) -> Self;
-    fn table(&self) -> Table;
-    fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>);
+    // fn table(&self) -> Table;
+    // fn collect_sections(&self, into: &mut Vec<(String, Vec<[String; 3]>)>);
 }
 
 /* -------------------------------------------------------------------------- */

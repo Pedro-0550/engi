@@ -45,14 +45,17 @@ pub mod eq;
 pub mod solve;
 pub mod state;
 
-#[cfg(test)]
 mod test;
 
 /* --------------------------------- TRAITS --------------------------------- */
 
 pub trait InterfaceBuilder {
+    type Builds: Interface;
+
     fn id(&self) -> &InterfaceId;
     fn system(&self) -> &System;
+
+    fn bind(&self, template: &<Self::Builds as Interface>::Template);
 
     fn connect(&self, other: &Self) {
         // A -> B
@@ -76,12 +79,15 @@ pub trait InterfaceBuilder {
 pub trait Interface {
     type Solution: InterfaceSolution;
     type Builder<'s>: InterfaceBuilder;
+    type Template: InterfaceTemplate;
 
     fn new(name: &str) -> Self;
     fn builder<'s>(id: InterfaceId, system: &'s System) -> Self::Builder<'s>;
 
     fn assemble(self) -> AssembledInterface;
 }
+
+pub trait InterfaceTemplate {}
 
 pub trait InterfaceArrayExt<I: InterfaceBuilder> {
     fn connect(self, other: &I);
@@ -128,6 +134,11 @@ impl AssembledInterface {
     }
 }
 
+#[derive(Default)]
+pub struct InterfaceCursor {
+    connector: usize,
+}
+
 /* -------------------------------------------------------------------------- */
 
 pub trait ModelTemplate: Default + Clone {}
@@ -143,7 +154,6 @@ pub trait Model {
     type Template: ModelTemplate;
     type Solution: ModelSolution;
     type Builder<'s>: ModelBuilder;
-    type StatefulView<S: States>: StatefulView<S>;
 
     fn new(name: &str) -> Self;
     fn builder<'s>(path: ModelPath, system: &'s System) -> Self::Builder<'s>;

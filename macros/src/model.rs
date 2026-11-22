@@ -9,6 +9,8 @@ use syn::{
 };
 use template_quote::{ToTokens, quote};
 
+use crate::{get_stateful, suffix_ident};
+
 /* -------------------------------------------------------------------------- */
 
 #[derive(Clone)]
@@ -39,13 +41,16 @@ impl VariableAttr {
         })?;
 
         Ok(Self {
-            unit: unit.unwrap_or(Expr::parse.parse(
-                "engi::unit::defs::UNITLESS".to_token_stream().into(),
-            )?),
+            unit: unit.unwrap_or(
+                Expr::parse
+                    .parse(quote! { engi::unit::defs::UNITLESS }.into())?,
+            ),
             desc: desc.unwrap_or(LitStr::new("", Span::call_site())),
-            shape: shape.unwrap_or(Expr::parse.parse(
-                "engi::expr::shape::Shape::SCALAR".to_token_stream().into(),
-            )?),
+            shape: shape.unwrap_or(
+                Expr::parse.parse(
+                    quote! { engi::expr::shape::Shape::SCALAR }.into(),
+                )?,
+            ),
         })
     }
 }
@@ -97,46 +102,10 @@ impl TryFrom<Field> for ModelField {
     fn try_from(f: Field) -> Result<Self, Self::Error> {
         let mut model_field = None;
 
-        if let Type::Path(ref p) = f.ty
-            && let Some(segment) = p.path.segments.last()
-            && segment.ident == "Stateful"
-        {
-            let PathArguments::AngleBracketed(args) = &segment.arguments else {
-                return Err(syn::Error::new_spanned(
-                    p,
-                    "Expected generic arguments to Stateful<T, S>",
-                ));
-            };
-
-            if args.args.len() != 2 {
-                return Err(syn::Error::new_spanned(
-                    p,
-                    "Expected exactly two generic arguments to Stateful<T, S>",
-                ));
-            }
-
-            let mut iter = args.args.iter();
-
-            let GenericArgument::Type(t) = iter.next().unwrap() else {
-                return Err(syn::Error::new_spanned(
-                    p,
-                    "First argument must be a type",
-                ));
-            };
-
-            let GenericArgument::Type(s) = iter.next().unwrap() else {
-                return Err(syn::Error::new_spanned(
-                    p,
-                    "Second argument must be a type",
-                ));
-            };
-
-            // this field if it was of type T instead of Stateful<T, S>
-            let inner_field = Field { ty: t.clone(), ..f.clone() };
-
+        if let Some((s, inner)) = get_stateful(&f)? {
             return Ok(ModelField::Stateful {
-                s: s.clone(),
-                inner: Box::new(Self::try_from(inner_field)?),
+                s,
+                inner: Box::new(Self::try_from(inner)?),
             });
         }
 
@@ -183,14 +152,13 @@ pub struct Model {
     ident: Ident,
     generics: Generics,
     name: Field,
-    attrs: Vec<Attribute>,
     fields: Vec<ModelField>,
 }
 
 impl Parse for Model {
     fn parse(buffer: syn::parse::ParseStream) -> syn::Result<Self> {
         let model_struct = ItemStruct::parse(buffer)?;
-        let ItemStruct { attrs, vis, ident, generics, fields, .. } =
+        let ItemStruct { vis, ident, generics, fields, .. } =
             model_struct.clone();
 
         let mut name = None;
@@ -222,27 +190,24 @@ impl Parse for Model {
             "Models need a `name: String` field",
         ))?;
 
-        Ok(Model { vis, ident, generics, name, attrs, fields: model_fields })
+        Ok(Model { vis, ident, generics, name, fields: model_fields })
     }
 }
 
 /* -------------------------------------------------------------------------- */
 
 fn emit_solution(m: &Model) -> TokenStream {
-    let solution_ident =
-        Ident::new(&format!("{}Solution", &m.ident), Span::call_site());
-
     fn solution_ty(f: ModelField) -> TokenStream {
         match f {
             ModelField::Submodel(f) => {
-                quote! { <#{&f.ty} as engi::model::Model>::Solution, }
+                quote! { <#{&f.ty} as engi::model::Model>::Solution }
             }
 
             ModelField::Interface(f) => {
-                quote! { <#{&f.ty} as engi::model::Interface>::Solution, }
+                quote! { <#{&f.ty} as engi::model::Interface>::Solution }
             }
 
-            ModelField::Variable(f, _) => quote! { engi::unit::Quantity, },
+            ModelField::Variable(f, _) => quote! { engi::unit::Quantity },
 
             ModelField::Stateful { s, inner } => {
                 let ty = solution_ty(*inner.clone());
@@ -255,18 +220,18 @@ fn emit_solution(m: &Model) -> TokenStream {
         match f {
             ModelField::Submodel(f) => {
                 quote! {
-                    let sol = <#{f.ty} as Model>::Solution::disassemble(assembled.submodels[cursor.submodel])
+                    let sol = <<#{f.ty} as engi::model::Model>::Solution as engi::model::ModelSolution>::disassemble(assembled.submodels[cursor.submodel].clone());
                     cursor.submodel += 1;
                     sol
                 }
             }
             ModelField::Interface(f) => quote! {
-                let sol = <#{f.ty} as Interface>::Solution::disassemble(assembled.interfaces[cursor.submodel])
-                cursor.submodel += 1;
+                let sol = <<#{f.ty} as engi::model::Interface>::Solution as engi::model::InterfaceSolution>::disassemble(assembled.interfaces[cursor.interface].clone());
+                cursor.interface += 1;
                 sol
             },
             ModelField::Variable(..) => quote! {
-                let sol = assembled.variables[cursor.variable];
+                let sol = assembled.variables[cursor.variable].clone();
                 cursor.variable += 1;
                 sol
             },
@@ -276,23 +241,25 @@ fn emit_solution(m: &Model) -> TokenStream {
         }
     }
 
+    let solution_ident = suffix_ident(&m.ident, "Solution");
+
     quote! {
-        #[derive(Clone)]
+        #[derive(Clone, Default)]
         #{ &m.vis } struct #solution_ident {
-            name: String,
+            #{&m.name.ident}: String,
             #(for f in &m.fields) {
-                #{&f.vis()} #{&f.ident()}: #{&solution_ty(f.clone())}
+                #{&f.vis()} #{&f.ident()}: #{&solution_ty(f.clone())},
             }
         }
 
-        impl engi::model::ModelSolution for #{ &m.ident } {
-            fn disassemble(assembled: AssembledModelSolution) -> Self {
+        impl engi::model::ModelSolution for #solution_ident {
+            fn disassemble(mut assembled: engi::model::solve::AssembledModelSolution) -> Self {
                 let mut cursor = engi::model::ModelCursor::default();
 
                 Self {
-                    name: assembled.name,
+                    #{&m.name.ident}: assembled.name,
                     #(for f in &m.fields) {
-                        #{&f.ident()}: { #{&solution_disassembly(f.clone())} }
+                        #{&f.ident()}: { #{&solution_disassembly(f.clone())} },
                     }
                 }
             }
@@ -301,20 +268,17 @@ fn emit_solution(m: &Model) -> TokenStream {
 }
 
 fn emit_builder(m: &Model) -> TokenStream {
-    let builder_ident =
-        Ident::new(&format!("{}Builder", &m.ident), Span::call_site());
-
     fn builder_ty(f: ModelField) -> TokenStream {
         match f {
             ModelField::Submodel(f) => {
-                quote! { <#{&f.ty} as engi::model::Model>::Builder<'s>, }
+                quote! { <#{&f.ty} as engi::model::Model>::Builder<'s> }
             }
 
             ModelField::Interface(f) => {
-                quote! { <#{&f.ty} as engi::model::Interface>::Builder<'s>, }
+                quote! { <#{&f.ty} as engi::model::Interface>::Builder<'s> }
             }
             ModelField::Variable(f, _) => {
-                quote! { engi::model::VariableBuilder<'s>, }
+                quote! { engi::model::VariableBuilder<'s> }
             }
             ModelField::Stateful { s, inner } => {
                 let ty = builder_ty(*inner.clone());
@@ -331,18 +295,20 @@ fn emit_builder(m: &Model) -> TokenStream {
                 }
             },
             ModelField::Submodel(f) | ModelField::Interface(f) => quote! {
-                self.#{&f.ident}.bind(template.#{&f.ident});
+                self.#{&f.ident}.bind(&template.#{&f.ident});
             },
 
             ModelField::Stateful { s, inner } => template_bind(*inner.clone()),
         }
     }
 
+    let builder_ident = suffix_ident(&m.ident, "Builder");
+
     quote! {
         #{&m.vis} struct #builder_ident<'s> {
             path: engi::model::ModelPath,
             #(for f in &m.fields) {
-                #{&f.vis()} #{&f.ident()}: #{&builder_ty(f.clone())}
+                #{&f.vis()} #{&f.ident()}: #{&builder_ty(f.clone())},
             }
         }
 
@@ -353,11 +319,11 @@ fn emit_builder(m: &Model) -> TokenStream {
                 &self.path
             }
 
-            fn bind(&self, template: <#{&m.ident} as engi::model::Model>::Template) {
+            fn bind(&self, template: &<#{&m.ident} as engi::model::Model>::Template) {
                 use engi::model::ModelBuilder;
 
                 #(for f in &m.fields) {
-                    #{&template_bind(f.clone())}
+                    { #{&template_bind(f.clone())} };
                 }
             }
         }
@@ -365,19 +331,18 @@ fn emit_builder(m: &Model) -> TokenStream {
 }
 
 fn emit_template(m: &Model) -> TokenStream {
-    let template_ident =
-        Ident::new(&format!("{}Template", &m.ident), Span::call_site());
+    let template_ident = suffix_ident(&m.ident, "Template");
 
     fn template_ty(f: ModelField) -> TokenStream {
         match f {
             ModelField::Submodel(f) => {
-                quote! { <#{&f.ty} as engi::model::Model>::Template, }
+                quote! { <#{&f.ty} as engi::model::Model>::Template }
             }
             ModelField::Interface(f) => {
-                quote! { <#{&f.ty} as engi::model::Interface>::Template, }
+                quote! { <#{&f.ty} as engi::model::Interface>::Template }
             }
             ModelField::Variable(f, _) => {
-                quote! { Option<engi::unit::Quantity>, }
+                quote! { Option<engi::unit::Quantity> }
             }
             ModelField::Stateful { s, inner } => {
                 let ty = template_ty(*inner.clone());
@@ -390,7 +355,7 @@ fn emit_template(m: &Model) -> TokenStream {
         #[derive(Default, Clone)]
         #{&m.vis} struct #template_ident {
             #(for f in &m.fields) {
-                #{&f.vis()} #{&f.ident()}: #{&template_ty(f.clone())}
+                #{&f.vis()} #{&f.ident()}: #{&template_ty(f.clone())},
             }
         }
 
@@ -399,19 +364,14 @@ fn emit_template(m: &Model) -> TokenStream {
 }
 
 fn emit_view(m: &Model) -> TokenStream {
-    let view_ident =
-        Ident::new(&format!("{}StatefulView", &m.ident), Span::call_site());
+    let view_ident = suffix_ident(&m.ident, "StatefulView");
 
     fn view_ty(f: ModelField) -> TokenStream {
         match f {
-            ModelField::Submodel(f) => {
-                quote! { engi::model::state::Stateful<#{&f.ty}, S>, }
-            }
-            ModelField::Interface(f) => {
-                quote! { engi::model::state::Stateful<#{&f.ty}, S>, }
-            }
-            ModelField::Variable(f, _) => {
-                quote! { engi::model::state::Stateful<#{&f.ty}, S>, }
+            ModelField::Submodel(f)
+            | ModelField::Interface(f)
+            | ModelField::Variable(f, _) => {
+                quote! { engi::model::state::Stateful<#{&f.ty}, S> }
             }
             ModelField::Stateful { s, inner } => {
                 let inner_ty = inner.ty();
@@ -421,21 +381,30 @@ fn emit_view(m: &Model) -> TokenStream {
     }
 
     quote! {
-        #[derive(Default, Clone)]
-        #{&m.vis} struct #view_ident<S> where S: engi::model::state::States {
+        #[derive(Clone)]
+        #{&m.vis} struct #view_ident<S>
+        where S: engi::model::state::States,
+            [#{&m.ident}; S::COUNT]: Sized
+        {
             #(for f in &m.fields) {
-                #{&f.vis()} #{&f.ident()}: #{&view_ty(f.clone())}
+                #{&f.vis()} #{&f.ident()}: #{&view_ty(f.clone())},
             }
         }
 
-        impl<S> engi::model::state::StatefulView<S> for #view_ident
-        where S: engi::model::state::States {
+        impl engi::model::state::Stateable for #{&m.ident} {
+            type View<S: engi::model::state::States> = #view_ident<S> where [Self; S::COUNT]: Sized;
+        }
+
+        impl<S> engi::model::state::StatefulView<S> for #view_ident<S>
+        where S: engi::model::state::States,
+            [Self; S::COUNT]: Sized
+        {
             type Of = #{&m.ident};
 
             fn new(states: &[Self::Of]) -> Self {
                 Self {
                     #(for f in &m.fields) {
-                        #{&f.ident()}: engi::model::Stateful::new(::array::from_fn(|i| states[i].#{&f.ident()}.clone()))
+                        #{&f.ident()}: engi::model::state::Stateful::new(::core::array::from_fn(|i| states[i].#{&f.ident()}.clone())),
                     }
                 }
             }
@@ -444,22 +413,20 @@ fn emit_view(m: &Model) -> TokenStream {
 }
 
 fn emit_model_impl(m: &Model) -> TokenStream {
-    let view_ident =
-        Ident::new(&format!("{}StatefulView", &m.ident), Span::call_site());
-    let template_ident =
-        Ident::new(&format!("{}Template", &m.ident), Span::call_site());
-    let builder_ident =
-        Ident::new(&format!("{}Builder", &m.ident), Span::call_site());
-    let solution_ident =
-        Ident::new(&format!("{}Solution", &m.ident), Span::call_site());
+    let view_ident = suffix_ident(&m.ident, "StatefulView");
+    let template_ident = suffix_ident(&m.ident, "Template");
+    let builder_ident = suffix_ident(&m.ident, "Builder");
+    let solution_ident = suffix_ident(&m.ident, "Solution");
+    let (impl_generics, ty_generics, where_clause) =
+        m.generics.split_for_impl();
 
     fn constructor(f: ModelField, suffix: TokenStream) -> TokenStream {
         match f {
             ModelField::Submodel(f) => {
-                quote! { <#{&f.ty} as engi::model::Model>::new(format!("{}.{}{}", name, stringify!(#{&f.ident}), #suffix)) }
+                quote! { <#{&f.ty} as engi::model::Model>::new(&format!("{}.{}{}", name, stringify!(#{&f.ident}), #suffix)) }
             }
             ModelField::Interface(f) => {
-                quote! { <#{&f.ty} as engi::model::Interface>::new(format!("{}.{}{}", name, stringify!(#{&f.ident}), #suffix)) }
+                quote! { <#{&f.ty} as engi::model::Interface>::new(&format!("{}.{}{}", name, stringify!(#{&f.ident}), #suffix)) }
             }
             ModelField::Variable(f, variable_attr) => quote! {
                 engi::model::Variable::new(
@@ -472,7 +439,10 @@ fn emit_model_impl(m: &Model) -> TokenStream {
                 )
             },
             ModelField::Stateful { s, inner } => {
-                let expr = constructor(*inner.clone(), quote! {s});
+                let expr = constructor(
+                    *inner.clone(),
+                    quote! {format!("[{}]{}", s, #suffix)},
+                );
 
                 quote! {
                     engi::model::state::Stateful::from_fn(|s| {
@@ -486,7 +456,7 @@ fn emit_model_impl(m: &Model) -> TokenStream {
     fn builder(f: ModelField) -> TokenStream {
         match f {
             ModelField::Submodel(f) => quote! {
-                let builder = <#{&f.ty} as engi::model::Model>::builder(path.with(cursor.submodel), system);
+                let builder = <#{&f.ty} as engi::model::Model>::builder(path.with(&[cursor.submodel]), system);
                 cursor.submodel += 1;
                 builder
             },
@@ -494,12 +464,12 @@ fn emit_model_impl(m: &Model) -> TokenStream {
                 let builder = <#{&f.ty} as engi::model::Interface>::builder(
                     engi::model::InterfaceId::new(path.clone(), cursor.interface),
                     system
-                )
+                );
                 cursor.interface += 1;
                 builder
             },
             ModelField::Variable(..) => quote! {
-                let builder = VariableBuilder::new(
+                let builder = engi::model::VariableBuilder::new(
                     engi::model::VariableId::new(path.clone(), cursor.variable),
                     system
                 );
@@ -532,48 +502,61 @@ fn emit_model_impl(m: &Model) -> TokenStream {
     }
 
     quote! {
-        impl engi::model::Model for #{&m.ident} {
+        impl #impl_generics engi::model::Model #ty_generics for #{&m.ident} #where_clause {
             type Template = #template_ident;
             type Solution = #solution_ident;
             type Builder<'s> = #builder_ident<'s>;
-            type StatefulView<S: States> = #view_ident<S>;
 
             fn new(name: &str) -> Self {
                 Self {
-                    name: name.to_owned(),
                     #(for f in &m.fields) {
-                        #{&f.ident()}: { #{&constructor(f.clone(), quote!{""})} }
+                        #{&f.ident()}: { #{&constructor(f.clone(), quote!{""})} },
                     }
+                    #{&m.name.ident}: name.to_owned(),
                 }
             }
 
-            fn builder<'s>(path: ModelPath, system: &'s System) -> Self::Builder<'s> {
+            fn builder<'s>(path: engi::model::ModelPath, system: &'s engi::model::System) -> Self::Builder<'s> {
                 let mut cursor = engi::model::ModelCursor::default();
 
                 Self::Builder {
-                    path,
                     #(for f in &m.fields) {
-                        #{&f.ident()}: { #{&builder(f.clone())} }
+                        #{&f.ident()}: { #{&builder(f.clone())} },
                     }
+                    path,
                 }
             }
 
-            fn assemble(self) -> AssembledModel {
+            fn assemble(self) -> engi::model::AssembledModel {
                 let (mut variables, mut interfaces, mut submodels) = (Vec::new(), Vec::new(), Vec::new());
+                let equations = <Self as engi::model::Relations>::equations(&self);
+                let constraints = <Self as engi::model::Relations>::constraints(&self);
 
                 #(for f in &m.fields) {
-                    #{&assemble(f.clone(), quote!{ self.#{&f.ident()} })}
+                    { #{&assemble(f.clone(), quote!{ self.#{&f.ident()} })} };
                 }
 
                 engi::model::AssembledModel {
-                    name: self.name,
-                    equations: <Self as engi::model::Relations>::equations(&self),
-                    constraints: <Self as engi::model::Relations>::constraints(&self),
-                    variables, interfaces, submodels
+                    variables, interfaces, submodels, equations, constraints,
+                    name: self.#{&m.name.ident},
                 }
             }
         }
     }
 }
 
-fn derive_model(input: TokenStream) -> TokenStream {}
+pub fn derive_model(
+    input: proc_macro::TokenStream,
+) -> Result<proc_macro::TokenStream, syn::Error> {
+    let m = Model::parse.parse(input)?;
+
+    Ok(quote! {
+        #{&emit_view(&m)}
+        #{&emit_builder(&m)}
+        #{&emit_solution(&m)}
+        #{&emit_template(&m)}
+
+        #{&emit_model_impl(&m)}
+    }
+    .into())
+}

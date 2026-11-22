@@ -281,18 +281,18 @@ fn modeling() {
     q1.thermal.p.guess(1 * mW);
 
     let solution = system.solve(LmSolver);
-    println!(
-        "{}",
-        side_by_side(
-            &[
-                solution.get(q1).table().to_string(),
-                solution.get(q1_jth).table().to_string(),
-                solution.get(r_b).table().to_string(),
-                solution.get(r_c).table().to_string()
-            ],
-            1
-        )
-    );
+    // println!(
+    //     "{}",
+    //     side_by_side(
+    //         &[
+    //             solution.get(q1).table().to_string(),
+    //             solution.get(q1_jth).table().to_string(),
+    //             solution.get(r_b).table().to_string(),
+    //             solution.get(r_c).table().to_string()
+    //         ],
+    //         1
+    //     )
+    // );
 }
 
 fn side_by_side(tables: &[String], gap: usize) -> String {
