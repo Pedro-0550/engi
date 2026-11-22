@@ -26,18 +26,19 @@ Implemented:
 - First-class complex numbers & matrices
 - `levenberg-marquadt` solver backend
 - Steady-state modeling
-- Simple expression syntax
-- Boilerplate macros
-- JIT expression compiler
+- `std::ops` traits on expressions
+- Boilerplate generation macros
+- JIT expression compiler for fast evaluation
 - Non-trivial expression simplification
-- Connectors (both conserved and equality) and interfaces
+- Connectors (both conserved and equality conditions) and interfaces
+- Discrete named states for models, variables, and interfaces 
 
 Planned:
 
 - Constraints: Restrict a solution to one that satisfies a set of arbitrary contraints, beyond simple bounds
 - Dynamic system modeling: Allow modeling dynamic systems using differential equations, this is probably the biggest missing feature
 - Solving for a set: Allow solving for a set of possible values instead of a single one. Useful to characterize all operation regimes in a DC power converter, based on a set/interval of supported mains voltages for example.
-- Solution reiteration: After solving for the first time, Allow the user to redo the solution with different parameters while keeping the previous values as guesses to speed up convergence.
+- Solution reiteration: After solving for the first time, Allow the user to redo the solution with different parameters while using the previous values as guesses to speed up convergence.
 
 # Example
 
