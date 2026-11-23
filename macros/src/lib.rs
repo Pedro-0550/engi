@@ -18,13 +18,16 @@ use syn::{
 };
 use template_quote::quote;
 
-use crate::{interface::derive_interface, model::derive_model};
+use crate::{
+    interface::derive_interface, model::derive_model, states::derive_states,
+};
 
 /* -------------------------------------------------------------------------- */
 
 mod interface;
 mod model;
 mod relation;
+mod states;
 
 /* -------------------------------------------------------------------------- */
 
@@ -66,7 +69,6 @@ fn get_stateful(f: &Field) -> Result<Option<(Type, Field)>, syn::Error> {
 
             // this field if it was of type T instead of Stateful<T, S>
             let inner_field = Field { ty: t.clone(), ..f.clone() };
-
             Some((s.clone(), inner_field))
         } else {
             None
@@ -108,4 +110,14 @@ pub fn relations(input: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn relation(input: TokenStream) -> TokenStream {
     relation::relation(input)
+}
+
+/* -------------------------------------------------------------------------- */
+
+#[proc_macro_derive(States)]
+pub fn states(input: TokenStream) -> TokenStream {
+    match derive_states(input) {
+        Ok(out) => out.into(),
+        Err(err) => err.into_compile_error().into(),
+    }
 }

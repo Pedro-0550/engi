@@ -402,11 +402,10 @@ impl_op_permutations!(
         Constant, &Constant, Symbol, &Symbol, Pattern, &Pattern, Expr, &Expr,
         Wildcard, &Wildcard
     ],
-    exclude_permutations = [
-        i64, f64, Complex64, &Complex64, Quantity, &Quantity, Value, &Value,
-        Constant, &Constant, Symbol, &Symbol, Expr, &Expr,
+    include = [
+        bi(&? Pattern, * except [Pattern]),
+        bi(&? Wildcard, *),
     ],
-    exclude_specific = [(Pattern, Pattern)],
     into = Pattern,
     out = Pattern,
     add = { lhs + rhs },

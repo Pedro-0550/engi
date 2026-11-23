@@ -103,27 +103,46 @@ pub fn relations(input: TokenStream) -> TokenStream {
     let punc = Punctuated::<Equation, Token![;]>::parse_terminated
         .parse(input)
         .unwrap();
-
+    // TODO: update constraints to have a similar conversion as equations
     let terms =
-            punc.iter().map(|Equation { lhs, constraint, rhs }| match constraint {
-                Constraint::Eq => quote! {
-                    engi::model::eq::Equation::new(#lhs, #rhs)
-                },
-                Constraint::Gt => quote! {
-                    engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Greater)
-                },
-                Constraint::Ge => quote! {
-                    engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::GreaterOrEq)
-                },
-                Constraint::Lt => quote! {
-                    engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::Less)
-                },
-                Constraint::Le => quote! {
-                    engi::model::eq::Constraint::new(#lhs, #rhs, engi::model::eq::Inequality::LessOrEq)
-                },
-            });
+        punc.iter().map(|Equation { lhs, constraint, rhs }| match constraint {
+            Constraint::Eq => quote! {
+                engi::model::eq::Equations::from((
+                    #lhs,
+                    #rhs
+                )).0
+            },
+            Constraint::Gt => quote! {
+                engi::model::eq::Constraints::from((
+                    #lhs,
+                    #rhs,
+                    engi::model::eq::Inequality::Greater
+                )).0
+            },
+            Constraint::Ge => quote! {
+                engi::model::eq::Constraints::from((
+                    #lhs,
+                    #rhs,
+                    engi::model::eq::Inequality::GreaterOrEq
+                )).0
+            },
+            Constraint::Lt => quote! {
+                engi::model::eq::Constraints::from((
+                    #lhs,
+                    #rhs,
+                    engi::model::eq::Inequality::Less
+                )).0
+            },
+            Constraint::Le => quote! {
+                engi::model::eq::Constraints::from((
+                    #lhs,
+                    #rhs,
+                    engi::model::eq::Inequality::LessOrEq
+                )).0
+            },
+        });
 
-    quote! {vec![#(#terms),*]}.into()
+    quote! {[#(#terms),*].concat()}.into()
 }
 
 pub fn relation(input: TokenStream) -> TokenStream {

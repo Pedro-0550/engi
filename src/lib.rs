@@ -14,7 +14,7 @@
 #![feature(fn_traits)]
 #![feature(macro_metavar_expr_concat)]
 #![feature(int_roundings)]
-#![feature(generic_const_exprs)]
+#![feature(slice_concat_trait)]
 #![feature(associated_type_defaults)]
 #![feature(temporary_niche_types)]
 #![warn(unused_crate_dependencies)]

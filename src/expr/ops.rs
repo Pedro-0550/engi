@@ -27,8 +27,17 @@ impl_op_permutations!(
         Variable, &Variable, Connector, &Connector, VariableBuilder<'_>, &VariableBuilder<'_>,
         ConnectorBuilder<'_>, &ConnectorBuilder<'_>, Leaf, &Leaf, Expr, &Expr
     ],
-    exclude_permutations = [i64, f64, Quantity, &Quantity, Value, &Value, Complex64, &Complex64],
-    exclude_specific = [(Expr, Expr)],
+    include = [
+        bi(&? Expr, * except [Expr]),
+        bi(&? Variable, *),
+        bi(&? ConnectorBuilder<'_>, *),
+        bi(&? Leaf, *),
+        bi(&? ConnectorBuilder<'_>, *),
+        bi(&? Connector, *),
+        bi(&? Constant, *),
+        bi(&? Symbol, *),
+    ],
+
     into = Expr,
     out = Expr,
 

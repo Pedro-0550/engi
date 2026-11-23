@@ -481,8 +481,9 @@ impl DivAssign for Value {
 
 impl_op_permutations!(
     types = [f64, i64, Complex64, Value],
-    exclude_specific = [(Value, Value)],
-    exclude_permutations = [f64, i64, Real, Complex64,],
+    include = [
+        bi(&? Value, * except [Value])
+    ],
     into = Value,
     out = Value,
     add = { lhs + rhs },

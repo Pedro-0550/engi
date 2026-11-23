@@ -329,16 +329,17 @@ impl From<&Value> for Quantity {
 
 impl_op_permutations! {
     types = [i64, f64, Complex64, Value, &Value, Quantity, &Quantity, Unit],
-    exclude_permutations = [i64, f64, Complex64, Value, &Value],
-    exclude_specific = [(Unit, Unit)],
     out = Quantity,
     into = Quantity,
 
-    exclude = {
-        pow = {
-            lhs = [Unit],
-            rhs = [Unit, f64, Complex64, Value],
-        },
+    include = {
+        pow = [
+            (* except [Unit], &? Quantity)
+        ],
+        _ = [
+            bi(&? Quantity, *),
+            bi(&? Unit, * except [Unit])
+        ]
     },
 
     add = {

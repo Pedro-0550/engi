@@ -165,6 +165,7 @@ impl Relations for StaticBjt {
 }
 
 /* -------------------------------------------------------------------------- */
+
 #[derive(Model, Clone)]
 pub struct Impedance {
     name: String,

@@ -136,7 +136,7 @@ impl AssembledInterface {
 
 #[derive(Default)]
 pub struct InterfaceCursor {
-    connector: usize,
+    pub connector: usize,
 }
 
 /* -------------------------------------------------------------------------- */
@@ -173,9 +173,9 @@ pub struct AssembledModel {
 
 #[derive(Default)]
 pub struct ModelCursor {
-    submodel: usize,
-    variable: usize,
-    interface: usize,
+    pub submodel: usize,
+    pub variable: usize,
+    pub interface: usize,
 }
 
 #[derive(Clone, Hash, Debug, PartialEq, PartialOrd, Eq)]

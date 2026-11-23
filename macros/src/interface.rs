@@ -205,7 +205,7 @@ fn emit_solution(i: &Interface) -> TokenStream {
             }
         }
 
-        impl engi::model::InterfaceSolution for #solution_ident {
+        impl engi::model::solve::InterfaceSolution for #solution_ident {
             fn disassemble(mut assembled: engi::model::solve::AssembledInterfaceSolution) -> Self {
                 let mut cursor = engi::model::InterfaceCursor::default();
 
@@ -237,26 +237,27 @@ fn emit_view(i: &Interface) -> TokenStream {
     quote! {
         #[derive(Clone)]
         #{ &i.vis } struct #view_ident<S>
-        where S: engi::model::state::States,
-            [Self; S::COUNT]: Sized, {
+        where S: engi::model::state::States, {
             #(for f in &i.fields) {
                 #{ &f.vis() } #{ &f.ident() }: #{ &view_ty(f.clone()) },
             }
         }
 
         impl engi::model::state::Stateable for #{&i.ident} {
-            type View<S: engi::model::state::States> = #view_ident<S> where [Self; S::COUNT]: Sized;
+            type View<S: engi::model::state::States> = #view_ident<S>;
         }
 
         impl<S> engi::model::state::StatefulView<S> for #view_ident<S>
-        where S: engi::model::state::States,
-            [#{&i.ident}; S::COUNT]: Sized {
+        where S: engi::model::state::States {
             type Of = #{ &i.ident };
 
-            fn new(states: &[Self::Of]) -> Self {
+            fn new(states: &S::Storage<Self::Of>) -> Self {
                 Self {
                     #(for f in &i.fields) {
-                        #{&f.ident()}: engi::model::state::Stateful::new(::core::array::from_fn(|i| states[i].#{&f.ident()}.clone())),
+                        #{&f.ident()}: engi::model::state::Stateful::new(
+                            <S::Storage<#{f.ty()}> as engi::model::state::Storage<#{f.ty()}>>
+                                ::from_fn(|i| states[i].#{&f.ident()}.clone())
+                        ),
                     }
                 }
             }
@@ -277,16 +278,18 @@ fn emit_builder(i: &Interface) -> TokenStream {
         }
     }
 
-    fn template_bind(f: InterfaceField) -> TokenStream {
+    fn template_bind(f: InterfaceField, access: TokenStream) -> TokenStream {
         match f {
             InterfaceField::Connector(f, _) => quote! {
-                if let Some(ref _v) = template.#{&f.ident} {
-                    self.#{&f.ident}.bind(_v);
+                if let Some(_v) = &template.#{&f.ident} #access {
+                    self.#{&f.ident} #access .bind(_v);
                 }
             },
-            InterfaceField::Stateful { s, inner } => {
-                template_bind(*inner.clone())
-            }
+            InterfaceField::Stateful { s, inner } => quote! {
+                for __var in <#s as engi::model::state::States>::VARIANTS {
+                    #{&template_bind(*inner.clone(), quote!{[*__var]})}
+                }
+            },
         }
     }
 
@@ -314,9 +317,10 @@ fn emit_builder(i: &Interface) -> TokenStream {
 
             fn bind(&self, template: &<#{&i.ident} as engi::model::Interface>::Template) {
                 use engi::model::InterfaceBuilder;
+                use std::ops::Index;
 
                 #(for f in &i.fields) {
-                    { #{&template_bind(f.clone())} };
+                    { #{&template_bind(f.clone(), quote!{})} };
                 }
             }
         }
@@ -375,11 +379,11 @@ fn emit_interface_impl(i: &Interface) -> TokenStream {
             InterfaceField::Stateful { s, inner } => {
                 let expr = constructor(
                     *inner.clone(),
-                    quote! {format!("[{}]{}", s, #suffix)},
+                    quote! {format!("[{}]{}", engi::model::state::States::name(&__state), #suffix)},
                 );
 
                 quote! {
-                    engi::model::state::Stateful::from_fn(|s| {
+                    engi::model::state::Stateful::<_, #s>::from_fn(|__state| {
                         #expr
                     })
                 }
@@ -411,8 +415,8 @@ fn emit_interface_impl(i: &Interface) -> TokenStream {
             InterfaceField::Stateful { s, inner } => quote! {
                 // TODO: we need to add level-specific s variable ident when recursing stateful, so it dosent get shadowed
 
-                for s in #{&inner.ident()} {
-                    #{&assemble(*inner.clone(), quote!{s})}
+                for __state in self.#{&inner.ident()} {
+                    #{&assemble(*inner.clone(), quote!{__state})}
                 }
             },
         }
