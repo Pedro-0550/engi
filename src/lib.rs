@@ -38,12 +38,17 @@ pub mod unit;
 pub use engi_macros as macros;
 
 pub mod prelude {
+    pub use engi_macros::{Interface, Model, States, relations};
     pub use num::pow::Pow;
 
     pub use crate::{
+        expr::*,
         model::{
-            Interface, InterfaceArrayExt, Model, ModelBuilder, System,
+            Condition, Connector, ConnectorBuilder, Interface,
+            InterfaceArrayExt, Model, ModelBuilder, Relations, System,
             Variable, VariableBuilder,
+            eq::{Constraint, Equation},
+            state::{Stateful, StatefulView},
         },
         unit::{Quantity, defs::*, ops::*},
     };

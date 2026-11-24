@@ -1,3 +1,4 @@
+use itertools::Itertools;
 // use proc_macro::ToTokens;
 use proc_macro2::{Span, TokenStream};
 use syn::{
@@ -9,7 +10,7 @@ use syn::{
 };
 use template_quote::{ToTokens, quote};
 
-use crate::{get_stateful, suffix_ident};
+use crate::{get_stateful, states::emit_view, suffix_ident};
 
 /* -------------------------------------------------------------------------- */
 
@@ -93,6 +94,20 @@ impl ModelField {
                 quote! { engi::model::state::Stateful<#{ inner.ty() }, #s> },
             ).unwrap(),
         }
+    }
+
+    fn retyped(&self, mut ty_f: impl FnMut(Self) -> TokenStream) -> Field {
+        Field::parse_named
+            .parse2(
+                quote! {#{&self.vis()} #{&self.ident()}: #{ty_f(self.clone())}},
+            )
+            .unwrap()
+    }
+
+    fn field(&self) -> Field {
+        Field::parse_named
+            .parse2(quote! {#{&self.vis()} #{&self.ident()}: #{&self.ty()}})
+            .unwrap()
     }
 }
 
@@ -196,7 +211,7 @@ impl Parse for Model {
 
 /* -------------------------------------------------------------------------- */
 
-fn emit_solution(m: &Model) -> TokenStream {
+fn emit_solution(m: &Model) -> Result<TokenStream, syn::Error> {
     fn solution_ty(f: ModelField) -> TokenStream {
         match f {
             ModelField::Submodel(f) => {
@@ -242,8 +257,10 @@ fn emit_solution(m: &Model) -> TokenStream {
     }
 
     let solution_ident = suffix_ident(&m.ident, "Solution");
+    let view_fields =
+        m.fields.iter().map(|f| f.retyped(solution_ty)).collect_vec();
 
-    quote! {
+    Ok(quote! {
         #[derive(Clone, Default)]
         #{ &m.vis } struct #solution_ident {
             #{&m.name.ident}: String,
@@ -251,6 +268,9 @@ fn emit_solution(m: &Model) -> TokenStream {
                 #{&f.vis()} #{&f.ident()}: #{&solution_ty(f.clone())},
             }
         }
+
+        #{&emit_view(&m.vis, &solution_ident, &Generics::default(), &view_fields)?}
+
 
         impl engi::model::solve::ModelSolution for #solution_ident {
             fn disassemble(mut assembled: engi::model::solve::AssembledModelSolution) -> Self {
@@ -264,10 +284,10 @@ fn emit_solution(m: &Model) -> TokenStream {
                 }
             }
         }
-    }
+    })
 }
 
-fn emit_builder(m: &Model) -> TokenStream {
+fn emit_builder(m: &Model) -> Result<TokenStream, syn::Error> {
     fn builder_ty(f: ModelField) -> TokenStream {
         match f {
             ModelField::Submodel(f) => {
@@ -311,13 +331,20 @@ fn emit_builder(m: &Model) -> TokenStream {
 
     let builder_ident = suffix_ident(&m.ident, "Builder");
 
-    quote! {
+    let view_fields =
+        m.fields.iter().map(|f| f.retyped(builder_ty)).collect_vec();
+    let builder_generics = Generics::parse.parse2(quote! {<'s>})?;
+
+    Ok(quote! {
+        #[derive(Clone)]
         #{&m.vis} struct #builder_ident<'s> {
             path: engi::model::ModelPath,
             #(for f in &m.fields) {
                 #{&f.vis()} #{&f.ident()}: #{&builder_ty(f.clone())},
             }
         }
+
+        #{emit_view(&m.vis, &builder_ident, &builder_generics, &view_fields)?}
 
         impl<'s> engi::model::ModelBuilder for #builder_ident<'s> {
             type Builds = #{&m.ident};
@@ -335,10 +362,10 @@ fn emit_builder(m: &Model) -> TokenStream {
                 }
             }
         }
-    }
+    })
 }
 
-fn emit_template(m: &Model) -> TokenStream {
+fn emit_template(m: &Model) -> Result<TokenStream, syn::Error> {
     let template_ident = suffix_ident(&m.ident, "Template");
 
     fn template_ty(f: ModelField) -> TokenStream {
@@ -359,7 +386,10 @@ fn emit_template(m: &Model) -> TokenStream {
         }
     }
 
-    quote! {
+    let view_fields =
+        m.fields.iter().map(|f| f.retyped(template_ty)).collect_vec();
+
+    Ok(quote! {
         #[derive(Default, Clone)]
         #{&m.vis} struct #template_ident {
             #(for f in &m.fields) {
@@ -367,62 +397,13 @@ fn emit_template(m: &Model) -> TokenStream {
             }
         }
 
+        #{emit_view(&m.vis, &template_ident, &Generics::default(), &view_fields)?}
+
         impl engi::model::ModelTemplate for #template_ident {}
-    }
-}
-
-fn emit_view(m: &Model) -> TokenStream {
-    let view_ident = suffix_ident(&m.ident, "StatefulView");
-
-    fn view_ty(f: ModelField) -> TokenStream {
-        match f {
-            ModelField::Submodel(f)
-            | ModelField::Interface(f)
-            | ModelField::Variable(f, _) => {
-                quote! { engi::model::state::Stateful<#{&f.ty}, S> }
-            }
-            ModelField::Stateful { s, inner } => {
-                let inner_ty = inner.ty();
-                quote! { engi::model::state::Stateful<engi::model::state::Stateful<#inner_ty, #s>, S> }
-            }
-        }
-    }
-
-    quote! {
-        #[derive(Clone)]
-        #{&m.vis} struct #view_ident<S>
-        where S: engi::model::state::States
-        {
-            #(for f in &m.fields) {
-                #{&f.vis()} #{&f.ident()}: #{&view_ty(f.clone())},
-            }
-        }
-
-        impl engi::model::state::Stateable for #{&m.ident} {
-            type View<S: engi::model::state::States> = #view_ident<S>;
-        }
-
-        impl<S> engi::model::state::StatefulView<S> for #view_ident<S>
-        where S: engi::model::state::States
-        {
-            type Of = #{&m.ident};
-
-            fn new(states: &S::Storage<Self::Of>) -> Self {
-                Self {
-                    #(for f in &m.fields) {
-                        #{&f.ident()}: engi::model::state::Stateful::new(
-                            <S::Storage<#{f.ty()}> as engi::model::state::Storage<#{f.ty()}>>
-                                ::from_fn(|i| states[i].#{&f.ident()}.clone())
-                        ),
-                    }
-                }
-            }
-        }
-    }
+    })
 }
 
 fn emit_model_impl(m: &Model) -> TokenStream {
-    let view_ident = suffix_ident(&m.ident, "StatefulView");
     let template_ident = suffix_ident(&m.ident, "Template");
     let builder_ident = suffix_ident(&m.ident, "Builder");
     let solution_ident = suffix_ident(&m.ident, "Solution");
@@ -471,7 +452,7 @@ fn emit_model_impl(m: &Model) -> TokenStream {
             },
             ModelField::Interface(f) => quote! {
                 let builder = <#{&f.ty} as engi::model::Interface>::builder(
-                    engi::model::InterfaceId::new(path.clone(), cursor.interface),
+                    engi::model::InterfaceId::new(Clone::clone(&path), cursor.interface),
                     system
                 );
                 cursor.interface += 1;
@@ -479,7 +460,7 @@ fn emit_model_impl(m: &Model) -> TokenStream {
             },
             ModelField::Variable(..) => quote! {
                 let builder = engi::model::VariableBuilder::new(
-                    engi::model::VariableId::new(path.clone(), cursor.variable),
+                    engi::model::VariableId::new(Clone::clone(&path), cursor.variable),
                     system
                 );
                 cursor.variable += 1;
@@ -558,12 +539,13 @@ pub fn derive_model(
     input: proc_macro::TokenStream,
 ) -> Result<proc_macro::TokenStream, syn::Error> {
     let m = Model::parse.parse(input)?;
+    let view_fields = m.fields.iter().map(ModelField::field).collect_vec();
 
     Ok(quote! {
-        #{&emit_view(&m)}
-        #{&emit_builder(&m)}
-        #{&emit_solution(&m)}
-        #{&emit_template(&m)}
+        #{&emit_view(&m.vis, &m.ident, &m.generics, &view_fields)?}
+        #{&emit_builder(&m)?}
+        #{&emit_solution(&m)?}
+        #{&emit_template(&m)?}
 
         #{&emit_model_impl(&m)}
     }

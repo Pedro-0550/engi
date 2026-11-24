@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use syn::{
     Attribute, Expr, Field, Generics, Ident, ItemStruct, LitStr, Type,
@@ -6,7 +7,7 @@ use syn::{
 };
 use template_quote::quote;
 
-use crate::{get_stateful, suffix_ident};
+use crate::{get_stateful, states::emit_view, suffix_ident};
 
 /* -------------------------------------------------------------------------- */
 
@@ -93,6 +94,20 @@ impl InterfaceField {
             ).unwrap(),
         }
     }
+
+    fn retyped(&self, mut ty_f: impl FnMut(Self) -> TokenStream) -> Field {
+        Field::parse_named
+            .parse2(
+                quote! {#{&self.vis()} #{&self.ident()}: #{ty_f(self.clone())}},
+            )
+            .unwrap()
+    }
+
+    fn field(&self) -> Field {
+        Field::parse_named
+            .parse2(quote! {#{&self.vis()} #{&self.ident()}: #{&self.ty()}})
+            .unwrap()
+    }
 }
 
 impl TryFrom<Field> for InterfaceField {
@@ -170,7 +185,7 @@ impl Parse for Interface {
 
 /* -------------------------------------------------------------------------- */
 
-fn emit_solution(i: &Interface) -> TokenStream {
+fn emit_solution(i: &Interface) -> Result<TokenStream, syn::Error> {
     fn solution_ty(f: InterfaceField) -> TokenStream {
         match f {
             InterfaceField::Connector(..) => {
@@ -197,13 +212,18 @@ fn emit_solution(i: &Interface) -> TokenStream {
     }
     let solution_ident = &suffix_ident(&i.ident, "Solution");
 
-    quote! {
+    let view_fields =
+        i.fields.iter().map(|f| f.retyped(solution_ty)).collect_vec();
+
+    Ok(quote! {
         #[derive(Clone, Default)]
         #{ &i.vis } struct #solution_ident {
             #(for f in &i.fields) {
                 #{&f.vis()} #{&f.ident()}: #{&solution_ty(f.clone())},
             }
         }
+
+        #{&emit_view(&i.vis, solution_ident, &Generics::default(), &view_fields)?}
 
         impl engi::model::solve::InterfaceSolution for #solution_ident {
             fn disassemble(mut assembled: engi::model::solve::AssembledInterfaceSolution) -> Self {
@@ -216,56 +236,10 @@ fn emit_solution(i: &Interface) -> TokenStream {
                 }
             }
         }
-    }
+    })
 }
 
-fn emit_view(i: &Interface) -> TokenStream {
-    let view_ident = suffix_ident(&i.ident, "StatefulView");
-
-    fn view_ty(f: InterfaceField) -> TokenStream {
-        match f {
-            InterfaceField::Connector(f, _) => {
-                quote! { engi::model::state::Stateful<#{&f.ty}, S> }
-            }
-            InterfaceField::Stateful { s, inner } => {
-                let inner_ty = inner.ty();
-                quote! { engi::model::state::Stateful<engi::model::state::Stateful<#inner_ty, #s>, S> }
-            }
-        }
-    }
-
-    quote! {
-        #[derive(Clone)]
-        #{ &i.vis } struct #view_ident<S>
-        where S: engi::model::state::States, {
-            #(for f in &i.fields) {
-                #{ &f.vis() } #{ &f.ident() }: #{ &view_ty(f.clone()) },
-            }
-        }
-
-        impl engi::model::state::Stateable for #{&i.ident} {
-            type View<S: engi::model::state::States> = #view_ident<S>;
-        }
-
-        impl<S> engi::model::state::StatefulView<S> for #view_ident<S>
-        where S: engi::model::state::States {
-            type Of = #{ &i.ident };
-
-            fn new(states: &S::Storage<Self::Of>) -> Self {
-                Self {
-                    #(for f in &i.fields) {
-                        #{&f.ident()}: engi::model::state::Stateful::new(
-                            <S::Storage<#{f.ty()}> as engi::model::state::Storage<#{f.ty()}>>
-                                ::from_fn(|i| states[i].#{&f.ident()}.clone())
-                        ),
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn emit_builder(i: &Interface) -> TokenStream {
+fn emit_builder(i: &Interface) -> Result<TokenStream, syn::Error> {
     fn builder_ty(f: InterfaceField) -> TokenStream {
         match f {
             InterfaceField::Connector(f, _) => {
@@ -293,9 +267,14 @@ fn emit_builder(i: &Interface) -> TokenStream {
         }
     }
 
-    let builder_ident = suffix_ident(&i.ident, "Builder");
+    let view_fields =
+        i.fields.iter().map(|f| f.retyped(builder_ty)).collect_vec();
 
-    quote! {
+    let builder_ident = suffix_ident(&i.ident, "Builder");
+    let builder_generics = Generics::parse.parse2(quote! {<'s>})?;
+
+    Ok(quote! {
+        #[derive(Clone)]
         #{&i.vis} struct #builder_ident<'s> {
             id: engi::model::InterfaceId,
             system: &'s engi::model::System,
@@ -303,6 +282,8 @@ fn emit_builder(i: &Interface) -> TokenStream {
                 #{&f.vis()} #{&f.ident()}: #{&builder_ty(f.clone())},
             }
         }
+
+        #{&emit_view(&i.vis, &builder_ident, &builder_generics, &view_fields)?}
 
         impl<'s> engi::model::InterfaceBuilder for #builder_ident<'s> {
             type Builds = #{&i.ident};
@@ -324,10 +305,10 @@ fn emit_builder(i: &Interface) -> TokenStream {
                 }
             }
         }
-    }
+    })
 }
 
-fn emit_template(i: &Interface) -> TokenStream {
+fn emit_template(i: &Interface) -> Result<TokenStream, syn::Error> {
     let template_ident = suffix_ident(&i.ident, "Template");
 
     fn template_ty(f: InterfaceField) -> TokenStream {
@@ -342,7 +323,10 @@ fn emit_template(i: &Interface) -> TokenStream {
         }
     }
 
-    quote! {
+    let view_fields =
+        i.fields.iter().map(|f| f.retyped(template_ty)).collect_vec();
+
+    Ok(quote! {
         #[derive(Default, Clone)]
         #{&i.vis} struct #template_ident {
             #(for f in &i.fields) {
@@ -350,12 +334,14 @@ fn emit_template(i: &Interface) -> TokenStream {
             }
         }
 
+        #{&emit_view(&i.vis, &template_ident, &Generics::default(), &view_fields)?}
+
+
         impl engi::model::InterfaceTemplate for #template_ident {}
-    }
+    })
 }
 
 fn emit_interface_impl(i: &Interface) -> TokenStream {
-    let view_ident = suffix_ident(&i.ident, "StatefulView");
     let template_ident = suffix_ident(&i.ident, "Template");
     let builder_ident = suffix_ident(&i.ident, "Builder");
     let solution_ident = suffix_ident(&i.ident, "Solution");
@@ -465,15 +451,16 @@ fn emit_interface_impl(i: &Interface) -> TokenStream {
 pub fn derive_interface(
     input: proc_macro::TokenStream,
 ) -> Result<proc_macro::TokenStream, syn::Error> {
-    let m = Interface::parse.parse(input)?;
+    let i = Interface::parse.parse(input)?;
+    let view_fields = i.fields.iter().map(InterfaceField::field).collect_vec();
 
     Ok(quote! {
-        #{&emit_view(&m)}
-        #{&emit_builder(&m)}
-        #{&emit_solution(&m)}
-        #{&emit_template(&m)}
+        #{&emit_view(&i.vis, &i.ident, &i.generics, &view_fields)?}
+        #{&emit_builder(&i)?}
+        #{&emit_solution(&i)?}
+        #{&emit_template(&i)?}
 
-        #{&emit_interface_impl(&m)}
+        #{&emit_interface_impl(&i)}
     }
     .into())
 }

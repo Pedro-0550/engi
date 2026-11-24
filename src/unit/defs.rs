@@ -230,6 +230,8 @@ pub const Np: Unit = Unit::Logarithmic {
 /* -------------------------------------------------------------------------- */
 
 prefixes!(
-    s, m, A, K, mol, Hz, N, Pa, J, W, C, V, Ω, S, F, Wb, T, H, eV, rad, sr, B,
-    Np
+    s, m, A, K, mol, Hz, N, Pa, J, W, C, V, Ω, S, F, Wb, T, H, eV, rad, sr, Np
 );
+// we do dB manually because its the only relevant Bel prefix and kilobel (kB) conflicts with boltzmann constant
+pub const dB: Unit =
+    Unit::Linear { symbol: "dB", base: &B, scale: OrderedFloat(1e-1) };
