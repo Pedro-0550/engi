@@ -46,6 +46,9 @@ pub enum Edge {
     Open(Endpoint),
 }
 
+/// A numeric interval over a given universe (real or integer).
+///
+/// The order is always normalized such that `from` is the smaller endpoint, and `to` is the largest.
 #[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct Interval {
     from: Edge,
@@ -54,72 +57,107 @@ pub struct Interval {
 }
 
 impl Interval {
+    /// An interval over Z containing only 0.
     pub const ZERO: Self = Self {
         from: Edge::Closed(Zero),
         to: Edge::Closed(Zero),
         over: Universe::Integer,
     };
 
+    /// An interval over R, all real numbers.
     const R: Self = Self {
         from: Edge::Open(Neg),
         to: Edge::Open(Pos),
         over: Universe::Real,
     };
 
+    /// An interval over R>0, positive real numbers.
+    ///
+    /// Includes every real number larger than 0.
     pub const R_P: Self = Self {
         from: Edge::Open(Zero),
         to: Edge::Open(Pos),
         over: Universe::Real,
     };
 
+    /// An interval over R>=0, non-negative real numbers.
+    ///
+    /// Includes every real number larger than or equal to 0.
     pub const R_NN: Self = Self {
         from: Edge::Closed(Zero),
         to: Edge::Open(Pos),
         over: Universe::Real,
     };
 
+    /// An interval over R<0, negative real numbers.
+    ///
+    /// Includes every real number smaller than 0.
     pub const R_N: Self = Self {
         from: Edge::Open(Neg),
         to: Edge::Open(Zero),
         over: Universe::Real,
     };
 
+    /// An interval over R<=0, non-positive real numbers.
+    ///
+    /// Includes every real number smaller than or equal to 0.
     pub const R_NP: Self = Self {
         from: Edge::Open(Neg),
         to: Edge::Closed(Zero),
         over: Universe::Real,
     };
 
-    const Z: Self = Self {
+    /// An interval over Z, all integers.
+    pub const Z: Self = Self {
         from: Edge::Open(Neg),
         to: Edge::Open(Pos),
         over: Universe::Integer,
     };
 
+    /// An interval over Z>0, positive integers.
+    ///
+    /// Includes every integer larger than 0.
     pub const Z_P: Self = Self {
         from: Edge::Open(Zero),
         to: Edge::Open(Pos),
         over: Universe::Integer,
     };
 
+    /// An interval over Z>=0, non-negative integers.
+    ///
+    /// Includes every integer larger than or equal to 0.
     pub const Z_NN: Self = Self {
         from: Edge::Closed(Zero),
         to: Edge::Open(Pos),
         over: Universe::Integer,
     };
 
+    /// An interval over Z<0, negative integers.
+    ///
+    /// Includes every integer smaller than 0.
     pub const Z_N: Self = Self {
         from: Edge::Open(Neg),
         to: Edge::Open(Zero),
         over: Universe::Integer,
     };
 
+    /// An interval over Z<=0, non-positive integers.
+    ///
+    /// Includes every integer smaller than or equal to 0.
     pub const Z_NP: Self = Self {
         from: Edge::Open(Neg),
         to: Edge::Closed(Zero),
         over: Universe::Integer,
     };
 
+    /// Returns true if this interval contains 0.
+    ///
+    /// # Examples
+    /// ```
+    /// assert!(Interval::Z.has_zero())
+    /// assert!(Interval::Z_NP.has_zero())
+    /// assert!(Interval::Z_P.has_zero()) // panics
+    /// ```
     pub fn has_zero(&self) -> bool {
         match (self.from, self.to) {
             (_, Edge::Open(Endpoint::Zero)) => false,
@@ -128,6 +166,12 @@ impl Interval {
         }
     }
 
+    /// Returns true if this interval contains ONLY 0.
+    /// # Examples
+    /// ```
+    /// assert!(Interval::ZERO.is_zero())
+    /// assert!(Interval::Z_P.is_zero()) // panics
+    /// ```
     pub fn is_zero(&self) -> bool {
         self.from == Edge::Closed(Zero) && self.to == Edge::Closed(Zero)
     }

@@ -15,8 +15,17 @@ use crate::{
 mod test;
 
 impl Expr {
-    /// Takes the partial derivative of this expression, with respect to the given symbol
+    /// Takes the partial derivative of this expression, with respect to the given symbol.
+    ///
     /// The derivative is simplified before being returned.
+    ///
+    /// # Examples
+    /// ```
+    /// symbols!(x, y);
+    /// let expr = x.pow(2) + y.pow(2);
+    /// assert_eq!(expr.diff(x), 2 * x);
+    /// assert_eq!(expr.diff(y), 2 * y);
+    /// ```
     pub fn diff(&self, wrt: Symbol) -> Expr {
         let mut dx = Expr::new();
 

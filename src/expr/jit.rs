@@ -33,6 +33,7 @@ use crate::{
 /* -------------------------------------------------------------------------- */
 
 pub struct CompiledExpr {
+    // Safety: this pointer is valid as long as JITModule is still alive
     func: unsafe extern "C" fn(*const f64, *mut f64),
     args: Vec<Symbol>,
     // We need to keep module alive for as long as the
@@ -44,6 +45,10 @@ pub struct CompiledExpr {
 /* -------------------------------------------------------------------------- */
 
 impl Realized {
+    /// Compiles this realized expression into a JIT-compiled program, to allow fast evaluations.
+    ///
+    /// # Panics
+    /// Panics if the host machine does not support cranelift's JIT compilation
     pub fn compile(self) -> CompiledExpr {
         let mut flag_builder = settings::builder();
         flag_builder.set("use_colocated_libcalls", "false").unwrap();
