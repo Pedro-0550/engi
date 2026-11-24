@@ -9,13 +9,13 @@ use crate::{
 
 /* --------------------------------- STRUCTS -------------------------------- */
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Equation {
     lhs: Expr,
     rhs: Expr,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Inequality {
     Greater,
     GreaterOrEq,
@@ -23,7 +23,7 @@ pub enum Inequality {
     LessOrEq,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Constraint {
     lhs: Expr,
     rhs: Expr,
